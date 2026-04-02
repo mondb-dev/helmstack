@@ -36,10 +36,20 @@ Per tab:
 3. If unavailable or incomplete, fall back to DOM perception and browser actions.
 4. Merge both into one `BrowserPerceptionPacket`.
 
-## Immediate implementation path
+## Implementation status
 
-1. Add a site capability registry in the main process.
-2. Implement a `dom` provider over the existing perception layer.
-3. Add a `webmcp` provider adapter that can report availability and tool manifests.
-4. Route agent commands through `BrowserOutputCommand`.
-5. Keep approvals in the browser substrate, not in the cognition runtime.
+**Done:**
+
+1. ✅ Site capability registry in the main process (`site-capability-registry.ts`)
+2. ✅ `dom` provider over the existing perception layer
+3. ✅ `webmcp` provider adapter that reports availability (detection only)
+4. ✅ Agent commands routed through `BrowserOutputCommand`
+5. ✅ Approvals in the browser substrate (not in the cognition runtime)
+6. ✅ HTTP+SSE agent server on `127.0.0.1:7070`
+7. ✅ TypeScript agent SDK (`@helmstack/agent-sdk`)
+
+**Not yet:**
+
+- Real WebMCP tool *invocation* (detection is scaffolded, execution is not)
+- WebMCP manifest parsing and validation
+- Preference logic for site tools over DOM fallback when both are available
