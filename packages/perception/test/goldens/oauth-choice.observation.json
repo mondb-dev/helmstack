@@ -1,0 +1,30 @@
+{
+  "tabId": "tab-oauth-choice",
+  "url": "https://example.com/register",
+  "title": "Register",
+  "timestamp": 1710000000000,
+  "pageKind": "signup",
+  "headings": ["Create account"],
+  "forms": [],
+  "primaryActions": [
+    {
+      "id": "action-1",
+      "label": "Continue with Google",
+      "kind": "oauth",
+      "selectorHint": "a",
+      "href": "https://example.com/auth/google",
+      "provider": "google",
+      "disabled": false
+    },
+    {
+      "id": "action-2",
+      "label": "Continue with GitHub",
+      "kind": "oauth",
+      "selectorHint": "a",
+      "href": "https://example.com/auth/github",
+      "provider": "github",
+      "disabled": false
+    }
+  ],
+  "alerts": []
+}

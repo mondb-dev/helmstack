@@ -1,0 +1,24 @@
+{
+  "tabId": "tab-iframe-login",
+  "title": "Embedded Auth",
+  "url": "https://example.com/embedded-auth",
+  "capturedAt": 1710000000600,
+  "dom": {
+    "documents": [
+      {
+        "nodes": []
+      },
+      {
+        "nodes": []
+      }
+    ]
+  },
+  "accessibilityTree": {
+    "nodes": [
+      { "role": { "value": "heading" }, "name": { "value": "Log in" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Email" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Password" } },
+      { "role": { "value": "button" }, "name": { "value": "Sign in" } }
+    ]
+  }
+}

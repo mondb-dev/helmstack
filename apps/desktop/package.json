@@ -1,0 +1,19 @@
+{
+  "name": "@helmstack/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron browser shell for HelmStack",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/main/main.cjs",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "dev": "node ./scripts/dev.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "electron": "^35.7.5",
+    "esbuild": "^0.25.9",
+    "typescript": "^5.8.3"
+  }
+}

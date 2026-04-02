@@ -1,0 +1,20 @@
+{
+  "tabId": "tab-oauth-choice",
+  "title": "Register",
+  "url": "https://example.com/register",
+  "capturedAt": 1710000000300,
+  "dom": {
+    "documents": [
+      {
+        "nodes": []
+      }
+    ]
+  },
+  "accessibilityTree": {
+    "nodes": [
+      { "role": { "value": "heading" }, "name": { "value": "Create account" } },
+      { "role": { "value": "link" }, "name": { "value": "Continue with Google" } },
+      { "role": { "value": "link" }, "name": { "value": "Continue with GitHub" } }
+    ]
+  }
+}

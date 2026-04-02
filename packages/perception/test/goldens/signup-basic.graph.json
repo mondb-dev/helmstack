@@ -1,0 +1,94 @@
+{
+  "tabId": "tab-signup-basic",
+  "url": "https://example.com/signup",
+  "title": "Sign up",
+  "kind": "signup",
+  "topHeading": "Create account",
+  "headings": ["Create account"],
+  "forms": [
+    {
+      "id": "form-1",
+      "name": "signup",
+      "purpose": "signup",
+      "selectorHint": "form#signup-form",
+      "fields": [
+        {
+          "id": "field-1",
+          "label": "Email",
+          "name": "email",
+          "fieldType": "email",
+          "autocomplete": "email",
+          "placeholder": "Email",
+          "required": true,
+          "selectorHint": "input#email"
+        },
+        {
+          "id": "field-2",
+          "label": "Password",
+          "name": "password",
+          "fieldType": "password",
+          "required": true,
+          "selectorHint": "input#password"
+        }
+      ],
+      "submitActions": [
+        {
+          "id": "action-1",
+          "label": "Create Account",
+          "kind": "submit",
+          "selectorHint": "button[type=\"submit\"]",
+          "disabled": false
+        },
+        {
+          "id": "action-2",
+          "label": "Continue with Google",
+          "kind": "oauth",
+          "selectorHint": "button[type=\"button\"]",
+          "provider": "google",
+          "disabled": false
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "action-1",
+      "label": "Create Account",
+      "kind": "submit",
+      "selectorHint": "button[type=\"submit\"]",
+      "disabled": false
+    },
+    {
+      "id": "action-2",
+      "label": "Continue with Google",
+      "kind": "oauth",
+      "selectorHint": "button[type=\"button\"]",
+      "provider": "google",
+      "disabled": false
+    }
+  ],
+  "alerts": [],
+  "oauthProviders": ["google"],
+  "accessibility": {
+    "nodeCount": 5,
+    "roleCounts": {
+      "heading": 1,
+      "textbox": 2,
+      "button": 2
+    },
+    "headingTrail": ["Create account"],
+    "interactiveNodes": [
+      { "role": "textbox", "name": "Email" },
+      { "role": "textbox", "name": "Password" },
+      { "role": "button", "name": "Create Account" },
+      { "role": "button", "name": "Continue with Google" }
+    ]
+  },
+  "signals": {
+    "documentCount": 1,
+    "accessibilityNodeCount": 5,
+    "formCount": 1,
+    "actionCount": 2,
+    "capturedAt": 1710000000100
+  }
+}

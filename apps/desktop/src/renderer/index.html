@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HelmStack</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="chrome-shell">
+        <div class="window-drag"></div>
+        <div class="chrome-topbar">
+          <div class="brand">
+            <span class="brand-mark"></span>
+            <span class="brand-copy">
+              <strong>HelmStack</strong>
+              <span>AI-native browser substrate</span>
+            </span>
+          </div>
+
+          <div class="tab-rail">
+            <div class="tabs" id="tabs"></div>
+            <button class="tab-action" id="new-tab-button" type="button" aria-label="New tab">+</button>
+          </div>
+        </div>
+
+        <section class="toolbar">
+          <div class="toolbar-chip">Perception-first</div>
+          <form class="address-form" id="address-form">
+            <div class="address-shell">
+              <span class="address-prefix">Navigate</span>
+              <input class="address-input" id="address-input" type="text" spellcheck="false" placeholder="Enter URL or search" />
+            </div>
+            <button class="primary-button" type="submit">Go</button>
+          </form>
+          <button class="secondary-button" id="fixture-open-button" type="button">Open Fixture</button>
+          <button class="secondary-button" id="fixture-run-button" type="button">Run Fixture</button>
+          <button class="secondary-button" id="snapshot-button" type="button">Capture Graph</button>
+        </section>
+      </header>
+
+      <main class="workspace">
+        <aside class="task-panel">
+          <div class="panel-heading">
+            <span class="eyebrow">Intent</span>
+            <h1>Task panel</h1>
+          </div>
+          <textarea class="intent-box" id="intent-box" placeholder="Create an account on Notion using my primary personal email."></textarea>
+          <button class="primary-button intent-run" id="intent-run-button" type="button">Run</button>
+          <div class="panel-heading">
+            <span class="eyebrow">Terminal</span>
+            <h2>Agent output</h2>
+          </div>
+          <div class="terminal-output" id="terminal-output">
+            <div class="terminal-line terminal-system">Waiting for agent...</div>
+          </div>
+          <div class="fixture-card">
+            <div class="panel-heading">
+              <span class="eyebrow">Fixture</span>
+              <h2>Contact form runner</h2>
+            </div>
+            <p class="fixture-copy" id="fixture-status">Open the local fixture or run the end-to-end flow with vault-backed values.</p>
+            <div class="vault-list" id="vault-list"></div>
+          </div>
+          <pre class="snapshot-output" id="snapshot-output">No page snapshot captured yet.</pre>
+        </aside>
+
+        <section class="viewport-stage">
+          <div class="viewport-frame" id="viewport-frame">
+            <div class="viewport-label">Active page surface</div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="approval-modal" id="approval-modal" hidden>
+      <div class="approval-backdrop" id="approval-backdrop"></div>
+      <section class="approval-card" role="dialog" aria-modal="true" aria-labelledby="approval-title">
+        <span class="eyebrow">Approval</span>
+        <h2 id="approval-title">Review sensitive action</h2>
+        <p class="approval-copy" id="approval-copy">The browser is waiting for confirmation before it commits a sensitive action.</p>
+        <div class="approval-effects" id="approval-effects"></div>
+        <div class="approval-actions">
+          <button class="secondary-button" id="approval-reject-button" type="button">Reject</button>
+          <button class="primary-button" id="approval-approve-button" type="button">Approve</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="approval-modal" id="handoff-modal" hidden>
+      <div class="approval-backdrop" id="handoff-backdrop"></div>
+      <section class="approval-card" role="dialog" aria-modal="true" aria-labelledby="handoff-title">
+        <span class="eyebrow">Human handoff</span>
+        <h2 id="handoff-title">Agent needs your help</h2>
+        <p class="approval-copy" id="handoff-copy">The agent has paused and is waiting for you to complete a step manually.</p>
+        <p class="approval-copy" id="handoff-reason" style="font-weight:600;margin-top:0;"></p>
+        <div class="approval-actions">
+          <button class="secondary-button" id="handoff-cancel-button" type="button">Cancel agent</button>
+          <button class="primary-button" id="handoff-done-button" type="button">Done — Resume agent</button>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="./shell.js"></script>
+  </body>
+</html>

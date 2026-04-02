@@ -1,0 +1,52 @@
+{
+  "tabId": "tab-login-alert",
+  "url": "https://example.com/login",
+  "title": "Login",
+  "timestamp": 1710000000000,
+  "pageKind": "login",
+  "headings": ["Log in"],
+  "forms": [
+    {
+      "id": "form-1",
+      "purpose": "login",
+      "selectorHint": "form#login-form",
+      "fields": [
+        {
+          "id": "field-1",
+          "label": "Email address",
+          "name": "email",
+          "fieldType": "email",
+          "required": false,
+          "selectorHint": "input#login-email"
+        },
+        {
+          "id": "field-2",
+          "label": "Password",
+          "name": "password",
+          "fieldType": "password",
+          "required": false,
+          "selectorHint": "input#login-password"
+        }
+      ],
+      "submitActions": [
+        {
+          "id": "action-1",
+          "label": "Sign in",
+          "kind": "submit",
+          "selectorHint": "button[type=\"submit\"]",
+          "disabled": false
+        }
+      ]
+    }
+  ],
+  "primaryActions": [
+    {
+      "id": "action-1",
+      "label": "Sign in",
+      "kind": "submit",
+      "selectorHint": "button[type=\"submit\"]",
+      "disabled": false
+    }
+  ],
+  "alerts": ["Incorrect email or password"]
+}

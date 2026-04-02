@@ -1,0 +1,50 @@
+{
+  "tabId": "tab-oauth-choice",
+  "url": "https://example.com/register",
+  "title": "Register",
+  "kind": "signup",
+  "topHeading": "Create account",
+  "headings": ["Create account"],
+  "forms": [],
+  "actions": [
+    {
+      "id": "action-1",
+      "label": "Continue with Google",
+      "kind": "oauth",
+      "selectorHint": "a",
+      "href": "https://example.com/auth/google",
+      "provider": "google",
+      "disabled": false
+    },
+    {
+      "id": "action-2",
+      "label": "Continue with GitHub",
+      "kind": "oauth",
+      "selectorHint": "a",
+      "href": "https://example.com/auth/github",
+      "provider": "github",
+      "disabled": false
+    }
+  ],
+  "alerts": [],
+  "oauthProviders": ["google", "github"],
+  "accessibility": {
+    "nodeCount": 3,
+    "roleCounts": {
+      "heading": 1,
+      "link": 2
+    },
+    "headingTrail": ["Create account"],
+    "interactiveNodes": [
+      { "role": "link", "name": "Continue with Google" },
+      { "role": "link", "name": "Continue with GitHub" }
+    ]
+  },
+  "signals": {
+    "documentCount": 1,
+    "accessibilityNodeCount": 3,
+    "formCount": 0,
+    "actionCount": 2,
+    "capturedAt": 1710000000300
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "tabId": "tab-spa-profile-step",
+  "url": "https://example.com/onboarding/profile",
+  "title": "Finish setup",
+  "timestamp": 1710000000000,
+  "pageKind": "form",
+  "headings": ["Finish account setup"],
+  "forms": [
+    {
+      "id": "form-1",
+      "name": "profile",
+      "purpose": "profile",
+      "selectorHint": "form#onboarding-form",
+      "fields": [
+        {
+          "id": "field-1",
+          "label": "Display name",
+          "name": "displayName",
+          "fieldType": "text",
+          "required": true,
+          "selectorHint": "input#display-name"
+        },
+        {
+          "id": "field-2",
+          "label": "Phone",
+          "name": "phone",
+          "fieldType": "tel",
+          "required": false,
+          "selectorHint": "input#phone"
+        }
+      ],
+      "submitActions": [
+        {
+          "id": "action-1",
+          "label": "Continue",
+          "kind": "submit",
+          "selectorHint": "button[type=\"submit\"]",
+          "disabled": false
+        }
+      ]
+    }
+  ],
+  "primaryActions": [
+    {
+      "id": "action-1",
+      "label": "Continue",
+      "kind": "submit",
+      "selectorHint": "button[type=\"submit\"]",
+      "disabled": false
+    }
+  ],
+  "alerts": []
+}

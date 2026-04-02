@@ -1,0 +1,21 @@
+{
+  "tabId": "tab-spa-profile-step",
+  "title": "Finish setup",
+  "url": "https://example.com/onboarding/profile",
+  "capturedAt": 1710000000400,
+  "dom": {
+    "documents": [
+      {
+        "nodes": []
+      }
+    ]
+  },
+  "accessibilityTree": {
+    "nodes": [
+      { "role": { "value": "heading" }, "name": { "value": "Finish account setup" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Display name" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Phone" } },
+      { "role": { "value": "button" }, "name": { "value": "Continue" } }
+    ]
+  }
+}

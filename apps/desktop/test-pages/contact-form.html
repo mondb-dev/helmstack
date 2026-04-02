@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HelmStack Contact Form Fixture</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe6;
+        --surface: rgba(255, 255, 255, 0.9);
+        --surface-strong: #fffdf8;
+        --ink: #1f2521;
+        --muted: #66736c;
+        --line: rgba(31, 37, 33, 0.12);
+        --accent: #1d7f5a;
+        --accent-soft: rgba(29, 127, 90, 0.12);
+        --danger: #b23f33;
+        --danger-soft: rgba(178, 63, 51, 0.1);
+        --radius-lg: 24px;
+        --radius-md: 16px;
+        --radius-sm: 12px;
+        font-family: "SF Pro Display", "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(29, 127, 90, 0.12), transparent 24%),
+          radial-gradient(circle at bottom right, rgba(25, 90, 155, 0.08), transparent 30%),
+          linear-gradient(180deg, #f8f4ec 0%, #f0eadf 100%);
+        color: var(--ink);
+      }
+
+      .page {
+        width: min(980px, calc(100vw - 48px));
+        margin: 40px auto;
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.75fr);
+        gap: 24px;
+      }
+
+      .hero,
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+        box-shadow: 0 20px 60px rgba(79, 68, 44, 0.08);
+      }
+
+      .hero {
+        padding: 32px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 18px 0 12px;
+        font-size: clamp(2rem, 4vw, 3.3rem);
+        line-height: 0.98;
+      }
+
+      .lead {
+        max-width: 52ch;
+        margin: 0 0 28px;
+        color: var(--muted);
+        font-size: 1.05rem;
+        line-height: 1.6;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .hero-card {
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        background: var(--surface-strong);
+      }
+
+      .hero-card strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 0.95rem;
+      }
+
+      .hero-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.5;
+      }
+
+      .panel {
+        padding: 24px;
+        align-self: start;
+      }
+
+      .panel h2 {
+        margin: 0 0 8px;
+        font-size: 1.4rem;
+      }
+
+      .panel-copy {
+        margin: 0 0 18px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      form {
+        display: grid;
+        gap: 14px;
+      }
+
+      .field {
+        display: grid;
+        gap: 8px;
+      }
+
+      label {
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+
+      input,
+      textarea,
+      select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        background: #fff;
+        color: var(--ink);
+        padding: 14px 15px;
+        font: inherit;
+      }
+
+      textarea {
+        min-height: 140px;
+        resize: vertical;
+      }
+
+      .choice-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .checkbox-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        font-size: 0.92rem;
+        color: var(--muted);
+      }
+
+      .checkbox-row input {
+        width: 18px;
+        height: 18px;
+        margin-top: 2px;
+        padding: 0;
+      }
+
+      .error,
+      .success {
+        padding: 13px 14px;
+        border-radius: var(--radius-sm);
+        font-size: 0.92rem;
+        line-height: 1.4;
+      }
+
+      .error {
+        display: none;
+        border: 1px solid rgba(178, 63, 51, 0.24);
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .success {
+        display: none;
+        border: 1px solid rgba(29, 127, 90, 0.2);
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      button[type="submit"] {
+        border: 0;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        padding: 15px 18px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .meta {
+        margin-top: 14px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      @media (max-width: 860px) {
+        .page {
+          grid-template-columns: 1fr;
+          width: min(100vw - 28px, 740px);
+          margin: 20px auto 28px;
+        }
+
+        .hero,
+        .panel {
+          padding: 22px;
+        }
+
+        .hero-grid,
+        .choice-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <span class="eyebrow">Fixture</span>
+        <h1>Contact HelmStack</h1>
+        <p class="lead">
+          This page exists to test browser perception and DOM-grounded execution. It includes labels, validation,
+          helper copy, a select field, a consent checkbox, and a client-side success state after submission.
+        </p>
+        <div class="hero-grid">
+          <article class="hero-card">
+            <strong>Perception</strong>
+            <p>The browser should detect this as a contact or lead form with required name, email, and message fields.</p>
+          </article>
+          <article class="hero-card">
+            <strong>Execution</strong>
+            <p>The DOM provider should be able to fill the fields and submit the form without using brittle coordinates.</p>
+          </article>
+          <article class="hero-card">
+            <strong>Recovery</strong>
+            <p>If the consent box is unchecked or the email is malformed, an inline alert should appear.</p>
+          </article>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <h2>Send us a message</h2>
+        <p class="panel-copy">Required fields are marked automatically by the browser through standard HTML attributes.</p>
+
+        <div class="error" id="form-error" role="alert" aria-live="polite"></div>
+        <div class="success" id="form-success" role="status" aria-live="polite"></div>
+
+        <form id="contact-form" novalidate>
+          <div class="field">
+            <label for="name">Full name</label>
+            <input id="name" name="name" type="text" autocomplete="name" required />
+          </div>
+
+          <div class="field">
+            <label for="email">Work email</label>
+            <input id="email" name="email" type="email" autocomplete="email" required />
+          </div>
+
+          <div class="choice-row">
+            <div class="field">
+              <label for="topic">Topic</label>
+              <select id="topic" name="topic">
+                <option value="demo">Product demo</option>
+                <option value="sales">Sales inquiry</option>
+                <option value="support">Support</option>
+                <option value="partnership">Partnership</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="team-size">Team size</label>
+              <input id="team-size" name="teamSize" type="text" inputmode="numeric" placeholder="10-50" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="message">Message</label>
+            <textarea
+              id="message"
+              name="message"
+              required
+              placeholder="Tell us what you want the browser substrate to do."
+            ></textarea>
+          </div>
+
+          <label class="checkbox-row" for="consent">
+            <input id="consent" name="consent" type="checkbox" required />
+            <span>I agree to be contacted about this request.</span>
+          </label>
+
+          <button type="submit">Send message</button>
+        </form>
+
+        <p class="meta">Successful submissions stay on-page and show a visible confirmation block for perception refresh.</p>
+      </aside>
+    </main>
+
+    <script>
+      const form = document.getElementById("contact-form");
+      const errorNode = document.getElementById("form-error");
+      const successNode = document.getElementById("form-success");
+
+      function setAlert(node, text) {
+        node.textContent = text;
+        node.style.display = text ? "block" : "none";
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        setAlert(errorNode, "");
+        setAlert(successNode, "");
+
+        const formData = new FormData(form);
+        const name = String(formData.get("name") || "").trim();
+        const email = String(formData.get("email") || "").trim();
+        const message = String(formData.get("message") || "").trim();
+        const consent = formData.get("consent");
+
+        if (!name || !email || !message) {
+          setAlert(errorNode, "Please complete the name, email, and message fields.");
+          return;
+        }
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          setAlert(errorNode, "Please enter a valid email address.");
+          return;
+        }
+
+        if (!consent) {
+          setAlert(errorNode, "Consent is required before submitting the form.");
+          return;
+        }
+
+        const topic = String(formData.get("topic") || "demo");
+        setAlert(successNode, `Message sent for ${name}. Topic: ${topic}. We will reply to ${email}.`);
+        form.setAttribute("data-submitted", "true");
+      });
+    </script>
+  </body>
+  </html>

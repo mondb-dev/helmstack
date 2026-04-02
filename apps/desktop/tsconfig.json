@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../packages/shared/src/**/*.ts",
+    "../../packages/perception/src/**/*.ts"
+  ]
+}

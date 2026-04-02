@@ -1,0 +1,21 @@
+{
+  "tabId": "tab-shadow-signup",
+  "title": "Shadow Signup",
+  "url": "https://example.com/shadow-signup",
+  "capturedAt": 1710000000500,
+  "dom": {
+    "documents": [
+      {
+        "nodes": []
+      }
+    ]
+  },
+  "accessibilityTree": {
+    "nodes": [
+      { "role": { "value": "heading" }, "name": { "value": "Create account" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Email" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Password" } },
+      { "role": { "value": "button" }, "name": { "value": "Create Account" } }
+    ]
+  }
+}

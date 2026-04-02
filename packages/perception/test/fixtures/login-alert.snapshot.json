@@ -1,0 +1,22 @@
+{
+  "tabId": "tab-login-alert",
+  "title": "Login",
+  "url": "https://example.com/login",
+  "capturedAt": 1710000000200,
+  "dom": {
+    "documents": [
+      {
+        "nodes": []
+      }
+    ]
+  },
+  "accessibilityTree": {
+    "nodes": [
+      { "role": { "value": "heading" }, "name": { "value": "Log in" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Email address" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Password" } },
+      { "role": { "value": "button" }, "name": { "value": "Sign in" } },
+      { "role": { "value": "alert" }, "name": { "value": "Incorrect email or password" } }
+    ]
+  }
+}

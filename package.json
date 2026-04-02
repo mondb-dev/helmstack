@@ -1,0 +1,21 @@
+{
+  "name": "helmstack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-native browser substrate — perception and execution layer for autonomous agents",
+  "license": "MIT",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @helmstack/desktop",
+    "dev": "npm run dev -w @helmstack/desktop",
+    "serve:test-pages": "node apps/desktop/scripts/serve-test-pages.mjs",
+    "test:perception": "vitest run"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "vitest": "^3.2.4"
+  }
+}

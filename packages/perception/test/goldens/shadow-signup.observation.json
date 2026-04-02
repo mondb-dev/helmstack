@@ -1,0 +1,54 @@
+{
+  "tabId": "tab-shadow-signup",
+  "url": "https://example.com/shadow-signup",
+  "title": "Shadow Signup",
+  "timestamp": 1710000000000,
+  "pageKind": "signup",
+  "headings": ["Create account"],
+  "forms": [
+    {
+      "id": "form-1",
+      "name": "shadow-signup",
+      "purpose": "signup",
+      "selectorHint": "form#shadow-signup-form",
+      "fields": [
+        {
+          "id": "field-1",
+          "label": "Email",
+          "name": "email",
+          "fieldType": "email",
+          "autocomplete": "email",
+          "required": true,
+          "selectorHint": "input#shadow-email"
+        },
+        {
+          "id": "field-2",
+          "label": "Password",
+          "name": "password",
+          "fieldType": "password",
+          "required": true,
+          "selectorHint": "input#shadow-password"
+        }
+      ],
+      "submitActions": [
+        {
+          "id": "action-1",
+          "label": "Create Account",
+          "kind": "submit",
+          "selectorHint": "button[type=\"submit\"]",
+          "disabled": false
+        }
+      ]
+    }
+  ],
+  "primaryActions": [
+    {
+      "id": "action-1",
+      "label": "Create Account",
+      "kind": "submit",
+      "selectorHint": "button[type=\"submit\"]",
+      "disabled": false
+    }
+  ],
+  "alerts": []
+}

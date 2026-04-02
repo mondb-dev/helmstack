@@ -1,0 +1,53 @@
+{
+  "tabId": "tab-iframe-login",
+  "url": "https://example.com/embedded-auth",
+  "title": "Embedded Auth",
+  "timestamp": 1710000000000,
+  "pageKind": "login",
+  "headings": ["Log in"],
+  "forms": [
+    {
+      "id": "form-1",
+      "name": "frame-login",
+      "purpose": "login",
+      "selectorHint": "form#frame-login-form",
+      "fields": [
+        {
+          "id": "field-1",
+          "label": "Email",
+          "name": "email",
+          "fieldType": "email",
+          "required": false,
+          "selectorHint": "input#frame-email"
+        },
+        {
+          "id": "field-2",
+          "label": "Password",
+          "name": "password",
+          "fieldType": "password",
+          "required": false,
+          "selectorHint": "input#frame-password"
+        }
+      ],
+      "submitActions": [
+        {
+          "id": "action-1",
+          "label": "Sign in",
+          "kind": "submit",
+          "selectorHint": "button[type=\"submit\"]",
+          "disabled": false
+        }
+      ]
+    }
+  ],
+  "primaryActions": [
+    {
+      "id": "action-1",
+      "label": "Sign in",
+      "kind": "submit",
+      "selectorHint": "button[type=\"submit\"]",
+      "disabled": false
+    }
+  ],
+  "alerts": []
+}

@@ -1,0 +1,22 @@
+{
+  "tabId": "tab-signup-basic",
+  "title": "Sign up",
+  "url": "https://example.com/signup",
+  "capturedAt": 1710000000100,
+  "dom": {
+    "documents": [
+      {
+        "nodes": []
+      }
+    ]
+  },
+  "accessibilityTree": {
+    "nodes": [
+      { "role": { "value": "heading" }, "name": { "value": "Create account" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Email" } },
+      { "role": { "value": "textbox" }, "name": { "value": "Password" } },
+      { "role": { "value": "button" }, "name": { "value": "Create Account" } },
+      { "role": { "value": "button" }, "name": { "value": "Continue with Google" } }
+    ]
+  }
+}

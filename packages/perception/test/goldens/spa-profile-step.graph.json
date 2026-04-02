@@ -1,0 +1,75 @@
+{
+  "tabId": "tab-spa-profile-step",
+  "url": "https://example.com/onboarding/profile",
+  "title": "Finish setup",
+  "kind": "form",
+  "topHeading": "Finish account setup",
+  "headings": ["Finish account setup"],
+  "forms": [
+    {
+      "id": "form-1",
+      "name": "profile",
+      "purpose": "profile",
+      "selectorHint": "form#onboarding-form",
+      "fields": [
+        {
+          "id": "field-1",
+          "label": "Display name",
+          "name": "displayName",
+          "fieldType": "text",
+          "required": true,
+          "selectorHint": "input#display-name"
+        },
+        {
+          "id": "field-2",
+          "label": "Phone",
+          "name": "phone",
+          "fieldType": "tel",
+          "required": false,
+          "selectorHint": "input#phone"
+        }
+      ],
+      "submitActions": [
+        {
+          "id": "action-1",
+          "label": "Continue",
+          "kind": "submit",
+          "selectorHint": "button[type=\"submit\"]",
+          "disabled": false
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "action-1",
+      "label": "Continue",
+      "kind": "submit",
+      "selectorHint": "button[type=\"submit\"]",
+      "disabled": false
+    }
+  ],
+  "alerts": [],
+  "oauthProviders": [],
+  "accessibility": {
+    "nodeCount": 4,
+    "roleCounts": {
+      "heading": 1,
+      "textbox": 2,
+      "button": 1
+    },
+    "headingTrail": ["Finish account setup"],
+    "interactiveNodes": [
+      { "role": "textbox", "name": "Display name" },
+      { "role": "textbox", "name": "Phone" },
+      { "role": "button", "name": "Continue" }
+    ]
+  },
+  "signals": {
+    "documentCount": 1,
+    "accessibilityNodeCount": 4,
+    "formCount": 1,
+    "actionCount": 1,
+    "capturedAt": 1710000000400
+  }
+}
