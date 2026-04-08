@@ -452,3 +452,87 @@ CDP domains used:
 | Accessibility audit | `Accessibility.enable`, `Accessibility.getFullAXTree` |
 | Component tree | `Runtime.evaluate` (in-page devtools hook probe) |
 | Perception diff | None — pure in-process PageGraph comparison |
+| Three.js inspector | `Runtime.evaluate` (in-page scene graph walk + rAF FPS sample) |
+
+---
+
+## 12. Three.js Scene Inspector 
+
+**Endpoint:** `GET /api/tabs/:id/threejs-scene`
+
+**SDK:** `browser.captureThreeJsScene(tabId)`
+
+**Returns:** `ThreeSceneReport`
+
+Probes a live Three.js scene without any custom instrumentation on the app side.
+Detects common renderer/scene exposure patterns (`window.renderer`, `window.scene`,
+`window.__threeRenderer__`, `window.experience.renderer`, React Three Fiber canvas hooks)
+then walks the scene graph ( 8), reads renderer draw-call stats, and estimates FPSdepth 
+via a 300 ms `requestAnimationFrame` sample.
+
+### What the AI gets
+
+| Field | Description |
+|---|---|
+| `detected` | Whether a Three.js renderer was found on the page |
+| `scene` | Full object tree (meshes, lights, cameras, ) |groups 
+| `renderer` | `drawCalls`, `triangles`, `geometries`, `textures`, `programs` |
+| `fps` | Estimated FPS + frames sampled |
+| `materials` | All unique `ThreeMaterialInfo` objects in the scene (deduplicated) |
+| `summary` | Counts: objects, meshes, lights, cameras, vertices, triangles |
+
+### Per-node information
+
+Each `ThreeObject` in the scene tree includes:
+- ` e.g. `Mesh`, `PointLight`, `PerspectiveCamera`, `InstancedMesh`type` 
+- `position / rotation / scale`
+- `castShadow / receiveShadow`
+- ` vertex count, index count, attribute namesgeometry` 
+- ` type, color (hex), opacity, wireframe, side, depthWritematerials` 
+- ` intensity, color, castShadow, distance, anglelightProps` 
+- ` fov, near, far, zoomcameraProps` 
+- ` for `InstancedMesh`instanceCount` 
+
+### AI feedback workflow
+
+```ts
+import { BrowserClient } from "@openvisual/agent-sdk";
+
+const browser = new BrowserClient();
+const report = await browser.captureThreeJsScene(tabId);
+
+if (!report.detected) {
+  console.log("No Three.js renderer found on this page.");
+  return;
+}
+
+// Feed the report directly to your AI
+const feedback = await openai.chat.completions.create({
+  model: "gpt-4o",
+  messages: [
+    {
+      role: "system",
+      content: `You are a Three.js performance and correctness expert.
+Analyze the provided ThreeSceneReport and give specific, actionable code
+feedback. Reference exact object names, material UUIDs, and field values.`
+    },
+    { role: "user", content: JSON.stringify(report, null, 2) }
+  ]
+});
+
+console.log(feedback.choices[0].message.content);
+ "Your scene has 847 draw calls. The 14 Mesh objects named 'wall_*'
+//    share identical  merge them into a singleMeshStandardMaterial 
+//    InstancedMesh to reduce draw calls to ~12..."
+```
+
+### Common AI-generated insights
+
+| Observation | Example feedback |
+|---|---|
+| High draw calls | "Merge the 23 static Mesh  they all use the same material" |objects 
+| Unused shadow casting | "6 meshes have `castShadow: true` but no `DirectionalLight` has shadows enabled" |
+| Low-intensity light | "`PointLight 'lamp' intensity: 0. likely a unit mistake; try 1.5.0" |0001` 
+| Duplicate materials | "14 unique MeshStandardMaterial instances are  share one reference" |identical 
+| Infinite light range | "`PointLight distance: 0` means infinite  set an explicit range" |falloff 
+| Camera clipping | "`PerspectiveCamera far: 100` may clip geometry at world-scale scenes" |

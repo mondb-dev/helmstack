@@ -259,3 +259,120 @@ export type PerceptionDiff = {
   /** True when no structural differences were found. */
   identical: boolean;
 };
+
+// ── Three.js Scene Inspector ──────────────────────────────────────────────
+
+export type ThreeObjectType =
+  | "Scene" | "Mesh" | "Group" | "Points" | "Line" | "Sprite"
+  | "SkinnedMesh" | "InstancedMesh" | "LOD"
+  | "DirectionalLight" | "PointLight" | "SpotLight" | "AmbientLight" | "HemisphereLight" | "RectAreaLight"
+  | "PerspectiveCamera" | "OrthographicCamera"
+  | "Bone" | "Object3D" | "unknown";
+
+export type ThreeVec3 = { x: number; y: number; z: number };
+export type ThreeEuler = { x: number; y: number; z: number; order: string };
+
+export type ThreeMaterialInfo = {
+  uuid: string;
+  type: string;  // e.g. "MeshStandardMaterial"
+  name: string;
+  color?: string;      // hex string e.g. "#ff0000"
+  transparent: boolean;
+  opacity: number;
+  wireframe: boolean;
+  side: number;        // 0=Front, 1=Back, 2=Double
+  depthWrite: boolean;
+};
+
+export type ThreeGeometryInfo = {
+  uuid: string;
+  type: string;        // e.g. "BufferGeometry"
+  vertexCount: number;
+  indexCount: number;
+  /** Named attribute names present (position, normal, uv, etc.) */
+  attributes: string[];
+};
+
+export type ThreeObject = {
+  uuid: string;
+  name: string;
+  type: ThreeObjectType;
+  visible: boolean;
+  castShadow: boolean;
+  receiveShadow: boolean;
+  position: ThreeVec3;
+  rotation: ThreeEuler;
+  scale: ThreeVec3;
+  /** Only present on Mesh/SkinnedMesh/InstancedMesh/Points/Line. */
+  geometry?: ThreeGeometryInfo;
+  /** Only present on Mesh/SkinnedMesh/Points/Sprite. Can be array (multi-material). */
+  materials?: ThreeMaterialInfo[];
+  /** Only present on lights. */
+  lightProps?: {
+    intensity: number;
+    color: string;
+    castShadow: boolean;
+    /** Distance for point/spot lights (0 = infinite). */
+    distance?: number;
+    angle?: number;     // SpotLight cone angle (radians)
+  };
+  /** Only present on cameras. */
+  cameraProps?: {
+    fov?: number;        // PerspectiveCamera
+    near: number;
+    far: number;
+    zoom: number;
+  };
+  /** For InstancedMesh: how many instances. */
+  instanceCount?: number;
+  children: ThreeObject[];
+};
+
+export type ThreeRendererInfo = {
+  /** Total WebGL draw calls in the last frame. */
+  drawCalls: number;
+  /** Total triangles rendered in the last frame. */
+  triangles: number;
+  /** Total points rendered. */
+  points: number;
+  /** Total lines rendered. */
+  lines: number;
+  /** Number of compiled WebGL programs (shaders). */
+  programs: number;
+  /** Number of geometries currently in GPU memory. */
+  geometries: number;
+  /** Number of textures currently in GPU memory. */
+  textures: number;
+};
+
+export type ThreeFpsEstimate = {
+  /** Estimated FPS based on a short rAF sample (null if not measurable). */
+  fps: number | null;
+  /** Number of frames sampled. */
+  framesSampled: number;
+};
+
+export type ThreeSceneReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** True when a Three.js renderer/scene was detected on the page. */
+  detected: boolean;
+  /** Scene graph rooted at the THREE.Scene (depth-limited to 8 levels). */
+  scene: ThreeObject | null;
+  renderer: ThreeRendererInfo | null;
+  fps: ThreeFpsEstimate | null;
+  /** All unique materials found in the scene (deduplicated by uuid). */
+  materials: ThreeMaterialInfo[];
+  /** Summary counts useful for quick AI reasoning. */
+  summary: {
+    totalObjects: number;
+    meshCount: number;
+    lightCount: number;
+    cameraCount: number;
+    materialCount: number;
+    uniqueMaterialCount: number;
+    totalVertices: number;
+    totalTriangles: number;
+  };
+};

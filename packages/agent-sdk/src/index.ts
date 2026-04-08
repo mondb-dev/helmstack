@@ -61,6 +61,15 @@ export type {
   TabId,
   TabLogSnapshot,
   TabSummary,
+  ThreeEuler,
+  ThreeFpsEstimate,
+  ThreeGeometryInfo,
+  ThreeMaterialInfo,
+  ThreeObject,
+  ThreeObjectType,
+  ThreeRendererInfo,
+  ThreeSceneReport,
+  ThreeVec3,
   TotpResult,
   ViewportPresetName,
   ViewportSuiteReport,
@@ -87,6 +96,7 @@ import type {
   TabId,
   TabLogSnapshot,
   TabSummary,
+  ThreeSceneReport,
   TotpResult,
   ViewportPresetName,
   ViewportSuiteReport
@@ -418,6 +428,31 @@ export class BrowserClient {
    */
   async captureComponentTree(tabId: TabId): Promise<ComponentTreeReport> {
     return this.get(`/api/tabs/${tabId}/component-tree`);
+  }
+
+  // ── Three.js Scene Inspector ──────────────────────────────────────────────
+
+  /**
+   * Probe the live page for a Three.js renderer and scene graph.
+   *
+   * Detects `window.__threeRenderer__`, `window.renderer`, `window.scene` and
+   * similar patterns set by Vite/R3F dev builds. Returns a `ThreeSceneReport`
+   * with the full object tree (depth ≤ 8), renderer draw-call stats, FPS
+   * estimate, and a summary counter block — enough context for an AI agent to
+   * give actionable code feedback.
+   *
+   * @example
+   * const report = await browser.captureThreeJsScene(tabId);
+   * if (!report.detected) { console.log("No Three.js renderer found"); return; }
+   *
+   * // Let the AI reason over the report:
+   * const feedback = await ai.chat([
+   *   { role: "system", content: "You are a Three.js performance expert." },
+   *   { role: "user",   content: JSON.stringify(report) }
+   * ]);
+   */
+  async captureThreeJsScene(tabId: TabId): Promise<ThreeSceneReport> {
+    return this.get(`/api/tabs/${tabId}/threejs-scene`);
   }
 
   // ── "What Broke?" Perception Snapshot + Diff ────────────────────────────

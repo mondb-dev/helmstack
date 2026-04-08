@@ -53,6 +53,7 @@ type SseClient = http.ServerResponse;
  * GET  /api/tabs/:id/performance         → PerformanceReport
  * GET  /api/tabs/:id/a11y               → A11yAuditReport
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
+ * GET  /api/tabs/:id/threejs-scene      → ThreeSceneReport
  * GET  /api/screenshots                 → {id,tabId,url,width,height,capturedAt}[]
  * DELETE /api/screenshots/:id           removes snapshot from cache
  * POST /api/tabs/:id/perception/named   { snapshotId } → PerceptionSnapshotEntry
@@ -429,6 +430,12 @@ export class AgentServer {
     const ctreeMatch = p.match(/^\/api\/tabs\/([^/]+)\/component-tree$/);
     if (method === "GET" && ctreeMatch) {
       return json(res, await this.tabs.captureComponentTree(ctreeMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+    }
+
+    // ── Three.js Scene Inspector ──────────────────────────────────────────────
+    const threejsMatch = p.match(/^\/api\/tabs\/([^/]+)\/threejs-scene$/);
+    if (method === "GET" && threejsMatch) {
+      return json(res, await this.tabs.captureThreeJsScene(threejsMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
     }
 
     // ── "What Broke?" Perception snapshot + diff ──────────────────────────────
