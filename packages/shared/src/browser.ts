@@ -424,3 +424,54 @@ export type AssertionResult = {
    */
   evidence: AssertionEvidence;
 };
+
+ Storage Inspector // 
+
+export type StorageArea = "local" | "session";
+
+export type StorageEntry = {
+  key: string;
+  value: string;
+  /** Approximate byte size of key + value string. */
+  bytes: number;
+};
+
+export type CookieEntry = {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires: number | null;    // epoch ms; null = session cookie
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: "Strict" | "Lax" | "None" | "";
+  size: number;
+};
+
+export type IndexedDbObjectStore = {
+  name: string;
+  keyPath: string | string[] | null;
+  autoIncrement: boolean;
+  /** Row count (0 if not available). */
+  count: number;
+  /** First up to 100 rows, serialised to JSON strings. */
+  rows: Array<{ key: string; value: string }>;
+};
+
+export type IndexedDbDatabase = {
+  name: string;
+  version: number;
+  objectStores: IndexedDbObjectStore[];
+};
+
+export type StorageReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  localStorage: StorageEntry[];
+  sessionStorage: StorageEntry[];
+  cookies: CookieEntry[];
+  indexedDb: IndexedDbDatabase[];
+  /** Total estimated bytes across all areas. */
+  totalBytes: number;
+};

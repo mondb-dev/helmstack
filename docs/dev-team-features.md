@@ -172,13 +172,93 @@ interface PerformanceReport {
 
 **How it works**: CDP `Performance.enable`/`getMetrics` supplies V8/Blink counters; `Runtime.evaluate` queries `window.performance.timing` (Navigation Timing L1) and `performance.getEntriesByType()` for LCP, FCP, CLS (sum of non-input-gated shifts), and INP (longest event entry). Top-20 slowest resources sorted by duration are returned from `getEntriesByType("resource")`.
 
-### 5. Storage Inspector
-Read and write `localStorage`, `sessionStorage`, cookies, and `IndexedDB` via CDP `Storage`/`IndexedDB` domains. Useful for seeding test data or inspecting auth state.
+### 5. Storage Inspector ✅
 
+Read and write `localStorage`, `sessionStorage`, cookies, and `IndexedDB` via CDP `Storage`/`Network` domains. Useful for seeding test data, inspecting auth state, or resetting app state between test runs.
+
+**API**
+```
+GET    /api/tabs/:id/storage                        → StorageReport (all areas)
+GET    /api/tabs/:id/storage/local                  → StorageEntry[]  (?key=X for single)
+GET    /api/tabs/:id/storage/session                → StorageEntry[]  (?key=X for single)
+POST   /api/tabs/:id/storage/local                  { entries: Record<string,string> }
+POST   /api/tabs/:id/storage/session                { entries: Record<string,string> }
+DELETE /api/tabs/:id/storage/local                  body? { keys: string[] } — omit to clear all
+DELETE /api/tabs/:id/storage/session                body? { keys: string[] } — omit to clear all
+GET    /api/tabs/:id/cookies                        → CookieEntry[]
+POST   /api/tabs/:id/cookies                        { name, value, domain?, path?, httpOnly?, secure?, sameSite?, expires? }
+DELETE /api/tabs/:id/cookies                        clear all cookies for the tab's origin
+DELETE /api/tabs/:id/cookies/:name                  ?url= optional
+```
+
+**SDK**
 ```typescript
-await browser.setLocalStorage(tabId, { "auth-token": "test-jwt-xxx" });
-const token = await browser.getLocalStorage(tabId, "auth-token");
-await browser.clearCookies(tabId, "https://app.example.com");
+// Full snapshot of all storage areas
+const snap = await browser.captureStorage(tabId);
+console.log(`${snap.localStorage.length} localStorage keys`);
+console.log(`${snap.cookies.length} cookies`);
+console.log(`${snap.indexedDb.length} IndexedDB databases`);
+console.log(`Total: ${(snap.totalBytes / 1024).toFixed(1)} KB`);
+
+// Seed localStorage for a test
+await browser.setStorage(tabId, "local", {
+  "auth-token": "test-jwt-xxx",
+  "user-id": "42",
+  "theme": "dark"
+});
+
+// Read a single key
+const entries = await browser.getStorage(tabId, "local", "auth-token");
+// entries[0].value === "test-jwt-xxx"
+
+// Remove specific keys / clear area
+await browser.clearStorage(tabId, "local", ["cart", "draft"]);
+await browser.clearStorage(tabId, "session");   // clear entire session storage
+
+// Cookies
+const cookies = await browser.getCookies(tabId);
+const session  = cookies.find(c => c.name === "session_id");
+
+await browser.setCookie(tabId, {
+  name: "session_id",
+  value: "test-sess-abc",
+  httpOnly: true,
+  secure: true,
+  path: "/"
+});
+
+await browser.deleteCookie(tabId, "session_id");
+await browser.clearCookies(tabId);   // nuke all cookies for this origin
+```
+
+**`StorageReport` shape**
+```typescript
+{
+  tabId:          string;
+  url:            string;
+  capturedAt:     number;
+  localStorage:   StorageEntry[];   // { key, value, bytes }
+  sessionStorage: StorageEntry[];
+  cookies:        CookieEntry[];    // see below
+  indexedDb:      IndexedDbDatabase[];
+  totalBytes:     number;
+}
+
+// CookieEntry
+{
+  name: string; value: string; domain: string; path: string;
+  expires: number | null;   // epoch ms; null = session cookie
+  httpOnly: boolean; secure: boolean;
+  sameSite: "Strict" | "Lax" | "None" | "";
+  size: number;
+}
+
+// IndexedDbDatabase
+{ name: string; version: number; objectStores: IndexedDbObjectStore[] }
+
+// IndexedDbObjectStore
+{ name: string; keyPath: …; autoIncrement: boolean; count: number;
+  rows: Array<{ key: string; value: string }>  // first 100 rows, JSON-serialised }
 ```
 
 ### 6. Interaction Recorder → Test Script
@@ -508,6 +588,7 @@ CDP domains used:
 | Perception diff | None — pure in-process PageGraph comparison |
 | Three.js inspector | `Runtime.evaluate` (in-page scene graph walk + rAF FPS sample) |
 | NL assertions | None — pure in-process PageGraph heuristics |
+| Storage inspector | `Runtime.evaluate` (localStorage/sessionStorage/IndexedDB), `Network.getCookies`, `Network.setCookie`, `Network.deleteCookies` |
 
 ---
 

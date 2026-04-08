@@ -55,6 +55,14 @@ type SseClient = http.ServerResponse;
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
  * GET  /api/tabs/:id/threejs-scene      → ThreeSceneReport
  * POST /api/tabs/:id/assert            { assertion: string } → AssertionResult
+ * GET  /api/tabs/:id/storage            → StorageReport (all areas)
+ * GET  /api/tabs/:id/storage/:area      area=local|session → StorageEntry[]  (optional ?key=X)
+ * POST /api/tabs/:id/storage/:area      { entries: Record<string,string> } → { ok: true }
+ * DELETE /api/tabs/:id/storage/:area    body? { keys: string[] } — omit to clear all
+ * GET  /api/tabs/:id/cookies            → CookieEntry[]
+ * POST /api/tabs/:id/cookies            { name, value, domain?, path?, httpOnly?, secure?, sameSite?, expires? }
+ * DELETE /api/tabs/:id/cookies/:name    ?url=… (optional)
+ * DELETE /api/tabs/:id/cookies          clear all cookies for the tab's origin
  * GET  /api/screenshots                 → {id,tabId,url,width,height,capturedAt}[]
  * DELETE /api/screenshots/:id           removes snapshot from cache
  * POST /api/tabs/:id/perception/named   { snapshotId } → PerceptionSnapshotEntry
@@ -451,6 +459,71 @@ export class AgentServer {
         body.assertion
       );
       return json(res, result);
+    }
+
+    // ── Storage Inspector ─────────────────────────────────────────────────────
+    type TabIdType = import("../../../../packages/shared/src/index.js").TabId;
+    type StorageAreaType = import("../../../../packages/shared/src/index.js").StorageArea;
+
+    // Full snapshot
+    const storageAllMatch = p.match(/^\/api\/tabs\/([^/]+)\/storage$/);
+    if (method === "GET" && storageAllMatch) {
+      return json(res, await this.tabs.captureStorage(storageAllMatch[1] as TabIdType));
+    }
+
+    // Per-area GET + POST + DELETE
+    const storageAreaMatch = p.match(/^\/api\/tabs\/([^/]+)\/storage\/(local|session)$/);
+    if (storageAreaMatch) {
+      const tid = storageAreaMatch[1] as TabIdType;
+      const area = storageAreaMatch[2] as StorageAreaType;
+      const u = new URL(req.url ?? "/", "http://x");
+      if (method === "GET") {
+        const key = u.searchParams.get("key") ?? undefined;
+        return json(res, await this.tabs.getStorage(tid, area, key));
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        if (!body.entries || typeof body.entries !== "object") return error(res, 400, "entries object is required");
+        await this.tabs.setStorage(tid, area, body.entries as Record<string, string>);
+        return json(res, { ok: true });
+      }
+      if (method === "DELETE") {
+        const body = req.headers["content-length"] !== "0" ? await readBody(req).catch(() => ({})) : {};
+        const keys = Array.isArray(body.keys) ? body.keys as string[] : undefined;
+        await this.tabs.clearStorage(tid, area, keys);
+        return json(res, { ok: true });
+      }
+    }
+
+    // Cookies GET + POST + DELETE all
+    const cookiesAllMatch = p.match(/^\/api\/tabs\/([^/]+)\/cookies$/);
+    if (cookiesAllMatch) {
+      const tid = cookiesAllMatch[1] as TabIdType;
+      if (method === "GET") {
+        const report = await this.tabs.captureStorage(tid);
+        return json(res, report.cookies);
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        if (typeof body.name !== "string" || typeof body.value !== "string") return error(res, 400, "name and value are required");
+        await this.tabs.setCookie(tid, body as import("../../../../packages/shared/src/index.js").CookieEntry & { name: string; value: string });
+        return json(res, { ok: true });
+      }
+      if (method === "DELETE") {
+        await this.tabs.clearCookies(tid);
+        return json(res, { ok: true });
+      }
+    }
+
+    // Delete single cookie by name
+    const cookieNameMatch = p.match(/^\/api\/tabs\/([^/]+)\/cookies\/([^/]+)$/);
+    if (method === "DELETE" && cookieNameMatch) {
+      const tid = cookieNameMatch[1] as TabIdType;
+      const name = decodeURIComponent(cookieNameMatch[2]);
+      const u = new URL(req.url ?? "/", "http://x");
+      const url = u.searchParams.get("url") ?? undefined;
+      await this.tabs.deleteCookie(tid, name, url);
+      return json(res, { ok: true });
     }
 
     // ── "What Broke?" Perception snapshot + diff ──────────────────────────────

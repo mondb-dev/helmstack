@@ -47,8 +47,11 @@ export type {
   ComponentNode,
   ComponentTreeReport,
   ConsoleLogEntry,
+  CookieEntry,
   DiffRegion,
   HumanHandoffRecord,
+  IndexedDbDatabase,
+  IndexedDbObjectStore,
   NetworkInterceptRule,
   NetworkRequestEntry,
   PageGraph,
@@ -61,6 +64,9 @@ export type {
   PerformanceReport,
   ScreenshotDiff,
   SiteCapabilityManifest,
+  StorageArea,
+  StorageEntry,
+  StorageReport,
   TabId,
   TabLogSnapshot,
   TabSummary,
@@ -89,6 +95,7 @@ import type {
   BrowserOutputCommand,
   BrowserPerceptionPacket,
   ComponentTreeReport,
+  CookieEntry,
   HumanHandoffRecord,
   NetworkInterceptRule,
   PerceptionDiff,
@@ -97,6 +104,9 @@ import type {
   PageScreenshot,
   ScreenshotDiff,
   SiteCapabilityManifest,
+  StorageArea,
+  StorageEntry,
+  StorageReport,
   TabId,
   TabLogSnapshot,
   TabSummary,
@@ -505,6 +515,99 @@ export class BrowserClient {
     return result;
   }
 
+  // ── Storage Inspector ─────────────────────────────────────────────────────
+
+  /**
+   * Capture a full storage snapshot for the tab: localStorage, sessionStorage,
+   * all cookies, and every IndexedDB database at the current origin.
+   *
+   * @example
+   * const s = await browser.captureStorage(tabId);
+   * console.log(`${s.localStorage.length} localStorage keys, ${s.cookies.length} cookies`);
+   * console.log(`Total storage: ${(s.totalBytes / 1024).toFixed(1)} KB`);
+   */
+  async captureStorage(tabId: TabId): Promise<StorageReport> {
+    return this.get(`/api/tabs/${tabId}/storage`);
+  }
+
+  /**
+   * Read all entries from localStorage or sessionStorage.
+   * Pass `key` to read a single entry.
+   *
+   * @example
+   * const entries = await browser.getStorage(tabId, "local");
+   * const token   = await browser.getStorage(tabId, "local", "auth-token");
+   */
+  async getStorage(tabId: TabId, area: StorageArea, key?: string): Promise<StorageEntry[]> {
+    const qs = key ? `?key=${encodeURIComponent(key)}` : "";
+    return this.get(`/api/tabs/${tabId}/storage/${area}${qs}`);
+  }
+
+  /**
+   * Write one or more key/value pairs to localStorage or sessionStorage.
+   *
+   * @example
+   * await browser.setStorage(tabId, "local", { "auth-token": "test-jwt", "theme": "dark" });
+   */
+  async setStorage(tabId: TabId, area: StorageArea, entries: Record<string, string>): Promise<void> {
+    await this.post(`/api/tabs/${tabId}/storage/${area}`, { entries });
+  }
+
+  /**
+   * Remove specific keys from localStorage or sessionStorage.
+   * Omit `keys` to clear the entire area.
+   *
+   * @example
+   * await browser.clearStorage(tabId, "session");          // clear all
+   * await browser.clearStorage(tabId, "local", ["cart"]);  // remove one key
+   */
+  async clearStorage(tabId: TabId, area: StorageArea, keys?: string[]): Promise<void> {
+    await this.delete(`/api/tabs/${tabId}/storage/${area}`, keys ? { keys } : undefined);
+  }
+
+  /**
+   * List all cookies for the tab's current origin.
+   *
+   * @example
+   * const cookies = await browser.getCookies(tabId);
+   * const session = cookies.find(c => c.name === "session_id");
+   */
+  async getCookies(tabId: TabId): Promise<CookieEntry[]> {
+    return this.get(`/api/tabs/${tabId}/cookies`);
+  }
+
+  /**
+   * Set (upsert) a cookie for the tab's current origin.
+   *
+   * @example
+   * await browser.setCookie(tabId, { name: "session_id", value: "test-sess-123", httpOnly: true });
+   */
+  async setCookie(tabId: TabId, cookie: Partial<CookieEntry> & { name: string; value: string }): Promise<void> {
+    await this.post(`/api/tabs/${tabId}/cookies`, cookie);
+  }
+
+  /**
+   * Delete a single cookie by name. Pass `url` if the cookie is scoped to a
+   * different URL than the current page.
+   *
+   * @example
+   * await browser.deleteCookie(tabId, "session_id");
+   */
+  async deleteCookie(tabId: TabId, name: string, url?: string): Promise<void> {
+    const qs = url ? `?url=${encodeURIComponent(url)}` : "";
+    await this.delete(`/api/tabs/${tabId}/cookies/${encodeURIComponent(name)}${qs}`);
+  }
+
+  /**
+   * Clear all cookies for the tab's current origin.
+   *
+   * @example
+   * await browser.clearCookies(tabId);
+   */
+  async clearCookies(tabId: TabId): Promise<void> {
+    await this.delete(`/api/tabs/${tabId}/cookies`);
+  }
+
   // ── "What Broke?" Perception Snapshot + Diff ────────────────────────────
 
   /**
@@ -632,8 +735,8 @@ export class BrowserClient {
     return this.request("POST", path, body);
   }
 
-  private delete<T>(path: string): Promise<T> {
-    return this.request("DELETE", path);
+  private delete<T>(path: string, body?: unknown): Promise<T> {
+    return this.request("DELETE", path, body);
   }
 
   private request<T>(method: string, path: string, body?: unknown): Promise<T> {
