@@ -53,6 +53,8 @@ type SseClient = http.ServerResponse;
  * GET  /api/tabs/:id/performance         → PerformanceReport
  * GET  /api/tabs/:id/a11y               → A11yAuditReport
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
+ * GET  /api/screenshots                 → {id,tabId,url,width,height,capturedAt}[]
+ * DELETE /api/screenshots/:id           removes snapshot from cache
  *
  * SSE stream
  * ----------
@@ -383,6 +385,19 @@ export class AgentServer {
         return error(res, 400, "beforeId and afterId strings are required");
       }
       return json(res, this.tabs.diffScreenshots(body.beforeId, body.afterId));
+    }
+
+    // List all named screenshots in cache
+    if (method === "GET" && p === "/api/screenshots") {
+      return json(res, this.tabs.listScreenshots());
+    }
+
+    // Delete a named screenshot from cache
+    const deleteScreenshotMatch = p.match(/^\/api\/screenshots\/([^/]+)$/);
+    if (method === "DELETE" && deleteScreenshotMatch) {
+      const deleted = this.tabs.deleteScreenshot(decodeURIComponent(deleteScreenshotMatch[1]));
+      if (!deleted) return error(res, 404, "Screenshot not found");
+      return json(res, { ok: true });
     }
 
     // ── Responsive multi-viewport suite ──────────────────────────────────────

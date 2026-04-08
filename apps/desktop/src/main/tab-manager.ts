@@ -23,6 +23,7 @@ import {
   type BrowserPerceptionPacket,
   type ConsoleLogEntry,
   type ConsoleLogLevel,
+  type DiffRegion,
   type FixturePageName,
   type HumanHandoffRecord,
   type NetworkInterceptRule,
@@ -339,12 +340,20 @@ export class TabManager {
     const totalPixels = wA * hA;
 
     if (wA !== wB || hA !== hB) {
-      return { beforeId, afterId, diffPixelCount: totalPixels, diffPercentage: 100, totalPixels, width: wA, height: hA, capturedAt: Date.now() };
+      return {
+        beforeId, afterId,
+        diffPixelCount: totalPixels, diffPercentage: 100, totalPixels,
+        width: wA, height: hA, diffRegions: [{ x: 0, y: 0, width: wA, height: hA }],
+        capturedAt: Date.now()
+      };
     }
 
     const rawA   = imgA.toBitmap(); // BGRA, 4 bytes/pixel
     const rawB   = imgB.toBitmap();
-    const diffBuf = Buffer.from(rawA); // copy A as base
+    // Start with the "before" image as the base — changed areas will be tinted.
+    const diffBuf = Buffer.from(rawA);
+    // Track which pixels changed as a flat boolean array for region detection.
+    const changed = new Uint8Array(totalPixels);
     let diffCount = 0;
 
     for (let i = 0; i < rawA.length; i += 4) {
@@ -353,10 +362,13 @@ export class TabManager {
       const dr = Math.abs(rawA[i + 2] - rawB[i + 2]);
       if (dr > 10 || dg > 10 || db > 10) {
         diffCount++;
-        diffBuf[i]     = 0;   // B
-        diffBuf[i + 1] = 0;   // G
-        diffBuf[i + 2] = 255; // R  (highlight changed pixels red)
-        diffBuf[i + 3] = 255; // A
+        const px = i >> 2;
+        changed[px] = 1;
+        // Blend: 50% original + 50% solid red → preserves context while marking change.
+        diffBuf[i]     = Math.round(rawA[i]     * 0.4);           // B dimmed
+        diffBuf[i + 1] = Math.round(rawA[i + 1] * 0.4);           // G dimmed
+        diffBuf[i + 2] = Math.round(rawA[i + 2] * 0.4 + 255 * 0.6); // R boosted
+        diffBuf[i + 3] = 255;
       }
     }
 
@@ -368,9 +380,26 @@ export class TabManager {
       diffPercentage: Math.round((diffCount / totalPixels) * 10000) / 100,
       totalPixels,
       width: wA, height: hA,
+      diffRegions: computeDiffRegions(changed, wA, hA),
       diffImageData: diffImg.toPNG().toString("base64"),
       capturedAt: Date.now()
     };
+  }
+
+  /** List all named screenshots currently held in the server-side cache. */
+  listScreenshots(): Array<{ id: string; tabId: string; url: string; width: number; height: number; capturedAt: number }> {
+    const out: Array<{ id: string; tabId: string; url: string; width: number; height: number; capturedAt: number }> = [];
+    for (const [id, shot] of this.screenshotCache) {
+      const tab = this.tabs.get(shot.tabId);
+      const url = tab ? tab.view.webContents.getURL() : "";
+      out.push({ id, tabId: shot.tabId, url, width: shot.width, height: shot.height, capturedAt: shot.capturedAt });
+    }
+    return out;
+  }
+
+  /** Remove a named screenshot from the cache. Returns false if it didn't exist. */
+  deleteScreenshot(id: string): boolean {
+    return this.screenshotCache.delete(id);
   }
 
   /**
@@ -1239,6 +1268,41 @@ export class TabManager {
 }
 
 // ── Module-level helpers ──────────────────────────────────────────────────────
+
+/**
+ * Given a flat Uint8Array of changed-pixel flags (1 = changed, indexed row-major)
+ * and image dimensions, returns merged axis-aligned bounding boxes of changed clusters.
+ * Pixels within MERGE_GAP pixels of an existing box are absorbed into it.
+ */
+function computeDiffRegions(changed: Uint8Array, width: number, height: number): DiffRegion[] {
+  const MERGE_GAP = 8;
+  const boxes: { x1: number; y1: number; x2: number; y2: number }[] = [];
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!changed[y * width + x]) continue;
+
+      // Find an existing box to absorb this pixel into (within MERGE_GAP).
+      let merged = false;
+      for (const box of boxes) {
+        if (
+          x >= box.x1 - MERGE_GAP && x <= box.x2 + MERGE_GAP &&
+          y >= box.y1 - MERGE_GAP && y <= box.y2 + MERGE_GAP
+        ) {
+          box.x1 = Math.min(box.x1, x);
+          box.y1 = Math.min(box.y1, y);
+          box.x2 = Math.max(box.x2, x);
+          box.y2 = Math.max(box.y2, y);
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) boxes.push({ x1: x, y1: y, x2: x, y2: y });
+    }
+  }
+
+  return boxes.map(b => ({ x: b.x1, y: b.y1, width: b.x2 - b.x1 + 1, height: b.y2 - b.y1 + 1 }));
+}
 
 /**
  * Returns true if url and method satisfy the given NetworkInterceptRule.

@@ -44,6 +44,7 @@ export type {
   ComponentNode,
   ComponentTreeReport,
   ConsoleLogEntry,
+  DiffRegion,
   HumanHandoffRecord,
   NetworkInterceptRule,
   NetworkRequestEntry,
@@ -321,6 +322,31 @@ export class BrowserClient {
   }
 
   /**
+   * List all named screenshots currently held in the server-side in-memory cache.
+   * Returns lightweight metadata only — no image data.
+   *
+   * @example
+   * const list = await browser.listScreenshots();
+   * for (const s of list) {
+   *   console.log(`${s.id}: ${s.url} — ${s.width}×${s.height}`);
+   * }
+   */
+  async listScreenshots(): Promise<Array<{ id: string; tabId: string; url: string; width: number; height: number; capturedAt: number }>> {
+    return this.get("/api/screenshots");
+  }
+
+  /**
+   * Remove a named screenshot from the server-side cache.
+   * Call this to free memory after you no longer need a captured baseline.
+   *
+   * @example
+   * await browser.deleteScreenshot("before-deploy");
+   */
+  async deleteScreenshot(id: string): Promise<void> {
+    await this.delete(`/api/screenshots/${encodeURIComponent(id)}`);
+  }
+
+  /**
    * Capture screenshots at multiple viewport breakpoints in one call.
    *
    * @param presets     Subset of preset names to capture. Defaults to ["mobile","tablet","laptop","desktop"].
@@ -463,6 +489,10 @@ export class BrowserClient {
 
   private post<T>(path: string, body: unknown): Promise<T> {
     return this.request("POST", path, body);
+  }
+
+  private delete<T>(path: string): Promise<T> {
+    return this.request("DELETE", path);
   }
 
   private request<T>(method: string, path: string, body?: unknown): Promise<T> {

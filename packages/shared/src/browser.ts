@@ -28,6 +28,15 @@ export type PageScreenshot = {
   height: number;
 };
 
+export type DiffRegion = {
+  /** Top-left x offset of the changed bounding box (pixels). */
+  x: number;
+  /** Top-left y offset of the changed bounding box (pixels). */
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type ScreenshotDiff = {
   beforeId: string;
   afterId: string;
@@ -37,7 +46,16 @@ export type ScreenshotDiff = {
   totalPixels: number;
   width: number;
   height: number;
-  /** Base64-encoded PNG with changed pixels highlighted in red. */
+  /**
+   * Axis-aligned bounding boxes of changed pixel clusters.
+   * Clusters closer than 8px are merged. Useful for pointing AI agents
+   * or CI reporters at exactly which parts of the page changed.
+   */
+  diffRegions: DiffRegion[];
+  /**
+   * Base64-encoded PNG with changed pixels highlighted as a semi-transparent
+   * red tint over the original, so surrounding context remains visible.
+   */
   diffImageData?: string;
   capturedAt: number;
 };
