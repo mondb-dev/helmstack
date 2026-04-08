@@ -28,9 +28,12 @@ import {
   type HumanHandoffRecord,
   type NetworkInterceptRule,
   type NetworkRequestEntry,
+  type PageGraph,
   type PageScreenshot,
   type PageSnapshot,
   type PageObservation,
+  type PerceptionDiff,
+  type PerceptionSnapshotEntry,
   type PerformanceReport,
   type PerceptionResult,
   type ScreenshotDiff,
@@ -97,6 +100,7 @@ export class TabManager {
   private attachedTabId: TabId | null = null;
   private viewport: ViewportRect = DEFAULT_VIEWPORT;
   private readonly screenshotCache = new Map<string, PageScreenshot>();
+  private readonly perceptionCache = new Map<string, { graph: PageGraph; tabId: TabId; url: string; title: string; capturedAt: number }>();
 
   constructor(window: BrowserWindow, appDir: string, userDataPath: string, pagePreloadPath: string) {
     this.window = window;
@@ -454,6 +458,51 @@ export class TabManager {
     }
 
     return { tabId, runId, captures, diffs, capturedAt: Date.now() };
+  }
+
+  // ── "What Broke?" Perception Snapshot + Diff ─────────────────────────────
+
+  /**
+   * Capture the current PageGraph for the tab and store it under `snapshotId`.
+   * Call this before a deploy (or any change) to create a baseline.
+   */
+  async saveNamedPerception(tabId: TabId, snapshotId: string): Promise<PerceptionSnapshotEntry> {
+    const result = await this.capturePerception(tabId);
+    const { webContents } = this.requireTab(tabId).view;
+    const entry = {
+      graph: result.graph,
+      tabId,
+      url: webContents.getURL(),
+      title: webContents.getTitle(),
+      capturedAt: Date.now()
+    };
+    this.perceptionCache.set(snapshotId, entry);
+    return { id: snapshotId, tabId, url: entry.url, title: entry.title, capturedAt: entry.capturedAt };
+  }
+
+  /** List all named perception snapshots in the cache (metadata only). */
+  listPerceptionSnapshots(): PerceptionSnapshotEntry[] {
+    return [...this.perceptionCache.entries()].map(([id, e]) => ({
+      id, tabId: e.tabId, url: e.url, title: e.title, capturedAt: e.capturedAt
+    }));
+  }
+
+  /** Remove a named perception snapshot from the cache. Returns false if not found. */
+  deletePerceptionSnapshot(id: string): boolean {
+    return this.perceptionCache.delete(id);
+  }
+
+  /**
+   * Compare two previously saved perception snapshots and return a structured
+   * diff of all structural changes — headings, forms, actions, alerts, title, etc.
+   */
+  diffPerception(beforeId: string, afterId: string): PerceptionDiff {
+    const before = this.perceptionCache.get(beforeId);
+    const after  = this.perceptionCache.get(afterId);
+    if (!before) throw new Error(`Perception snapshot "${beforeId}" not found`);
+    if (!after)  throw new Error(`Perception snapshot "${afterId}" not found`);
+
+    return computePerceptionDiff(beforeId, afterId, before, after);
   }
 
   // ── Performance metrics ───────────────────────────────────────────────────
@@ -1328,4 +1377,120 @@ function matchesMockRule(url: string, method: string, rule: NetworkInterceptRule
   // Glob: escape regex special chars then replace * with .*
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, String.raw`\$&`).replace(/\*/g, ".*");
   return new RegExp(`^${escaped}$`).test(url);
+}
+
+/**
+ * Pure structural diff of two perception graph snapshots.
+ * Operates on PageGraph fields: headings, forms, actions, alerts, title, kind, media.
+ */
+function computePerceptionDiff(
+  beforeId: string,
+  afterId: string,
+  before: { graph: PageGraph; url: string; title: string; capturedAt: number },
+  after:  { graph: PageGraph; url: string; title: string; capturedAt: number }
+): import("../../../../packages/shared/src/index.js").PerceptionDiff {
+  const changes: import("../../../../packages/shared/src/index.js").PerceptionChange[] = [];
+
+  const bg = before.graph;
+  const ag = after.graph;
+
+  // Title change
+  if (bg.title !== ag.title) {
+    changes.push({ kind: "title_changed", description: `Page title changed`, before: bg.title, after: ag.title });
+  }
+
+  // Page kind change
+  if (bg.kind !== ag.kind) {
+    changes.push({ kind: "page_kind_changed", description: `Page kind changed from "${bg.kind}" to "${ag.kind}"`, before: bg.kind, after: ag.kind });
+  }
+
+  // Headings diff
+  const beforeHeadings = new Set(bg.headings);
+  const afterHeadings  = new Set(ag.headings);
+  for (const h of bg.headings) {
+    if (!afterHeadings.has(h)) changes.push({ kind: "heading_removed", description: `Heading removed: "${h}"` });
+  }
+  for (const h of ag.headings) {
+    if (!beforeHeadings.has(h)) changes.push({ kind: "heading_added", description: `Heading added: "${h}"` });
+  }
+
+  // Forms diff — match by id, then name, then index
+  const beforeForms = new Map(bg.forms.map(f => [f.id, f]));
+  const afterForms  = new Map(ag.forms.map(f => [f.id, f]));
+  const allFormIds = new Set([...beforeForms.keys(), ...afterForms.keys()]);
+  for (const id of allFormIds) {
+    const bf = beforeForms.get(id);
+    const af = afterForms.get(id);
+    if (bf && !af) {
+      changes.push({ kind: "form_removed", description: `Form removed: "${bf.name ?? bf.purpose}" (${bf.fields.length} fields)` });
+    } else if (!bf && af) {
+      changes.push({ kind: "form_added", description: `Form added: "${af.name ?? af.purpose}" (${af.fields.length} fields)` });
+    } else if (bf && af) {
+      const bFieldIds = new Set(bf.fields.map(f => f.id));
+      const aFieldIds = new Set(af.fields.map(f => f.id));
+      const removedFields = bf.fields.filter(f => !aFieldIds.has(f.id)).map(f => f.label);
+      const addedFields   = af.fields.filter(f => !bFieldIds.has(f.id)).map(f => f.label);
+      if (removedFields.length || addedFields.length) {
+        const parts: string[] = [];
+        if (removedFields.length) parts.push(`removed fields: ${removedFields.join(", ")}`);
+        if (addedFields.length)   parts.push(`added fields: ${addedFields.join(", ")}`);
+        changes.push({ kind: "form_changed", description: `Form "${af.name ?? af.purpose}" changed — ${parts.join("; ")}` });
+      }
+    }
+  }
+
+  // Actions diff — match by label+kind key
+  const actionKey = (a: { label: string; kind: string }) => `${a.kind}::${a.label}`;
+  const beforeActions = new Set(bg.actions.map(actionKey));
+  const afterActions  = new Set(ag.actions.map(actionKey));
+  for (const a of bg.actions) {
+    if (!afterActions.has(actionKey(a))) changes.push({ kind: "action_removed", description: `Action removed: "${a.label}" (${a.kind})` });
+  }
+  for (const a of ag.actions) {
+    if (!beforeActions.has(actionKey(a))) changes.push({ kind: "action_added", description: `Action added: "${a.label}" (${a.kind})` });
+  }
+
+  // Alerts diff
+  const beforeAlerts = new Set(bg.alerts);
+  const afterAlerts  = new Set(ag.alerts);
+  for (const al of bg.alerts) {
+    if (!afterAlerts.has(al))  changes.push({ kind: "alert_removed", description: `Alert removed: "${al}"` });
+  }
+  for (const al of ag.alerts) {
+    if (!beforeAlerts.has(al)) changes.push({ kind: "alert_added",   description: `Alert added: "${al}"` });
+  }
+
+  // Media diff (by src/url key)
+  const mediaKey = (m: { src?: string; alt?: string }) => m.src ?? m.alt ?? "";
+  const beforeMedia = new Set(bg.media.map(mediaKey));
+  const afterMedia  = new Set(ag.media.map(mediaKey));
+  for (const m of bg.media) {
+    if (!afterMedia.has(mediaKey(m)))  changes.push({ kind: "media_removed", description: `Media removed: ${mediaKey(m) || "(unknown)"}` });
+  }
+  for (const m of ag.media) {
+    if (!beforeMedia.has(mediaKey(m))) changes.push({ kind: "media_added",   description: `Media added: ${mediaKey(m) || "(unknown)"}` });
+  }
+
+  // Build summary
+  let summary: string;
+  if (changes.length === 0) {
+    summary = "No structural changes detected.";
+  } else {
+    const counts: Record<string, number> = {};
+    for (const c of changes) {
+      const group = c.kind.replace(/_added|_removed|_changed/, "");
+      counts[group] = (counts[group] ?? 0) + 1;
+    }
+    const parts = Object.entries(counts).map(([g, n]) => `${n} ${g}${n > 1 ? "s" : ""} changed`);
+    summary = parts.join(", ") + ".";
+  }
+
+  return {
+    beforeId, afterId,
+    beforeUrl: before.url, afterUrl: after.url,
+    capturedAt: Date.now(),
+    changes,
+    summary,
+    identical: changes.length === 0
+  };
 }

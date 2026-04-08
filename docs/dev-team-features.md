@@ -348,20 +348,95 @@ await browser.assert(tabId, "the cart shows 3 items");
 // throws AssertionError with explanation if false
 ```
 
-### 11. "What Broke?" Post-Deploy Diff
-After a deploy, diff the before/after perception graphs and summarise structural changes — new elements, removed headings, changed form fields.
+### 11. "What Broke?" Post-Deploy Diff ✅
+Save a named perception snapshot before a deploy, then diff before/after to get a structured list of every structural change — headings added/removed, forms changed, actions gone, alerts added, title changed. No visual screenshots needed.
 
-```typescript
-const delta = await browser.diffPerception(beforePacket, afterPacket);
-// { added: [...], removed: [...], changed: [...], summary: "3 form fields removed..." }
+**API**
 ```
+POST   /api/tabs/:id/perception/named   { snapshotId: string }     → PerceptionSnapshotEntry
+POST   /api/perception/diff             { beforeId, afterId }       → PerceptionDiff
+GET    /api/perception                                               → PerceptionSnapshotEntry[]
+DELETE /api/perception/:id                                           → { ok: true }
+```
+**SDK**
+```typescript
+// 1. Snapshot before the deploy
+await browser.savePerceptionSnapshot(tabId, "pre-deploy-v1.4");
+
+// 2. Deploy your changes, navigate to the same URL
+await browser.navigate(tabId, "https://app.example.com");
+
+// 3. Snapshot after the deploy
+await browser.savePerceptionSnapshot(tabId, "post-deploy-v1.4");
+
+// 4. Diff
+const diff = await browser.diffPerception("pre-deploy-v1.4", "post-deploy-v1.4");
+
+console.log(diff.summary);
+// e.g. "2 headings changed, 1 form changed, 3 actions changed."
+
+for (const change of diff.changes) {
+  console.log(`[${change.kind}] ${change.description}`);
+  if (change.before) console.log(`  before: ${change.before}`);
+  if (change.after)  console.log(`  after:  ${change.after}`);
+}
+
+if (diff.identical) console.log("Zero structural changes — clean deploy!");
+
+// List and clean up
+const snaps = await browser.listPerceptionSnapshots();
+await browser.deletePerceptionSnapshot("pre-deploy-v1.4");
+await browser.deletePerceptionSnapshot("post-deploy-v1.4");
+```
+
+**Response shape** (`PerceptionDiff`):
+```typescript
+interface PerceptionDiff {
+  beforeId: string;
+  afterId: string;
+  beforeUrl: string;
+  afterUrl: string;
+  capturedAt: number;
+  changes: PerceptionChange[];
+  summary: string;    // "2 headings changed, 1 form changed."
+  identical: boolean; // true when changes.length === 0
+}
+
+interface PerceptionChange {
+  kind: PerceptionChangeKind;
+  description: string;  // human-readable one-liner
+  before?: string;      // set for title_changed / page_kind_changed
+  after?: string;
+}
+
+type PerceptionChangeKind =
+  | "heading_added"    | "heading_removed"
+  | "form_added"       | "form_removed"    | "form_changed"
+  | "action_added"     | "action_removed"
+  | "alert_added"      | "alert_removed"
+  | "title_changed"    | "page_kind_changed"
+  | "media_added"      | "media_removed";
+```
+
+**What is diffed:**
+| Field | How matched |
+|---|---|
+| `headings` | Set equality — any added or removed string |
+| `forms` | Matched by form `id`; field changes by field `id` within the form |
+| `actions` | Matched by `kind + label` key |
+| `alerts` | Set equality |
+| `title` | Direct string comparison |
+| `kind` (page kind) | Direct comparison — e.g. `"login"` → `"dashboard"` |
+| `media` | Matched by `src` URL or `alt` text |
+
+**How it works**: Pure in-process computation — no CDP calls. `savePerceptionSnapshot` captures the live `PageGraph` via the normal perception pipeline and stores it in a server-side `Map<id, {graph, url, title, capturedAt}>`. `diffPerception` compares two stored graphs field by field and produces a flat `PerceptionChange[]` list with a generated plain-English summary.
 
 ---
 
 ## Architecture Notes
 
-All three implemented features follow the same pattern:
-1. **Accumulate** in `TabRecord` (main process, per-tab state)
+All implemented features follow the same pattern:
+1. **Compute** in `TabManager` (main process — CDP calls or in-process logic)
 2. **Expose** via `AgentServer` REST endpoints
 3. **Consume** via `BrowserClient` SDK methods
 
@@ -376,3 +451,4 @@ CDP domains used:
 | Performance metrics | `Performance.enable`/`getMetrics`, `Runtime.evaluate` |
 | Accessibility audit | `Accessibility.enable`, `Accessibility.getFullAXTree` |
 | Component tree | `Runtime.evaluate` (in-page devtools hook probe) |
+| Perception diff | None — pure in-process PageGraph comparison |

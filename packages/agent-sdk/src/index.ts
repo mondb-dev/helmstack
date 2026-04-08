@@ -51,6 +51,10 @@ export type {
   PageGraph,
   PageObservation,
   PageScreenshot,
+  PerceptionChange,
+  PerceptionChangeKind,
+  PerceptionDiff,
+  PerceptionSnapshotEntry,
   PerformanceReport,
   ScreenshotDiff,
   SiteCapabilityManifest,
@@ -74,6 +78,8 @@ import type {
   ComponentTreeReport,
   HumanHandoffRecord,
   NetworkInterceptRule,
+  PerceptionDiff,
+  PerceptionSnapshotEntry,
   PerformanceReport,
   PageScreenshot,
   ScreenshotDiff,
@@ -412,6 +418,56 @@ export class BrowserClient {
    */
   async captureComponentTree(tabId: TabId): Promise<ComponentTreeReport> {
     return this.get(`/api/tabs/${tabId}/component-tree`);
+  }
+
+  // ── "What Broke?" Perception Snapshot + Diff ────────────────────────────
+
+  /**
+   * Capture the current PageGraph for a tab and store it under `snapshotId`.
+   * Call this **before** a deploy to create a structural baseline.
+   *
+   * @example
+   * await browser.savePerceptionSnapshot(tabId, "pre-deploy-v1.2");
+   */
+  async savePerceptionSnapshot(tabId: TabId, snapshotId: string): Promise<PerceptionSnapshotEntry> {
+    return this.post(`/api/tabs/${tabId}/perception/named`, { snapshotId });
+  }
+
+  /**
+   * Compare two previously saved perception snapshots.
+   * Returns every structural change: headings, forms, actions, alerts, title, media.
+   *
+   * @example
+   * const diff = await browser.diffPerception("pre-deploy", "post-deploy");
+   * console.log(diff.summary);
+   * for (const c of diff.changes) {
+   *   console.log(`[${c.kind}] ${c.description}`);
+   * }
+   * if (diff.identical) console.log("Nothing changed!");
+   */
+  async diffPerception(beforeId: string, afterId: string): Promise<PerceptionDiff> {
+    return this.post("/api/perception/diff", { beforeId, afterId });
+  }
+
+  /**
+   * List all named perception snapshots currently in the server-side cache.
+   *
+   * @example
+   * const snaps = await browser.listPerceptionSnapshots();
+   * // [{ id, tabId, url, title, capturedAt }, ...]
+   */
+  async listPerceptionSnapshots(): Promise<PerceptionSnapshotEntry[]> {
+    return this.get("/api/perception");
+  }
+
+  /**
+   * Remove a named perception snapshot from the cache to free memory.
+   *
+   * @example
+   * await browser.deletePerceptionSnapshot("pre-deploy-v1.2");
+   */
+  async deletePerceptionSnapshot(id: string): Promise<void> {
+    await this.delete(`/api/perception/${encodeURIComponent(id)}`);
   }
 
   // ── SSE stream ──────────────────────────────────────────────────────────

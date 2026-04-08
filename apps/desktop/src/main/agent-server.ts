@@ -55,6 +55,10 @@ type SseClient = http.ServerResponse;
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
  * GET  /api/screenshots                 → {id,tabId,url,width,height,capturedAt}[]
  * DELETE /api/screenshots/:id           removes snapshot from cache
+ * POST /api/tabs/:id/perception/named   { snapshotId } → PerceptionSnapshotEntry
+ * POST /api/perception/diff             { beforeId, afterId } → PerceptionDiff
+ * GET  /api/perception                  → PerceptionSnapshotEntry[]
+ * DELETE /api/perception/:id            removes perception snapshot from cache
  *
  * SSE stream
  * ----------
@@ -425,6 +429,33 @@ export class AgentServer {
     const ctreeMatch = p.match(/^\/api\/tabs\/([^/]+)\/component-tree$/);
     if (method === "GET" && ctreeMatch) {
       return json(res, await this.tabs.captureComponentTree(ctreeMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+    }
+
+    // ── "What Broke?" Perception snapshot + diff ──────────────────────────────
+    const namedPerceptionMatch = p.match(/^\/api\/tabs\/([^/]+)\/perception\/named$/);
+    if (method === "POST" && namedPerceptionMatch) {
+      const body = await readBody(req);
+      if (typeof body.snapshotId !== "string") return error(res, 400, "snapshotId string is required");
+      return json(res, await this.tabs.saveNamedPerception(namedPerceptionMatch[1] as import("../../../../packages/shared/src/index.js").TabId, body.snapshotId));
+    }
+
+    if (method === "POST" && p === "/api/perception/diff") {
+      const body = await readBody(req);
+      if (typeof body.beforeId !== "string" || typeof body.afterId !== "string") {
+        return error(res, 400, "beforeId and afterId strings are required");
+      }
+      return json(res, this.tabs.diffPerception(body.beforeId, body.afterId));
+    }
+
+    if (method === "GET" && p === "/api/perception") {
+      return json(res, this.tabs.listPerceptionSnapshots());
+    }
+
+    const deletePerceptionMatch = p.match(/^\/api\/perception\/([^/]+)$/);
+    if (method === "DELETE" && deletePerceptionMatch) {
+      const deleted = this.tabs.deletePerceptionSnapshot(decodeURIComponent(deletePerceptionMatch[1]));
+      if (!deleted) return error(res, 404, "Perception snapshot not found");
+      return json(res, { ok: true });
     }
 
     // ── 404 ──────────────────────────────────────────────────────────────────

@@ -219,3 +219,43 @@ export type ComponentTreeReport = {
   /** Total number of component nodes found. */
   nodeCount: number;
 };
+
+// ── "What Broke?" Post-Deploy Perception Diff ────────────────────────────
+
+export type PerceptionChangeKind =
+  | "heading_added"    | "heading_removed"
+  | "form_added"       | "form_removed"      | "form_changed"
+  | "action_added"     | "action_removed"
+  | "alert_added"      | "alert_removed"
+  | "title_changed"    | "page_kind_changed"
+  | "media_added"      | "media_removed";
+
+export type PerceptionChange = {
+  kind: PerceptionChangeKind;
+  /** Human-readable one-line description of the change. */
+  description: string;
+  /** Optional before/after values for changed fields. */
+  before?: string;
+  after?: string;
+};
+
+export type PerceptionSnapshotEntry = {
+  id: string;
+  tabId: string;
+  url: string;
+  title: string;
+  capturedAt: number;
+};
+
+export type PerceptionDiff = {
+  beforeId: string;
+  afterId: string;
+  beforeUrl: string;
+  afterUrl: string;
+  capturedAt: number;
+  changes: PerceptionChange[];
+  /** One-sentence plain-English summary of the most important changes. */
+  summary: string;
+  /** True when no structural differences were found. */
+  identical: boolean;
+};
