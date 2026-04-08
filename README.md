@@ -95,6 +95,7 @@ Today:
 
 ## Implemented
 
+**Core browser substrate**
 - custom Electron browser shell
 - `WebContentsView` tab surface
 - HTTP+SSE agent server on `127.0.0.1:7070`
@@ -121,6 +122,19 @@ Today:
 - perception regression tests with fixture and golden coverage
 - anti-detection hardening (navigator.webdriver, window.chrome, WebGL, canvas fingerprinting)
 - Chrome extension loading (DevTools, ad-blockers, etc.)
+- media perception — video/audio state capture (`ObservedMedia` in `PageGraph`)
+- action retry/recovery — `withDomRetry()` with exponential backoff (3 attempts)
+
+**Dev tooling (all exposed via REST + SDK)**
+- responsive multi-viewport capture suite — screenshot at mobile/tablet/desktop/4K simultaneously, with optional diffs
+- performance metrics — Core Web Vitals + extended CDP metrics (LCP, CLS, FID/INP, TBT, TTI, JS heap, layout counts)
+- accessibility audit — WCAG 2.2-aligned rule set against the live AX tree (img alt, button/link labels, input labels)
+- component tree capture — React 16–18, Vue 2/3, Svelte detection with depth-limited prop extraction
+- visual snapshot diff — pixel-level diff with blended overlay, bounding-box change regions, named snapshots
+- "What Broke?" perception diff — structured before/after `PageGraph` comparison (headings, forms, actions, alerts, title)
+- Three.js scene inspector — scene graph walk, draw-call stats, FPS estimate, AI feedback workflow
+- natural language assertions — `browser.assert(tabId, "the cart shows 3 items")` with heuristic evaluator + evidence bundle
+- storage inspector — read/write/clear `localStorage`, `sessionStorage`, cookies, IndexedDB
 
 ## Agent Example
 
@@ -247,11 +261,96 @@ The browser hardens each tab against bot-detection fingerprinting using CDP `Pag
 
 These patches run in the page's main JavaScript world and persist across navigations. See `apps/desktop/src/main/anti-detection.ts` for implementation details.
 
+## Dev Tooling for Web Teams
+
+HelmStack exposes a full suite of dev-team-focused tools via REST and the SDK. All are zero-dependency — no headless mode, no separate service, no config.
+
+### Responsive Multi-Viewport Capture
+
+```typescript
+const suite = await browser.captureViewportSuite(tabId);
+// Screenshots at mobile (390×844), tablet (768×1024), desktop (1440×900), 4K (2560×1440)
+// Optional pixel diffs between viewports
+```
+
+### Performance Metrics
+
+```typescript
+const perf = await browser.getPerformanceMetrics(tabId);
+// LCP, CLS, FID/INP, TBT, TTI, JS heap, layout shifts, DOM nodes
+```
+
+### Accessibility Audit
+
+```typescript
+const report = await browser.auditAccessibility(tabId);
+for (const v of report.violations) {
+  console.log(`[${v.impact}] ${v.rule}: ${v.description} — ${v.selector}`);
+}
+```
+
+### Component Tree (React / Vue / Svelte)
+
+```typescript
+const ct = await browser.captureComponentTree(tabId);
+console.log(`Framework: ${ct.framework}, ${ct.nodeCount} components`);
+```
+
+### Visual Snapshot Diff
+
+```typescript
+const before = await browser.takeScreenshot(tabId, "before-deploy");
+// … make changes …
+const after  = await browser.takeScreenshot(tabId, "after-deploy");
+const diff   = await browser.diffScreenshots("before-deploy", "after-deploy");
+console.log(`${diff.diffPixelCount} changed pixels across ${diff.diffRegions.length} regions`);
+```
+
+### "What Broke?" Post-Deploy Perception Diff
+
+```typescript
+await browser.savePerceptionSnapshot(tabId, "pre-deploy");
+// … deploy …
+await browser.savePerceptionSnapshot(tabId, "post-deploy");
+const diff = await browser.diffPerception("pre-deploy", "post-deploy");
+console.log(diff.summary); // "2 headings changed, 1 form changed, 3 actions removed."
+```
+
+### Three.js Scene Inspector
+
+```typescript
+const scene = await browser.captureThreeJsScene(tabId);
+// scene.renderer.drawCalls, scene.fps, scene.summary, full object tree
+// Feed to an LLM → "847 draw calls — merge these 14 identical meshes"
+```
+
+### Natural Language Assertions
+
+```typescript
+await browser.assert(tabId, "the cart shows 3 items");
+await browser.assert(tabId, "no error messages");
+await browser.assert(tabId, "the submit button is disabled");
+// Throws AssertionError on failure with plain-English explanation
+```
+
+### Storage Inspector
+
+```typescript
+// Seed test state
+await browser.setStorage(tabId, "local", { "auth-token": "test-jwt" });
+await browser.setCookie(tabId, { name: "session_id", value: "test-sess", httpOnly: true });
+
+// Full snapshot
+const snap = await browser.captureStorage(tabId);
+// snap.localStorage, snap.sessionStorage, snap.cookies, snap.indexedDb
+```
+
+See [`docs/dev-team-features.md`](docs/dev-team-features.md) for the complete API reference with request/response shapes and full examples.
+
 ## Not Implemented Yet
 
-- real WebMCP invocation
-- media perception for video/audio
-- packaged OS installers (macOS, Windows, Linux)
+- real WebMCP invocation (detection scaffolded, invocation pending)
+- packaged OS installers (macOS .dmg, Windows .exe, Linux .AppImage)
 
 ## Platforms
 
@@ -451,8 +550,7 @@ npm run build
 ## Immediate Next Steps
 
 1. **WebMCP invocation** — real site-provided structured capabilities (detection is scaffolded, invocation is not)
-2. **Media perception** — video/audio state capture for YouTube, streaming sites, etc.
-3. **Action recovery** — robust retry strategies for flaky DOM targets and navigation timing
-4. **LLM agent examples** — OpenAI, Anthropic, LangGraph integration demos beyond the basic intent agent
-5. **Packaged installers** — macOS .dmg, Windows .exe, Linux .AppImage/.deb
-6. **Multi-account session isolation** — separate cookie jars per account/profile
+2. **Interaction recorder** — record agent actions on a tab and export as a replayable HelmStack test script
+3. **LLM agent examples** — OpenAI, Anthropic, LangGraph integration demos beyond the basic intent agent
+4. **Packaged installers** — macOS .dmg, Windows .exe, Linux .AppImage/.deb
+5. **Multi-account session isolation** — separate cookie jars per account/profile

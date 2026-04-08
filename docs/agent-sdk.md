@@ -443,19 +443,143 @@ async function handle2FA(tabId: string) {
 }
 ```
 
+## Dev Tooling for Web Teams
+
+All dev-team tools are available on `BrowserClient` with no extra configuration.
+
+### Viewport Suite
+
+```typescript
+const suite = await browser.captureViewportSuite(tabId);
+// Screenshots at mobile / tablet / desktop / 4K simultaneously
+// Optionally includes pixel diffs between adjacent breakpoints
+for (const entry of suite.captures) {
+  console.log(`${entry.preset}: ${entry.screenshot.width}×${entry.screenshot.height}`);
+}
+```
+
+### Performance Metrics
+
+```typescript
+const perf = await browser.getPerformanceMetrics(tabId);
+console.log(`LCP: ${perf.lcp}ms  CLS: ${perf.cls}  TBT: ${perf.tbt}ms`);
+console.log(`JS heap: ${(perf.jsHeapUsed / 1e6).toFixed(1)} MB`);
+```
+
+### Accessibility Audit
+
+```typescript
+const report = await browser.auditAccessibility(tabId);
+for (const v of report.violations) {
+  console.log(`[${v.impact}] ${v.rule}: ${v.description}`);
+  console.log(`  selector: ${v.selector}`);
+}
+```
+
+### Component Tree
+
+```typescript
+const ct = await browser.captureComponentTree(tabId);
+// Detects React 16-18, Vue 2/3, Svelte
+console.log(`Framework: ${ct.framework}, ${ct.nodeCount} components`);
+```
+
+### Visual Snapshot Diff
+
+```typescript
+const before = await browser.takeScreenshot(tabId, "before");
+// … make changes …
+const after  = await browser.takeScreenshot(tabId, "after");
+const diff   = await browser.diffScreenshots("before", "after");
+console.log(`${diff.diffPixelCount} changed pixels`);
+console.log(`${diff.diffRegions.length} change regions`);
+// diff.overlayPng — blended overlay (40% original + 60% red tint)
+```
+
+### Perception Diff ("What Broke?")
+
+```typescript
+await browser.savePerceptionSnapshot(tabId, "pre-deploy");
+// … deploy your changes …
+await browser.savePerceptionSnapshot(tabId, "post-deploy");
+const diff = await browser.diffPerception("pre-deploy", "post-deploy");
+console.log(diff.summary);
+for (const change of diff.changes) {
+  console.log(`[${change.kind}] ${change.description}`);
+}
+```
+
+### Three.js Scene Inspector
+
+```typescript
+const report = await browser.captureThreeJsScene(tabId);
+if (report.detected) {
+  console.log(`Draw calls: ${report.renderer?.drawCalls}`);
+  console.log(`FPS: ${report.fps?.fps}`);
+  // Feed report to an LLM for AI code feedback
+}
+```
+
+### Natural Language Assertions
+
+```typescript
+// Throws AssertionError on failure (default):
+await browser.assert(tabId, "the checkout button is visible");
+await browser.assert(tabId, "there are no error messages");
+await browser.assert(tabId, "the cart shows 3 items");
+await browser.assert(tabId, "the submit button is disabled");
+
+// Get raw result without throwing:
+const r = await browser.assert(tabId, "the total is correct", { throw: false });
+if (!r.pass) {
+  console.log(`FAIL (${r.confidence}): ${r.explanation}`);
+  // r.evidence — compact page-graph bundle for LLM forwarding
+}
+```
+
+### Storage Inspector
+
+```typescript
+// Full snapshot
+const snap = await browser.captureStorage(tabId);
+console.log(`${snap.localStorage.length} localStorage keys`);
+console.log(`${snap.cookies.length} cookies`);
+console.log(`${snap.indexedDb.length} IndexedDB databases`);
+
+// Seed test state
+await browser.setStorage(tabId, "local", { "auth-token": "test-jwt", "user-id": "42" });
+await browser.setCookie(tabId, { name: "session_id", value: "test-sess", httpOnly: true });
+
+// Read & clean up
+const entries = await browser.getStorage(tabId, "local", "auth-token");
+await browser.clearStorage(tabId, "session");
+await browser.clearCookies(tabId);
+```
+
+See [`docs/dev-team-features.md`](dev-team-features.md) for the complete reference, request/response shapes, and more examples.
+
 ## TypeScript Types
 
 The SDK re-exports all shared types for convenience:
 
 ```typescript
 import type {
+  AssertionConfidence,
+  AssertionEvidence,
+  AssertionResult,
   BrowserPerceptionPacket,
   BrowserOutputCommand,
   BrowserCommandResult,
+  CookieEntry,
+  IndexedDbDatabase,
   PageGraph,
   SiteCapabilityManifest,
+  StorageArea,
+  StorageEntry,
+  StorageReport,
   TabSummary,
   AccountSummary,
+  ThreeSceneReport,
   TotpResult
 } from "@helmstack/agent-sdk";
 ```
