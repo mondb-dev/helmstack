@@ -95,6 +95,8 @@ export type BrowserCommandResult =
       observation?: PageObservation | null;
       graph?: PageGraph;
       effects?: ProposedEffect[];
+      /** Arbitrary tool output, e.g. from a WebMCP invocation. */
+      result?: unknown;
     }
   | {
       status: "awaiting_approval";

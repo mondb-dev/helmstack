@@ -87,7 +87,8 @@ export async function executeBrowserAction(webContents: WebContents, action: Bro
       await callBackendNode(webContents, action.node.backendNodeId, submitFunctionSource());
       return {} satisfies DomActuationEffects;
     case "await_human":
-      throw new Error(`Manual handoff requested for ${action.reason}. Human handoff plumbing is not implemented yet.`);
+      // Handled at the registry level via createHandoff() before reaching the DOM actuator.
+      return {} satisfies DomActuationEffects;
     case "navigate":
       return {} satisfies DomActuationEffects;
   }

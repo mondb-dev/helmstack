@@ -4,7 +4,9 @@
   "title": "Shadow Signup",
   "kind": "signup",
   "topHeading": "Create account",
-  "headings": ["Create account"],
+  "headings": [
+    "Create account"
+  ],
   "forms": [
     {
       "id": "form-1",
@@ -51,6 +53,7 @@
     }
   ],
   "alerts": [],
+  "media": [],
   "oauthProviders": [],
   "accessibility": {
     "nodeCount": 4,
@@ -59,11 +62,22 @@
       "textbox": 2,
       "button": 1
     },
-    "headingTrail": ["Create account"],
+    "headingTrail": [
+      "Create account"
+    ],
     "interactiveNodes": [
-      { "role": "textbox", "name": "Email" },
-      { "role": "textbox", "name": "Password" },
-      { "role": "button", "name": "Create Account" }
+      {
+        "role": "textbox",
+        "name": "Email"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      },
+      {
+        "role": "button",
+        "name": "Create Account"
+      }
     ]
   },
   "signals": {

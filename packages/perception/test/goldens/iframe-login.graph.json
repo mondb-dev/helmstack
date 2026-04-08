@@ -4,7 +4,9 @@
   "title": "Embedded Auth",
   "kind": "login",
   "topHeading": "Log in",
-  "headings": ["Log in"],
+  "headings": [
+    "Log in"
+  ],
   "forms": [
     {
       "id": "form-1",
@@ -50,6 +52,7 @@
     }
   ],
   "alerts": [],
+  "media": [],
   "oauthProviders": [],
   "accessibility": {
     "nodeCount": 4,
@@ -58,11 +61,22 @@
       "textbox": 2,
       "button": 1
     },
-    "headingTrail": ["Log in"],
+    "headingTrail": [
+      "Log in"
+    ],
     "interactiveNodes": [
-      { "role": "textbox", "name": "Email" },
-      { "role": "textbox", "name": "Password" },
-      { "role": "button", "name": "Sign in" }
+      {
+        "role": "textbox",
+        "name": "Email"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      },
+      {
+        "role": "button",
+        "name": "Sign in"
+      }
     ]
   },
   "signals": {

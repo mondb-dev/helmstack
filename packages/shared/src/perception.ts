@@ -2,6 +2,30 @@ import type { TabId } from "./browser.js";
 
 export type PageKind = "landing" | "signup" | "login" | "checkout" | "form" | "dashboard";
 
+export type MediaKind = "video" | "audio";
+
+export type MediaReadyState =
+  | "have_nothing"
+  | "have_metadata"
+  | "have_current_data"
+  | "have_future_data"
+  | "have_enough_data";
+
+export type ObservedMedia = {
+  id: string;
+  kind: MediaKind;
+  src?: string;
+  title?: string;
+  paused: boolean;
+  muted: boolean;
+  volume: number;
+  currentTime: number;
+  duration: number;
+  loop: boolean;
+  readyState: MediaReadyState;
+  selectorHint: string;
+};
+
 export type FieldType =
   | "text"
   | "email"
@@ -59,6 +83,7 @@ export type PageObservation = {
   forms: ObservedForm[];
   primaryActions: ObservedAction[];
   alerts: string[];
+  media: ObservedMedia[];
 };
 
 export type AccessibilitySummary = {
@@ -81,6 +106,7 @@ export type PageGraph = {
   forms: ObservedForm[];
   actions: ObservedAction[];
   alerts: string[];
+  media: ObservedMedia[];
   oauthProviders: string[];
   accessibility: AccessibilitySummary;
   signals: {

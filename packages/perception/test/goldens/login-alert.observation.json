@@ -4,7 +4,9 @@
   "title": "Login",
   "timestamp": 1710000000000,
   "pageKind": "login",
-  "headings": ["Log in"],
+  "headings": [
+    "Log in"
+  ],
   "forms": [
     {
       "id": "form-1",
@@ -48,5 +50,8 @@
       "disabled": false
     }
   ],
-  "alerts": ["Incorrect email or password"]
+  "alerts": [
+    "Incorrect email or password"
+  ],
+  "media": []
 }

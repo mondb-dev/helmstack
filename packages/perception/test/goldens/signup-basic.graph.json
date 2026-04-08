@@ -4,7 +4,9 @@
   "title": "Sign up",
   "kind": "signup",
   "topHeading": "Create account",
-  "headings": ["Create account"],
+  "headings": [
+    "Create account"
+  ],
   "forms": [
     {
       "id": "form-1",
@@ -68,7 +70,10 @@
     }
   ],
   "alerts": [],
-  "oauthProviders": ["google"],
+  "media": [],
+  "oauthProviders": [
+    "google"
+  ],
   "accessibility": {
     "nodeCount": 5,
     "roleCounts": {
@@ -76,12 +81,26 @@
       "textbox": 2,
       "button": 2
     },
-    "headingTrail": ["Create account"],
+    "headingTrail": [
+      "Create account"
+    ],
     "interactiveNodes": [
-      { "role": "textbox", "name": "Email" },
-      { "role": "textbox", "name": "Password" },
-      { "role": "button", "name": "Create Account" },
-      { "role": "button", "name": "Continue with Google" }
+      {
+        "role": "textbox",
+        "name": "Email"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      },
+      {
+        "role": "button",
+        "name": "Create Account"
+      },
+      {
+        "role": "button",
+        "name": "Continue with Google"
+      }
     ]
   },
   "signals": {

@@ -1,8 +1,10 @@
 import type {
   FormPurpose,
+  MediaReadyState,
   ObservedAction,
   ObservedField,
   ObservedForm,
+  ObservedMedia,
   PageKind,
   PageObservation,
   TabId
@@ -15,6 +17,7 @@ export function extractPageObservation(tabId: TabId): PageObservation {
   const forms = collectForms();
   const primaryActions = collectPrimaryActions();
   const alerts = collectAlerts();
+  const media = collectMedia();
 
   return {
     tabId,
@@ -25,7 +28,8 @@ export function extractPageObservation(tabId: TabId): PageObservation {
     headings,
     forms,
     primaryActions,
-    alerts
+    alerts,
+    media
   };
 }
 
@@ -203,6 +207,51 @@ function collectAlerts(): string[] {
       .map((element) => normalizeText(element.textContent))
       .filter(Boolean)
   ).slice(0, 8);
+}
+
+const READY_STATE_LABELS: MediaReadyState[] = [
+  "have_nothing",
+  "have_metadata",
+  "have_current_data",
+  "have_future_data",
+  "have_enough_data"
+];
+
+function collectMedia(): ObservedMedia[] {
+  return collectElementsAcrossRoots("video, audio")
+    .filter((el): el is HTMLVideoElement | HTMLAudioElement =>
+      el instanceof HTMLVideoElement || el instanceof HTMLAudioElement
+    )
+    .filter((el) => {
+      // Video must be visible. Audio is often invisible — include if it has a source.
+      if (el instanceof HTMLAudioElement) {
+        return el.currentSrc || el.src || el.readyState > 0;
+      }
+      return isVisible(el);
+    })
+    .slice(0, 8)
+    .map((el, index): ObservedMedia => {
+      const src = el.currentSrc || el.getAttribute("src") || undefined;
+      const title =
+        normalizeText(el.getAttribute("title")) ||
+        normalizeText(el.getAttribute("aria-label")) ||
+        undefined;
+
+      return {
+        id: `media-${index + 1}`,
+        kind: el instanceof HTMLVideoElement ? "video" : "audio",
+        ...(src ? { src } : {}),
+        ...(title ? { title } : {}),
+        paused: el.paused,
+        muted: el.muted,
+        volume: el.volume,
+        currentTime: el.currentTime,
+        duration: el.duration,
+        loop: el.loop,
+        readyState: READY_STATE_LABELS[el.readyState] ?? "have_nothing",
+        selectorHint: buildSelectorHint(el)
+      };
+    });
 }
 
 function extractField(field: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, index: number): ObservedField {

@@ -4,7 +4,9 @@
   "title": "Shadow Signup",
   "timestamp": 1710000000000,
   "pageKind": "signup",
-  "headings": ["Create account"],
+  "headings": [
+    "Create account"
+  ],
   "forms": [
     {
       "id": "form-1",
@@ -50,5 +52,6 @@
       "disabled": false
     }
   ],
-  "alerts": []
+  "alerts": [],
+  "media": []
 }

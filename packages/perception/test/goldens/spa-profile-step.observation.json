@@ -4,7 +4,9 @@
   "title": "Finish setup",
   "timestamp": 1710000000000,
   "pageKind": "form",
-  "headings": ["Finish account setup"],
+  "headings": [
+    "Finish account setup"
+  ],
   "forms": [
     {
       "id": "form-1",
@@ -49,5 +51,6 @@
       "disabled": false
     }
   ],
-  "alerts": []
+  "alerts": [],
+  "media": []
 }

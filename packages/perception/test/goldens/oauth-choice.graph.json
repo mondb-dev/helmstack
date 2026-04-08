@@ -4,7 +4,9 @@
   "title": "Register",
   "kind": "signup",
   "topHeading": "Create account",
-  "headings": ["Create account"],
+  "headings": [
+    "Create account"
+  ],
   "forms": [],
   "actions": [
     {
@@ -27,17 +29,29 @@
     }
   ],
   "alerts": [],
-  "oauthProviders": ["google", "github"],
+  "media": [],
+  "oauthProviders": [
+    "google",
+    "github"
+  ],
   "accessibility": {
     "nodeCount": 3,
     "roleCounts": {
       "heading": 1,
       "link": 2
     },
-    "headingTrail": ["Create account"],
+    "headingTrail": [
+      "Create account"
+    ],
     "interactiveNodes": [
-      { "role": "link", "name": "Continue with Google" },
-      { "role": "link", "name": "Continue with GitHub" }
+      {
+        "role": "link",
+        "name": "Continue with Google"
+      },
+      {
+        "role": "link",
+        "name": "Continue with GitHub"
+      }
     ]
   },
   "signals": {

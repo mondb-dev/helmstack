@@ -4,7 +4,9 @@
   "title": "Embedded Auth",
   "timestamp": 1710000000000,
   "pageKind": "login",
-  "headings": ["Log in"],
+  "headings": [
+    "Log in"
+  ],
   "forms": [
     {
       "id": "form-1",
@@ -49,5 +51,6 @@
       "disabled": false
     }
   ],
-  "alerts": []
+  "alerts": [],
+  "media": []
 }

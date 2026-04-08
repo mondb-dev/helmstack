@@ -4,7 +4,9 @@
   "title": "Login",
   "kind": "login",
   "topHeading": "Log in",
-  "headings": ["Log in"],
+  "headings": [
+    "Log in"
+  ],
   "forms": [
     {
       "id": "form-1",
@@ -48,7 +50,10 @@
       "disabled": false
     }
   ],
-  "alerts": ["Incorrect email or password"],
+  "alerts": [
+    "Incorrect email or password"
+  ],
+  "media": [],
   "oauthProviders": [],
   "accessibility": {
     "nodeCount": 5,
@@ -58,11 +63,22 @@
       "button": 1,
       "alert": 1
     },
-    "headingTrail": ["Log in"],
+    "headingTrail": [
+      "Log in"
+    ],
     "interactiveNodes": [
-      { "role": "textbox", "name": "Email address" },
-      { "role": "textbox", "name": "Password" },
-      { "role": "button", "name": "Sign in" }
+      {
+        "role": "textbox",
+        "name": "Email address"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      },
+      {
+        "role": "button",
+        "name": "Sign in"
+      }
     ]
   },
   "signals": {
