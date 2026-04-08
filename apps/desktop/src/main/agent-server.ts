@@ -51,6 +51,8 @@ type SseClient = http.ServerResponse;
  * POST /api/screenshots/diff             { beforeId, afterId } → ScreenshotDiff
  * POST /api/tabs/:id/viewport-suite      { presets?, includeDiffs? } → ViewportSuiteReport
  * GET  /api/tabs/:id/performance         → PerformanceReport
+ * GET  /api/tabs/:id/a11y               → A11yAuditReport
+ * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
  *
  * SSE stream
  * ----------
@@ -396,6 +398,18 @@ export class AgentServer {
     const perfMatch = p.match(/^\/api\/tabs\/([^/]+)\/performance$/);
     if (method === "GET" && perfMatch) {
       return json(res, await this.tabs.capturePerformanceMetrics(perfMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+    }
+
+    // ── Accessibility audit ───────────────────────────────────────────────────
+    const a11yMatch = p.match(/^\/api\/tabs\/([^/]+)\/a11y$/);
+    if (method === "GET" && a11yMatch) {
+      return json(res, await this.tabs.auditAccessibility(a11yMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+    }
+
+    // ── Component tree ────────────────────────────────────────────────────────
+    const ctreeMatch = p.match(/^\/api\/tabs\/([^/]+)\/component-tree$/);
+    if (method === "GET" && ctreeMatch) {
+      return json(res, await this.tabs.captureComponentTree(ctreeMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
     }
 
     // ── 404 ──────────────────────────────────────────────────────────────────

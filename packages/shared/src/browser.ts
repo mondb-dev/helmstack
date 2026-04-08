@@ -151,3 +151,53 @@ export type PerformanceReport = {
   /** Raw CDP Performance.getMetrics values (keyed by metric name). */
   cdpMetrics: Record<string, number>;
 };
+
+// ── Accessibility Audit ───────────────────────────────────────────────────
+
+export type A11yImpact = "critical" | "serious" | "moderate" | "minor";
+
+export type A11yViolation = {
+  rule: string;
+  impact: A11yImpact;
+  /** CSS-style selector hint identifying the offending node. */
+  selector: string;
+  /** Human-readable explanation of why this is a violation. */
+  description: string;
+  /** AX role of the node, e.g. "button", "img". */
+  role: string;
+  /** Accessible name of the node, if present. */
+  name?: string;
+};
+
+export type A11yAuditReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  violations: A11yViolation[];
+  /** Number of checked nodes that passed all rules. */
+  passes: number;
+  /** Total AX nodes inspected. */
+  nodeCount: number;
+};
+
+// ── Component Tree ────────────────────────────────────────────────────────
+
+export type ComponentFramework = "react" | "vue" | "svelte" | "angular" | "unknown";
+
+export type ComponentNode = {
+  name: string;
+  /** Stringified props (shallow, truncated to avoid huge payloads). */
+  props: Record<string, string>;
+  children: ComponentNode[];
+};
+
+export type ComponentTreeReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  framework: ComponentFramework;
+  /** Null when no devtools hook is detected or page hasn't loaded the framework. */
+  tree: ComponentNode | null;
+  /** Total number of component nodes found. */
+  nodeCount: number;
+};

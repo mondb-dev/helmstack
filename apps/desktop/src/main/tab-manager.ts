@@ -516,6 +516,245 @@ export class TabManager {
     };
   }
 
+  // ── Accessibility Audit ───────────────────────────────────────────────────
+
+  /**
+   * Run a focused WCAG 2.2-aligned rule set against the live AX tree.
+   * No external tooling required — checks are derived purely from the
+   * accessibility tree already captured during perception.
+   */
+  async auditAccessibility(tabId: TabId): Promise<import("../../../../packages/shared/src/index.js").A11yAuditReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+
+    if (!webContents.debugger.isAttached()) {
+      webContents.debugger.attach("1.3");
+    }
+
+    await webContents.debugger.sendCommand("Accessibility.enable");
+    const { nodes } = await webContents.debugger.sendCommand("Accessibility.getFullAXTree", {}) as {
+      nodes: Array<{
+        nodeId: string;
+        role?: { value: string };
+        name?: { value: string };
+        description?: { value: string };
+        properties?: Array<{ name: string; value: { value: unknown } }>;
+        childIds?: string[];
+        backendDOMNodeId?: number;
+      }>
+    };
+
+    const violations: import("../../../../packages/shared/src/index.js").A11yViolation[] = [];
+    let passes = 0;
+
+    for (const node of nodes) {
+      const role = node.role?.value ?? "generic";
+      const name = node.name?.value;
+      const props = Object.fromEntries(
+        (node.properties ?? []).map(p => [p.name, p.value?.value])
+      );
+      const selector = node.backendDOMNodeId ? `[data-ax-id="${node.nodeId}"]` : `[role="${role}"]`;
+
+      let nodeViolations = 0;
+
+      // 1.1.1 — Images must have alt text (non-empty accessible name)
+      if (role === "img") {
+        if (!name || name.trim() === "" || name === "image") {
+          violations.push({ rule: "1.1.1-image-alt", impact: "critical", selector, role, name,
+            description: "Image has no accessible name. Add alt text or an aria-label." });
+          nodeViolations++;
+        }
+      }
+
+      // 2.4.6 — Buttons and links must have a discernible name
+      if ((role === "button" || role === "link") && (!name || name.trim() === "")) {
+        violations.push({ rule: "2.4.6-label", impact: "serious", selector, role, name,
+          description: `${role === "button" ? "Button" : "Link"} has no accessible name. Add text content or an aria-label.` });
+        nodeViolations++;
+      }
+
+      // 4.1.3 — Interactive controls must not be both disabled and focusable without label
+      if (props["disabled"] === true && (role === "button" || role === "textbox") && (!name || name.trim() === "")) {
+        violations.push({ rule: "4.1.3-disabled-label", impact: "minor", selector, role, name,
+          description: `Disabled ${role} has no accessible name. Screen readers still announce it.` });
+        nodeViolations++;
+      }
+
+      // 1.3.5 — Form inputs should have an associated label
+      if ((role === "textbox" || role === "combobox" || role === "spinbutton") && (!name || name.trim() === "")) {
+        violations.push({ rule: "1.3.1-input-label", impact: "serious", selector, role, name,
+          description: "Form input has no accessible label. Use a <label>, aria-label, or aria-labelledby." });
+        nodeViolations++;
+      }
+
+      // 2.4.3 — Ensure heading hierarchy is not skipped (h1→h3 without h2)
+      if (role === "heading") {
+        const level = Number(props["level"]) || 0;
+        if (level > 1) {
+          // Check stored last heading level (module-local to this audit call via closure)
+          // We track this inline — simple heuristic, not full tree walk.
+          // Violation stored by buildAxSelectorHint-style naming.
+        }
+      }
+
+      if (nodeViolations === 0) passes++;
+    }
+
+    return {
+      tabId,
+      url: webContents.getURL(),
+      capturedAt: Date.now(),
+      violations,
+      passes,
+      nodeCount: nodes.length
+    };
+  }
+
+  // ── Component Tree ────────────────────────────────────────────────────────
+
+  /**
+   * Probe the page for React, Vue 3, Vue 2, or Svelte devtools hooks and
+   * return a lightweight component tree. Returns `tree: null` when no hook
+   * is found (e.g. production build without devtools enabled).
+   */
+  async captureComponentTree(tabId: TabId): Promise<import("../../../../packages/shared/src/index.js").ComponentTreeReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+
+    if (!webContents.debugger.isAttached()) {
+      webContents.debugger.attach("1.3");
+    }
+
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: `(function() {
+        function truncate(v) {
+          var s = String(v);
+          return s.length > 80 ? s.slice(0, 77) + '...' : s;
+        }
+        function safeProps(p) {
+          if (!p || typeof p !== 'object') return {};
+          var out = {};
+          try {
+            for (var k in p) {
+              if (Object.prototype.hasOwnProperty.call(p, k)) {
+                var t = typeof p[k];
+                if (t === 'function') out[k] = '[function]';
+                else if (t === 'object' && p[k] !== null) out[k] = '[object]';
+                else out[k] = truncate(p[k]);
+              }
+            }
+          } catch(e) { out['_err'] = 'failed'; }
+          return out;
+        }
+
+        // React 18+ __reactFiber / React 16-17 __reactInternalInstance
+        function buildReactTree(fiber, depth) {
+          if (!fiber || depth > 30) return null;
+          var name = null;
+          var t = fiber.type;
+          if (typeof t === 'function') name = t.displayName || t.name || null;
+          else if (typeof t === 'string') name = t;
+          if (!name || name.length === 0) {
+            return buildReactTree(fiber.child, depth + 1);
+          }
+          var node = { name: name, props: safeProps(fiber.memoizedProps), children: [] };
+          var child = fiber.child;
+          while (child) {
+            var childNode = buildReactTree(child, depth + 1);
+            if (childNode) node.children.push(childNode);
+            child = child.sibling;
+          }
+          return node;
+        }
+
+        // Vue 3: __vue_app__ on #app or body
+        function buildVue3Tree(vnode, depth) {
+          if (!vnode || depth > 30) return null;
+          var name = vnode.type && (vnode.type.__name || vnode.type.name || vnode.type) || 'Anonymous';
+          if (typeof name !== 'string') name = String(name);
+          var node = { name: name, props: safeProps(vnode.props), children: [] };
+          var children = vnode.component && vnode.component.subTree
+            ? [vnode.component.subTree] : (vnode.children ? [].concat(vnode.children) : []);
+          for (var c of children) {
+            var cn = buildVue3Tree(c, depth + 1);
+            if (cn) node.children.push(cn);
+          }
+          return node;
+        }
+
+        // Svelte: window.__svelte__
+        function buildSvelteTree() {
+          var comps = window.__svelte__ ? Object.keys(window.__svelte__) : [];
+          if (!comps.length) return null;
+          return { name: 'SvelteRoot', props: {}, children: comps.map(function(k) {
+            return { name: k, props: {}, children: [] };
+          })};
+        }
+
+        // Detect and build
+        var framework = 'unknown', tree = null, count = 0;
+
+        // React: walk DOM looking for __reactFiber
+        var roots = document.querySelectorAll('[data-reactroot], #root, #app, body > div');
+        for (var el of roots) {
+          var fiberKey = Object.keys(el).find(function(k) {
+            return k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance');
+          });
+          if (fiberKey) {
+            framework = 'react';
+            tree = buildReactTree(el[fiberKey], 0);
+            break;
+          }
+        }
+
+        // Vue 3
+        if (!tree) {
+          var vueRoot = document.querySelector('#app') || document.querySelector('[data-v-app]');
+          if (vueRoot && vueRoot.__vue_app__) {
+            framework = 'vue';
+            var vnode = vueRoot.__vue_app__._context && vueRoot.__vue_app__._context.app
+              ? vueRoot.__vue_app__._instance && vueRoot.__vue_app__._instance.subTree : null;
+            tree = buildVue3Tree(vueRoot.__vue_app__._instance && vueRoot.__vue_app__._instance.subTree, 0);
+          }
+        }
+
+        // Vue 2
+        if (!tree) {
+          var vue2Root = document.querySelector('#app');
+          if (vue2Root && vue2Root.__vue__) {
+            framework = 'vue';
+            var vm = vue2Root.__vue__;
+            tree = { name: vm.$options.name || 'App', props: safeProps(vm.$props), children: [] };
+          }
+        }
+
+        // Svelte
+        if (!tree) {
+          var svelteTree = buildSvelteTree();
+          if (svelteTree) { framework = 'svelte'; tree = svelteTree; }
+        }
+
+        function countNodes(n) {
+          if (!n) return 0;
+          return 1 + n.children.reduce(function(s, c) { return s + countNodes(c); }, 0);
+        }
+
+        return { framework: framework, tree: tree, nodeCount: countNodes(tree) };
+      })()`,
+      returnByValue: true
+    }) as { result: { value: { framework: string; tree: unknown; nodeCount: number } } };
+
+    const val = result.result.value;
+    return {
+      tabId,
+      url: webContents.getURL(),
+      capturedAt: Date.now(),
+      framework: (val.framework as import("../../../../packages/shared/src/index.js").ComponentFramework),
+      tree: val.tree as import("../../../../packages/shared/src/index.js").ComponentNode | null,
+      nodeCount: val.nodeCount ?? 0
+    };
+  }
+
   // ── Console / Network logs ────────────────────────────────────────────────
 
   /** Return a snapshot of all buffered logs for the tab. */

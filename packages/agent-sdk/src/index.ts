@@ -31,12 +31,18 @@ import http from "node:http";
 
 // ── Re-export shared types agents need ────────────────────────────────────────
 export type {
+  A11yAuditReport,
+  A11yImpact,
+  A11yViolation,
   AccountInput,
   AccountSummary,
   AccountUpdate,
   BrowserCommandResult,
   BrowserOutputCommand,
   BrowserPerceptionPacket,
+  ComponentFramework,
+  ComponentNode,
+  ComponentTreeReport,
   ConsoleLogEntry,
   HumanHandoffRecord,
   NetworkInterceptRule,
@@ -57,12 +63,14 @@ export type {
 } from "../../shared/src/index.js";
 
 import type {
+  A11yAuditReport,
   AccountInput,
   AccountSummary,
   AccountUpdate,
   BrowserCommandResult,
   BrowserOutputCommand,
   BrowserPerceptionPacket,
+  ComponentTreeReport,
   HumanHandoffRecord,
   NetworkInterceptRule,
   PerformanceReport,
@@ -348,6 +356,36 @@ export class BrowserClient {
    */
   async getPerformanceMetrics(tabId: TabId): Promise<PerformanceReport> {
     return this.get(`/api/tabs/${tabId}/performance`);
+  }
+
+  /**
+   * Run a WCAG 2.2-aligned accessibility audit against the live AX tree.
+   * No external tooling required — checks are derived from the AX tree
+   * already captured during perception.
+   *
+   * @example
+   * const report = await browser.auditAccessibility(tabId);
+   * for (const v of report.violations) {
+   *   console.log(`[${v.impact}] ${v.rule}: ${v.description} (${v.selector})`);
+   * }
+   * console.log(`${report.passes} nodes passed, ${report.violations.length} violations`);
+   */
+  async auditAccessibility(tabId: TabId): Promise<A11yAuditReport> {
+    return this.get(`/api/tabs/${tabId}/a11y`);
+  }
+
+  /**
+   * Probe the page for React / Vue / Svelte devtools hooks and return a
+   * lightweight component tree. Returns `tree: null` when no hook is found
+   * (e.g. minified production build without devtools).
+   *
+   * @example
+   * const ct = await browser.captureComponentTree(tabId);
+   * console.log(`Framework: ${ct.framework}, ${ct.nodeCount} components`);
+   * if (ct.tree) console.log(JSON.stringify(ct.tree, null, 2));
+   */
+  async captureComponentTree(tabId: TabId): Promise<ComponentTreeReport> {
+    return this.get(`/api/tabs/${tabId}/component-tree`);
   }
 
   // ── SSE stream ──────────────────────────────────────────────────────────

@@ -155,16 +155,111 @@ const script = await browser.stopRecording(tabId);
 // exports: navigate, click, fill_form, submit steps with real selectors
 ```
 
-### 7. Accessibility Audit
-The AX tree is already captured in every perception packet. Run WCAG 2.2 rule checks directly on the tree without a separate tool.
+### 7. Accessibility Audit ✅
+Run a WCAG 2.2-aligned rule set directly against the live AX tree. No external tooling needed — the AX tree is already captured during every perception call.
 
+**API**
+```
+GET /api/tabs/:id/a11y  → A11yAuditReport
+```
+**SDK**
 ```typescript
 const report = await browser.auditAccessibility(tabId);
-// { violations: [{rule, impact, selector, description}], passes: 42 }
+
+// Print all violations
+for (const v of report.violations) {
+  console.log(`[${v.impact}] ${v.rule}: ${v.description}`);
+  console.log(`  selector: ${v.selector}`);
+}
+
+console.log(`${report.passes} nodes passed, ${report.violations.length} violations`);
+console.log(`Checked ${report.nodeCount} AX nodes`);
 ```
 
-### 8. Component Tree Awareness
-When React/Vue/Svelte devtools hooks are present, surface component names and props alongside the DOM tree in the perception packet. Context that LLMs use well.
+**Response shape** (`A11yAuditReport`):
+```typescript
+interface A11yAuditReport {
+  tabId: string;
+  url: string;
+  capturedAt: number;          // Unix ms
+  violations: A11yViolation[];
+  passes: number;              // nodes that passed all rules
+  nodeCount: number;           // total AX nodes inspected
+}
+
+interface A11yViolation {
+  rule: string;       // e.g. "1.1.1-image-alt"
+  impact: "critical" | "serious" | "moderate" | "minor";
+  selector: string;   // CSS-style selector hint for the offending node
+  description: string;
+  role: string;       // AX role, e.g. "img", "button"
+  name?: string;      // accessible name, if any
+}
+```
+
+**Rules implemented:**
+| Rule ID | WCAG SC | Description |
+|---|---|---|
+| `1.1.1-image-alt` | 1.1.1 | Images must have a non-empty accessible name |
+| `2.4.6-label` | 2.4.6 | Buttons and links must have a discernible name |
+| `1.3.1-input-label` | 1.3.1 | Text inputs must have an associated label |
+| `4.1.3-disabled-label` | 4.1.3 | Disabled controls still need accessible names |
+
+**How it works**: CDP `Accessibility.getFullAXTree` returns all AX nodes. Each node is checked against the rule set. Nodes with `backendDOMNodeId` get a stable selector hint; others fall back to a role-based selector.
+
+---
+
+### 8. Component Tree Awareness ✅
+Probe React, Vue 3, Vue 2, or Svelte devtools hooks and return a lightweight component tree. Runs entirely in-page via `Runtime.evaluate` — no browser extension required.
+
+**API**
+```
+GET /api/tabs/:id/component-tree  → ComponentTreeReport
+```
+**SDK**
+```typescript
+const ct = await browser.captureComponentTree(tabId);
+
+console.log(`Framework: ${ct.framework}`);  // "react" | "vue" | "svelte" | "unknown"
+console.log(`${ct.nodeCount} component nodes`);
+
+function printTree(node, depth = 0) {
+  const indent = "  ".repeat(depth);
+  const props = Object.entries(node.props).map(([k, v]) => `${k}=${v}`).join(", ");
+  console.log(`${indent}<${node.name}${props ? " " + props : ""}>`);
+  for (const child of node.children) printTree(child, depth + 1);
+}
+
+if (ct.tree) printTree(ct.tree);
+```
+
+**Response shape** (`ComponentTreeReport`):
+```typescript
+interface ComponentTreeReport {
+  tabId: string;
+  url: string;
+  capturedAt: number;
+  framework: "react" | "vue" | "svelte" | "angular" | "unknown";
+  tree: ComponentNode | null;  // null if no devtools hook detected
+  nodeCount: number;
+}
+
+interface ComponentNode {
+  name: string;
+  props: Record<string, string>;  // shallow, values truncated to 80 chars
+  children: ComponentNode[];
+}
+```
+
+**Detection strategy:**
+| Framework | Hook | Notes |
+|---|---|---|
+| React 16–18 | `__reactFiber` / `__reactInternalInstance` on DOM nodes | Works in dev builds; production needs `enableDebugTools` |
+| Vue 3 | `__vue_app__` on root element | Set by Vue's mount() |
+| Vue 2 | `__vue__` on root element | Set by Vue's $mount() |
+| Svelte | `window.__svelte__` | Available in dev mode |
+
+Props are shallow-stringified (functions shown as `[function]`, objects as `[object]`) to keep payloads small. Tree depth is capped at 30 levels.
 
 ### 9. Responsive Multi-Viewport Comparison ✅
 Capture screenshots at multiple named breakpoints in one call, with optional pairwise pixel diffs. Saves and restores the original viewport.
@@ -243,3 +338,5 @@ CDP domains used:
 | Visual diff | `Page.captureScreenshot` (already used) |
 | Viewport suite | `Emulation.setDeviceMetricsOverride`, `Page.captureScreenshot` |
 | Performance metrics | `Performance.enable`/`getMetrics`, `Runtime.evaluate` |
+| Accessibility audit | `Accessibility.enable`, `Accessibility.getFullAXTree` |
+| Component tree | `Runtime.evaluate` (in-page devtools hook probe) |
