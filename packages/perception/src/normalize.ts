@@ -90,9 +90,38 @@ function projectActions(accessibility: AccessibilitySummary): ObservedAction[] {
     id: `ax-action-${index + 1}`,
     label: node.name || `${node.role}-${index + 1}`,
     kind: node.role === "link" ? "link" : "button",
-    selectorHint: "ax",
+    selectorHint: buildAxSelectorHint(node.role, node.name),
     disabled: false
   }));
+}
+
+/** Maps AX roles to CSS selector strings covering the most common element patterns. */
+const AX_ROLE_SELECTOR_BASE: Record<string, string> = {
+  button: `button, [role="button"], input[type="button"], input[type="submit"]`,
+  link: `a[href]`,
+  textbox: `input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]), textarea, [role="textbox"]`,
+  checkbox: `input[type="checkbox"], [role="checkbox"]`,
+  radioButton: `input[type="radio"], [role="radio"]`,
+  comboBox: `select, [role="combobox"]`,
+  menuitem: `[role="menuitem"]`,
+  tab: `[role="tab"]`,
+  option: `option, [role="option"]`,
+  searchbox: `input[type="search"], [role="searchbox"]`,
+  spinbutton: `input[type="number"], [role="spinbutton"]`,
+  slider: `input[type="range"], [role="slider"]`
+};
+
+function buildAxSelectorHint(role: string, name?: string): string {
+  const base = AX_ROLE_SELECTOR_BASE[role] ?? `[role="${role}"]`;
+
+  if (!name) return base;
+
+  // Build an aria-label variant using the first segment of the base selector.
+  const firstBase = base.split(",")[0].trim();
+  const escaped = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const ariaVariant = `${firstBase}[aria-label="${escaped}"]`;
+
+  return `${ariaVariant}, ${base}`;
 }
 
 function collectOAuthProviders(actions: ObservedAction[]): string[] {

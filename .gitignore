@@ -17,7 +17,8 @@ Thumbs.db
 *.sqlite
 *.db
 *.log
-*-example/
+# Personal sdk-example directory (contains local credentials and config)
+/sdk-example/
 
 # GCP / cloud credential files — never commit service account keys
 *service-account*.json

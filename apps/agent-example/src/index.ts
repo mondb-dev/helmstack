@@ -80,11 +80,10 @@ async function executeIntent(intent: string, tabId: string) {
   const g = perception.result.graph;
 
   await log(`Page: ${perception.result.snapshot.title}`, "agent");
-  await log(`Kind: ${g.pageKind} — ${g.forms.length} forms, ${g.actions.length} actions`, "agent");
+  await log(`Kind: ${g.kind} — ${g.forms.length} forms, ${g.actions.length} actions`, "agent");
 
   if (g.headings.length) {
-    const h1 = g.headings.find((h) => h.level === 1);
-    if (h1) await log(`H1: ${h1.text}`, "agent");
+    await log(`H1: ${g.headings[0]}`, "agent");
   }
 
   if (g.alerts.length) {
@@ -109,7 +108,7 @@ async function executeIntent(intent: string, tabId: string) {
     const topActions = g.actions.slice(0, 5);
     await log(`Top actions:`, "agent");
     for (const action of topActions) {
-      await log(`  ${action.label || action.ariaLabel || "(unlabeled)"}`, "agent");
+      await log(`  ${action.label || "(unlabeled)"}`, "agent");
     }
     if (g.actions.length > 5) await log(`  ... and ${g.actions.length - 5} more`, "agent");
   }

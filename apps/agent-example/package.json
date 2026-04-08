@@ -7,7 +7,8 @@
   "type": "module",
   "scripts": {
     "start": "node --experimental-strip-types src/index.ts",
-    "llm": "node --experimental-strip-types src/llm-agent.ts"
+    "llm": "node --experimental-strip-types src/llm-agent.ts",
+    "openai": "node --experimental-strip-types src/openai-agent.ts"
   },
   "dependencies": {
     "@google/genai": "^1.48.0",

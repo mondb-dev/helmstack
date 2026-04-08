@@ -345,7 +345,7 @@ async function run() {
       const args = (call.args ?? {}) as Record<string, unknown>;
       log(`-> [step ${step + 1}] ${call.name}(${JSON.stringify(args).slice(0, 100)})`);
 
-      const output = await executeTool(tabId!, call.name, args);
+      const output = await executeTool(tabId!, call.name ?? "", args);
       log(`<- ${output.slice(0, 140)}`);
 
       if (call.name === "done") {
@@ -358,7 +358,7 @@ async function run() {
       }
 
       fnResponseParts.push(
-        createPartFromFunctionResponse(call.id ?? call.name, call.name, { output }),
+        createPartFromFunctionResponse(call.id ?? call.name ?? "", call.name ?? "", { output }),
       );
     }
 
