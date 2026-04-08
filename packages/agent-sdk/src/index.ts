@@ -49,7 +49,10 @@ export type {
   TabId,
   TabLogSnapshot,
   TabSummary,
-  TotpResult
+  TotpResult,
+  ViewportPresetName,
+  ViewportSuiteReport,
+  VIEWPORT_PRESETS
 } from "../../shared/src/index.js";
 
 import type {
@@ -67,7 +70,9 @@ import type {
   TabId,
   TabLogSnapshot,
   TabSummary,
-  TotpResult
+  TotpResult,
+  ViewportPresetName,
+  ViewportSuiteReport
 } from "../../shared/src/index.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -303,6 +308,30 @@ export class BrowserClient {
    */
   async diffScreenshots(beforeId: string, afterId: string): Promise<ScreenshotDiff> {
     return this.post("/api/screenshots/diff", { beforeId, afterId });
+  }
+
+  /**
+   * Capture screenshots at multiple viewport breakpoints in one call.
+   *
+   * @param presets     Subset of preset names to capture. Defaults to ["mobile","tablet","laptop","desktop"].
+   *                    Available: "mobile-sm" | "mobile" | "mobile-lg" | "tablet" | "tablet-lg" | "laptop" | "desktop" | "wide"
+   * @param includeDiffs When true, pairwise pixel diffs between consecutive breakpoints are included.
+   *
+   * @example
+   * const report = await browser.captureViewportSuite(tabId, ["mobile","tablet","desktop"], true);
+   * for (const { preset, screenshot } of report.captures) {
+   *   console.log(preset.label, screenshot.width, screenshot.height);
+   * }
+   * for (const { from, to, diff } of report.diffs) {
+   *   console.log(`${from} → ${to}: ${diff.diffPercentage}% changed`);
+   * }
+   */
+  async captureViewportSuite(
+    tabId: TabId,
+    presets?: ViewportPresetName[],
+    includeDiffs = false
+  ): Promise<ViewportSuiteReport> {
+    return this.post(`/api/tabs/${tabId}/viewport-suite`, { presets, includeDiffs });
   }
 
   // ── SSE stream ──────────────────────────────────────────────────────────

@@ -40,7 +40,10 @@ import {
   type VaultSecretInput,
   type VaultSecretSummary,
   type VaultStatus,
-  type ViewportRect
+  type ViewportPresetName,
+  type ViewportSuiteReport,
+  type ViewportRect,
+  VIEWPORT_PRESETS
 } from "../../../../packages/shared/src/index.js";
 import { SiteCapabilityRegistry } from "./site-capability-registry.js";
 import { VaultStore } from "./vault-store.js";
@@ -367,6 +370,60 @@ export class TabManager {
       diffImageData: diffImg.toPNG().toString("base64"),
       capturedAt: Date.now()
     };
+  }
+
+  /**
+   * Capture screenshots at multiple viewport breakpoints in a single call.
+   * Saves the original emulated viewport and restores it afterwards.
+   *
+   * @param presets  Named presets to capture (defaults to ["mobile","tablet","laptop","desktop"]).
+   * @param includeDiffs  When true, also diffs each consecutive pair of breakpoints.
+   */
+  async captureViewportSuite(
+    tabId: TabId,
+    presets: ViewportPresetName[] = ["mobile", "tablet", "laptop", "desktop"],
+    includeDiffs = false
+  ): Promise<ViewportSuiteReport> {
+    const tab = this.requireTab(tabId);
+    const runId = Date.now().toString(36);
+    const savedViewport = tab.emulatedViewport ?? null;
+
+    const captures: ViewportSuiteReport["captures"] = [];
+
+    for (const presetName of presets) {
+      const def = VIEWPORT_PRESETS[presetName];
+      const preset = { name: presetName, ...def };
+
+      await this.setEmulatedViewport(tabId, def.width, def.height, def.mobile);
+
+      // Allow the page a short reflow settle before capturing.
+      await new Promise<void>((r) => setTimeout(r, 200));
+
+      const snapshotId = `${tabId}__${presetName}__${runId}`;
+      const screenshot = await this.captureNamedScreenshot(tabId, snapshotId);
+
+      captures.push({ preset, snapshotId, screenshot });
+    }
+
+    // Restore original emulated viewport (or clear it if none was set).
+    if (savedViewport) {
+      await this.setEmulatedViewport(tabId, savedViewport.width, savedViewport.height, savedViewport.mobile);
+    } else if (tab.view.webContents.debugger.isAttached()) {
+      await tab.view.webContents.debugger.sendCommand("Emulation.clearDeviceMetricsOverride").catch(() => {});
+      tab.emulatedViewport = undefined;
+    }
+
+    const diffs: ViewportSuiteReport["diffs"] = [];
+    if (includeDiffs && captures.length >= 2) {
+      for (let i = 0; i < captures.length - 1; i++) {
+        const from = captures[i];
+        const to   = captures[i + 1];
+        const diff = this.diffScreenshots(from.snapshotId, to.snapshotId);
+        diffs.push({ from: from.preset.name, to: to.preset.name, diff });
+      }
+    }
+
+    return { tabId, runId, captures, diffs, capturedAt: Date.now() };
   }
 
   // ── Console / Network logs ────────────────────────────────────────────────

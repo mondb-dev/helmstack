@@ -50,6 +50,7 @@ type SseClient = http.ServerResponse;
  * DELETE /api/tabs/:id/mock              disables interception
  * POST /api/tabs/:id/screenshot/named    { snapshotId } → PageScreenshot
  * POST /api/screenshots/diff             { beforeId, afterId } → ScreenshotDiff
+ * POST /api/tabs/:id/viewport-suite      { presets?, includeDiffs? } → ViewportSuiteReport
  *
  * SSE stream
  * ----------
@@ -380,6 +381,15 @@ export class AgentServer {
         return error(res, 400, "beforeId and afterId strings are required");
       }
       return json(res, this.tabs.diffScreenshots(body.beforeId, body.afterId));
+    }
+
+    // ── Responsive multi-viewport suite ──────────────────────────────────────
+    const viewportSuiteMatch = p.match(/^\/api\/tabs\/([^/]+)\/viewport-suite$/);
+    if (method === "POST" && viewportSuiteMatch) {
+      const body = await readBody(req);
+      const presets = Array.isArray(body.presets) ? body.presets as import("../../../../packages/shared/src/index.js").ViewportPresetName[] : undefined;
+      const includeDiffs = body.includeDiffs === true;
+      return json(res, await this.tabs.captureViewportSuite(viewportSuiteMatch[1] as import("../../../../packages/shared/src/index.js").TabId, presets, includeDiffs));
     }
 
     // ── 404 ──────────────────────────────────────────────────────────────────

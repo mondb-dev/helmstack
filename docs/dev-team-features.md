@@ -125,16 +125,48 @@ const report = await browser.auditAccessibility(tabId);
 ### 8. Component Tree Awareness
 When React/Vue/Svelte devtools hooks are present, surface component names and props alongside the DOM tree in the perception packet. Context that LLMs use well.
 
-### 9. Responsive Multi-Viewport Comparison
-Use `set_viewport` across breakpoints, capture named screenshots, and diff them automatically. Catch layout regressions across screen sizes in one pass.
+### 9. Responsive Multi-Viewport Comparison ✅
+Capture screenshots at multiple named breakpoints in one call, with optional pairwise pixel diffs. Saves and restores the original viewport.
 
-```typescript
-for (const [name, dims] of viewports) {
-  await browser.setViewport(tabId, dims.w, dims.h);
-  await browser.captureNamedScreenshot(tabId, `v-${name}`);
-}
-const diff = await browser.diffScreenshots("v-desktop", "v-mobile");
+**API**
 ```
+POST /api/tabs/:id/viewport-suite   { presets?, includeDiffs? } → ViewportSuiteReport
+```
+**SDK**
+```typescript
+// Quick: capture default set (mobile, tablet, laptop, desktop)
+const report = await browser.captureViewportSuite(tabId);
+
+// Custom presets + diffs
+const report = await browser.captureViewportSuite(
+  tabId,
+  ["mobile", "tablet", "desktop", "wide"],
+  true   // includeDiffs
+);
+
+for (const { preset, screenshot } of report.captures) {
+  console.log(`${preset.label}: ${screenshot.width}×${screenshot.height}`);
+}
+
+for (const { from, to, diff } of report.diffs) {
+  console.log(`${from} → ${to}: ${diff.diffPercentage}% changed`);
+}
+```
+**Available presets**
+| Name | Resolution | Device |
+|---|---|---|
+| `mobile-sm` | 375×667 | Mobile S |
+| `mobile` | 390×844 | Mobile |
+| `mobile-lg` | 430×932 | Mobile L |
+| `tablet` | 768×1024 | Tablet |
+| `tablet-lg` | 1024×1366 | Tablet L |
+| `laptop` | 1280×800 | Laptop |
+| `desktop` | 1440×900 | Desktop |
+| `wide` | 1920×1080 | Wide |
+
+**How it works**: Iterates presets, calling `Emulation.setDeviceMetricsOverride` + 200ms reflow settle + `Page.captureScreenshot` for each. All captures are stored in the named screenshot cache as `<tabId>__<preset>__<runId>` so they can be re-diffed later. Original viewport is restored at the end.
+
+---
 
 ### 10. Natural Language Assertions
 Point the agent at the live page and ask it to verify something — the agent reads the page graph and uses an LLM to judge truth.
