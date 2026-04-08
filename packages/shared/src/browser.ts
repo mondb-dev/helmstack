@@ -376,3 +376,51 @@ export type ThreeSceneReport = {
     totalTriangles: number;
   };
 };
+
+// ── Natural Language Assertions ───────────────────────────────────────────
+
+/** How certain the heuristic evaluator is about the assertion result. */
+export type AssertionConfidence = "high" | "medium" | "low";
+
+/**
+ * Compact, serialisable summary of the page state used as evidence when
+ * evaluating an assertion.  Small enough to paste into an LLM prompt.
+ */
+export type AssertionEvidence = {
+  url: string;
+  title: string;
+  headings: string[];
+  /** Flat list of action labels (button text, link text). */
+  actionLabels: string[];
+  /** Visible alert / status messages. */
+  alertTexts: string[];
+  /** One line per form: "<purpose>: field1, field2, …" */
+  formSummaries: string[];
+  /** Counts for quick quantitative checks. */
+  counts: {
+    headings: number;
+    actions: number;
+    forms: number;
+    alerts: number;
+    fields: number;
+    mediaItems: number;
+  };
+};
+
+export type AssertionResult = {
+  tabId: TabId;
+  assertion: string;
+  /** Whether the assertion is judged to pass. */
+  pass: boolean;
+  confidence: AssertionConfidence;
+  /**
+   * Human-readable explanation of why the assertion passed or failed.
+   * Suitable for displaying in a test report or feeding back to an AI agent.
+   */
+  explanation: string;
+  /**
+   * Compact page-graph summary used as evidence.
+   * Feed this to an LLM for a second opinion when `confidence` is "low".
+   */
+  evidence: AssertionEvidence;
+};

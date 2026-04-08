@@ -37,6 +37,9 @@ export type {
   AccountInput,
   AccountSummary,
   AccountUpdate,
+  AssertionConfidence,
+  AssertionEvidence,
+  AssertionResult,
   BrowserCommandResult,
   BrowserOutputCommand,
   BrowserPerceptionPacket,
@@ -81,6 +84,7 @@ import type {
   AccountInput,
   AccountSummary,
   AccountUpdate,
+  AssertionResult,
   BrowserCommandResult,
   BrowserOutputCommand,
   BrowserPerceptionPacket,
@@ -453,6 +457,52 @@ export class BrowserClient {
    */
   async captureThreeJsScene(tabId: TabId): Promise<ThreeSceneReport> {
     return this.get(`/api/tabs/${tabId}/threejs-scene`);
+  }
+
+  // ── Natural Language Assertions ───────────────────────────────────────────
+
+  /**
+   * Evaluate a natural-language assertion against the live page.
+   *
+   * The server captures a fresh `PageGraph` and runs a heuristic evaluator
+   * covering quantitative checks, presence/absence, disabled state, title
+   * matching, and comparative counts.
+   *
+   * By default this method **throws an `AssertionError`** when the assertion
+   * fails — making it drop-in compatible with Node's `assert` module style.
+   * Pass `{ throw: false }` to get the raw `AssertionResult` instead.
+   *
+   * When `result.confidence === "low"` the evidence bundle is returned so
+   * you can forward it to your own LLM for a second opinion.
+   *
+   * @example
+   * // In an AI agent test script:
+   * await browser.assert(tabId, "the checkout button is visible");
+   * await browser.assert(tabId, "there are no error messages");
+   * await browser.assert(tabId, "the cart shows 3 items");
+   *
+   * // Get raw result without throwing:
+   * const r = await browser.assert(tabId, "the form has 2 fields", { throw: false });
+   * if (!r.pass) {
+   *   const feedback = await ai.chat([
+   *     { role: "user", content: `Page evidence: ${JSON.stringify(r.evidence)}\nIs this true: "${r.assertion}"?` }
+   *   ]);
+   * }
+   */
+  async assert(
+    tabId: TabId,
+    assertion: string,
+    opts: { throw?: boolean } = {}
+  ): Promise<AssertionResult> {
+    const result: AssertionResult = await this.post(`/api/tabs/${tabId}/assert`, { assertion });
+    if (!result.pass && opts.throw !== false) {
+      const err = new Error(
+        `Assertion failed (confidence: ${result.confidence}): ${assertion}\n  → ${result.explanation}`
+      );
+      err.name = "AssertionError";
+      throw err;
+    }
+    return result;
   }
 
   // ── "What Broke?" Perception Snapshot + Diff ────────────────────────────

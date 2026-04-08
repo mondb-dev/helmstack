@@ -340,13 +340,67 @@ for (const { from, to, diff } of report.diffs) {
 
 ---
 
-### 10. Natural Language Assertions
-Point the agent at the live page and ask it to verify something — the agent reads the page graph and uses an LLM to judge truth.
+### 10. Natural Language Assertions ✅
 
-```typescript
-await browser.assert(tabId, "the cart shows 3 items");
-// throws AssertionError with explanation if false
+Point the agent at the live page and assert something in plain English. The server captures a fresh `PageGraph` and runs a heuristic evaluator — no LLM required for the common cases.
+
+**API**
 ```
+POST /api/tabs/:id/assert   { assertion: string }   → AssertionResult
+```
+
+**SDK**
+```typescript
+// Throws AssertionError on failure (default behaviour):
+await browser.assert(tabId, "the checkout button is visible");
+await browser.assert(tabId, "there are no error messages");
+await browser.assert(tabId, "the cart shows 3 items");
+await browser.assert(tabId, "the submit button is disabled");
+await browser.assert(tabId, "the page title is 'Dashboard'");
+await browser.assert(tabId, "at least 2 forms");
+await browser.assert(tabId, "no warnings");
+
+// Get raw result without throwing — useful when you want to forward
+// low-confidence results to your own LLM:
+const result = await browser.assert(tabId, "the invoice total is correct", { throw: false });
+if (!result.pass && result.confidence === "low") {
+  const llmVerdict = await ai.chat([
+    { role: "user", content: `Evidence: ${JSON.stringify(result.evidence)}\nIs this true: "${result.assertion}"?` }
+  ]);
+}
+```
+
+**`AssertionResult` shape**
+```typescript
+{
+  tabId:       string;
+  assertion:   string;
+  pass:        boolean;
+  confidence:  "high" | "medium" | "low";
+  explanation: string;   // plain English — suitable for test reports
+  evidence: {
+    url:          string;
+    title:        string;
+    headings:     string[];
+    actionLabels: string[];
+    alertTexts:   string[];
+    formSummaries: string[];   // "<purpose>: field1, field2, …"
+    counts: { headings, actions, forms, alerts, fields, mediaItems };
+  };
+}
+```
+
+**Heuristic coverage**
+
+| Pattern | Example |
+|---|---|
+| Quantitative | `"3 items"`, `"2 buttons"`, `"0 errors"` |
+| Absence | `"no error messages"`, `"not visible"` |
+| Presence | `"checkout button is visible"`, `"login form"` |
+| Disabled state | `"submit button is disabled"` |
+| Title | `"page title is 'Dashboard'"` |
+| Comparative | `"at least 2 forms"`, `"fewer than 5 headings"` |
+| Fallback | Low-confidence result with evidence for LLM forwarding |
 
 ### 11. "What Broke?" Post-Deploy Diff ✅
 Save a named perception snapshot before a deploy, then diff before/after to get a structured list of every structural change — headings added/removed, forms changed, actions gone, alerts added, title changed. No visual screenshots needed.
@@ -453,6 +507,7 @@ CDP domains used:
 | Component tree | `Runtime.evaluate` (in-page devtools hook probe) |
 | Perception diff | None — pure in-process PageGraph comparison |
 | Three.js inspector | `Runtime.evaluate` (in-page scene graph walk + rAF FPS sample) |
+| NL assertions | None — pure in-process PageGraph heuristics |
 
 ---
 

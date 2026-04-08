@@ -54,6 +54,7 @@ type SseClient = http.ServerResponse;
  * GET  /api/tabs/:id/a11y               → A11yAuditReport
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
  * GET  /api/tabs/:id/threejs-scene      → ThreeSceneReport
+ * POST /api/tabs/:id/assert            { assertion: string } → AssertionResult
  * GET  /api/screenshots                 → {id,tabId,url,width,height,capturedAt}[]
  * DELETE /api/screenshots/:id           removes snapshot from cache
  * POST /api/tabs/:id/perception/named   { snapshotId } → PerceptionSnapshotEntry
@@ -436,6 +437,20 @@ export class AgentServer {
     const threejsMatch = p.match(/^\/api\/tabs\/([^/]+)\/threejs-scene$/);
     if (method === "GET" && threejsMatch) {
       return json(res, await this.tabs.captureThreeJsScene(threejsMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+    }
+
+    // ── Natural Language Assertions ───────────────────────────────────────────
+    const assertMatch = p.match(/^\/api\/tabs\/([^/]+)\/assert$/);
+    if (method === "POST" && assertMatch) {
+      const body = await readBody(req);
+      if (typeof body.assertion !== "string" || !body.assertion.trim()) {
+        return error(res, 400, "assertion string is required");
+      }
+      const result = await this.tabs.evaluateAssertion(
+        assertMatch[1] as import("../../../../packages/shared/src/index.js").TabId,
+        body.assertion
+      );
+      return json(res, result);
     }
 
     // ── "What Broke?" Perception snapshot + diff ──────────────────────────────
