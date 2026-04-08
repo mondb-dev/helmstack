@@ -95,3 +95,59 @@ export type PageSnapshot = {
     nodes: unknown[];
   };
 };
+
+// ── Performance metrics ───────────────────────────────────────────────────────
+
+/**
+ * Navigation timing values — all times in milliseconds relative to
+ * navigationStart (i.e. what you'd get from `performance.timing`).
+ */
+export type NavigationTiming = {
+  /** Time to first byte from server. */
+  ttfb: number;
+  /** DOM interactive (parser finished). */
+  domInteractive: number;
+  /** DOMContentLoaded event fired. */
+  domContentLoaded: number;
+  /** load event fired (all resources). */
+  loadEvent: number;
+};
+
+/**
+ * Core Web Vitals sourced from PerformanceObserver entries already in the
+ * browser timeline. Values are in milliseconds unless noted.
+ * `null` means the metric had not been emitted yet when the snapshot was taken.
+ */
+export type CoreWebVitals = {
+  /** Largest Contentful Paint — ms. */
+  lcp: number | null;
+  /** First Contentful Paint — ms. */
+  fcp: number | null;
+  /** Cumulative Layout Shift — unitless score (×1000 for display). */
+  cls: number | null;
+  /** Interaction to Next Paint — ms. null if no interactions recorded yet. */
+  inp: number | null;
+  /** Time to First Byte — ms (mirrors NavigationTiming.ttfb for convenience). */
+  ttfb: number | null;
+};
+
+export type ResourceTimingEntry = {
+  name: string;
+  initiatorType: string;
+  /** Transfer size in bytes (0 = cache hit). */
+  transferSize: number;
+  /** Total duration in ms. */
+  duration: number;
+};
+
+export type PerformanceReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  navigation: NavigationTiming | null;
+  vitals: CoreWebVitals;
+  /** Top 20 slowest resources by duration. */
+  slowResources: ResourceTimingEntry[];
+  /** Raw CDP Performance.getMetrics values (keyed by metric name). */
+  cdpMetrics: Record<string, number>;
+};

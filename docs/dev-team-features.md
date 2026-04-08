@@ -87,13 +87,54 @@ console.log(`${diff.diffPercentage}% of pixels changed (${diff.diffPixelCount} p
 
 ## 🟡 High Value — Not Yet Implemented
 
-### 4. Performance Metrics
-Surface Core Web Vitals (LCP, CLS, INP, FCP, TTFB) from CDP `Performance`/`PerformanceTiming` domains alongside each perception packet.
+### 4. Performance Metrics ✅
+Surface Core Web Vitals (LCP, FCP, CLS, INP, TTFB) from CDP `Performance` domain + `window.performance` APIs alongside each perception packet.
 
-```typescript
-const metrics = await browser.getPerformanceMetrics(tabId);
-// { lcp: 1240, cls: 0.03, inp: 85, fcp: 890, ttfb: 210 } — all in ms/score
+**API**
 ```
+GET /api/tabs/:id/performance  → PerformanceReport
+```
+**SDK**
+```typescript
+const perf = await browser.getPerformanceMetrics(tabId);
+
+// Core Web Vitals
+console.log(`LCP:  ${perf.vitals.lcp}ms`);
+console.log(`FCP:  ${perf.vitals.fcp}ms`);
+console.log(`CLS:  ${perf.vitals.cls}`);   // raw score (×1000 for display)
+console.log(`INP:  ${perf.vitals.inp}ms`);
+console.log(`TTFB: ${perf.vitals.ttfb}ms`);
+
+// Navigation Timing breakdown
+if (perf.navigation) {
+  console.log(`DNS: ${perf.navigation.dns}ms`);
+  console.log(`Connect: ${perf.navigation.connect}ms`);
+  console.log(`DOM Load: ${perf.navigation.domComplete}ms`);
+  console.log(`Page Load: ${perf.navigation.loadEvent}ms`);
+}
+
+// Slowest resources (top 20)
+for (const res of perf.slowResources) {
+  console.log(`${res.name}: ${res.duration}ms (${res.type})`);
+}
+
+// Raw CDP counters
+console.log("JS heap:", perf.rawMetrics?.find(m => m.name === "JSHeapUsedSize")?.value);
+```
+
+**Response shape** (`PerformanceReport`):
+```typescript
+interface PerformanceReport {
+  capturedAt: string;          // ISO timestamp
+  url: string;
+  vitals: CoreWebVitals;       // lcp, fcp, cls, inp, ttfb — all nullable
+  navigation: NavigationTiming | null; // full NavTiming L1 breakdown
+  slowResources: ResourceTimingEntry[];// top-20 longest resource loads
+  rawMetrics: { name: string; value: number }[] | null; // raw CDP counters
+}
+```
+
+**How it works**: CDP `Performance.enable`/`getMetrics` supplies V8/Blink counters; `Runtime.evaluate` queries `window.performance.timing` (Navigation Timing L1) and `performance.getEntriesByType()` for LCP, FCP, CLS (sum of non-input-gated shifts), and INP (longest event entry). Top-20 slowest resources sorted by duration are returned from `getEntriesByType("resource")`.
 
 ### 5. Storage Inspector
 Read and write `localStorage`, `sessionStorage`, cookies, and `IndexedDB` via CDP `Storage`/`IndexedDB` domains. Useful for seeding test data or inspecting auth state.
@@ -200,3 +241,5 @@ CDP domains used:
 | Network logs | `Network.enable` |
 | Network mock | `Fetch.enable` (requestStage: Request) |
 | Visual diff | `Page.captureScreenshot` (already used) |
+| Viewport suite | `Emulation.setDeviceMetricsOverride`, `Page.captureScreenshot` |
+| Performance metrics | `Performance.enable`/`getMetrics`, `Runtime.evaluate` |

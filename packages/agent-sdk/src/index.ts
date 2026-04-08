@@ -44,6 +44,7 @@ export type {
   PageGraph,
   PageObservation,
   PageScreenshot,
+  PerformanceReport,
   ScreenshotDiff,
   SiteCapabilityManifest,
   TabId,
@@ -64,6 +65,7 @@ import type {
   BrowserPerceptionPacket,
   HumanHandoffRecord,
   NetworkInterceptRule,
+  PerformanceReport,
   PageScreenshot,
   ScreenshotDiff,
   SiteCapabilityManifest,
@@ -332,6 +334,20 @@ export class BrowserClient {
     includeDiffs = false
   ): Promise<ViewportSuiteReport> {
     return this.post(`/api/tabs/${tabId}/viewport-suite`, { presets, includeDiffs });
+  }
+
+  /**
+   * Capture performance metrics for the tab: Navigation Timing, Core Web Vitals
+   * (LCP, FCP, CLS, INP, TTFB), top-20 slowest resources, and raw CDP counters.
+   *
+   * @example
+   * const perf = await browser.getPerformanceMetrics(tabId);
+   * console.log(`LCP: ${perf.vitals.lcp}ms, CLS: ${perf.vitals.cls}`);
+   * console.log(`TTFB: ${perf.navigation?.ttfb}ms`);
+   * console.log("Slowest resource:", perf.slowResources[0]?.name);
+   */
+  async getPerformanceMetrics(tabId: TabId): Promise<PerformanceReport> {
+    return this.get(`/api/tabs/${tabId}/performance`);
   }
 
   // ── SSE stream ──────────────────────────────────────────────────────────

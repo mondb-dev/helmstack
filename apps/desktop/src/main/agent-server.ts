@@ -44,13 +44,13 @@ type SseClient = http.ServerResponse;
  * PUT  /api/intent                          { intent: string }
  * POST /api/log                             { level?, message }
  * GET  /api/tabs/:id/logs                  → TabLogSnapshot
- * DELETE /api/tabs/:id/logs               clears buffered logs
- * GET  /api/tabs/:id/mock                 → { rules }
+ * DELETE /api/tabs/:id/logs               clears buffered logs * GET  /api/tabs/:id/mock                 → { rules }
  * POST /api/tabs/:id/mock                 { rules: NetworkInterceptRule[] }
  * DELETE /api/tabs/:id/mock              disables interception
  * POST /api/tabs/:id/screenshot/named    { snapshotId } → PageScreenshot
  * POST /api/screenshots/diff             { beforeId, afterId } → ScreenshotDiff
  * POST /api/tabs/:id/viewport-suite      { presets?, includeDiffs? } → ViewportSuiteReport
+ * GET  /api/tabs/:id/performance         → PerformanceReport
  *
  * SSE stream
  * ----------
@@ -390,6 +390,12 @@ export class AgentServer {
       const presets = Array.isArray(body.presets) ? body.presets as import("../../../../packages/shared/src/index.js").ViewportPresetName[] : undefined;
       const includeDiffs = body.includeDiffs === true;
       return json(res, await this.tabs.captureViewportSuite(viewportSuiteMatch[1] as import("../../../../packages/shared/src/index.js").TabId, presets, includeDiffs));
+    }
+
+    // ── Performance metrics ───────────────────────────────────────────────────
+    const perfMatch = p.match(/^\/api\/tabs\/([^/]+)\/performance$/);
+    if (method === "GET" && perfMatch) {
+      return json(res, await this.tabs.capturePerformanceMetrics(perfMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
     }
 
     // ── 404 ──────────────────────────────────────────────────────────────────
