@@ -28,6 +28,20 @@ export type PageScreenshot = {
   height: number;
 };
 
+export type ScreenshotDiff = {
+  beforeId: string;
+  afterId: string;
+  diffPixelCount: number;
+  /** Percentage of pixels that differ (0–100, two decimal places). */
+  diffPercentage: number;
+  totalPixels: number;
+  width: number;
+  height: number;
+  /** Base64-encoded PNG with changed pixels highlighted in red. */
+  diffImageData?: string;
+  capturedAt: number;
+};
+
 export type PageSnapshot = {
   tabId: TabId;
   title: string;

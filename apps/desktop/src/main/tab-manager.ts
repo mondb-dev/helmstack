@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { BrowserWindow, WebContentsView } from "electron";
+import { BrowserWindow, nativeImage, WebContentsView } from "electron";
 
 import { normalizePerception } from "../../../../packages/perception/src/normalize.js";
 import { AccountStore } from "./account-store.js";
@@ -21,14 +21,20 @@ import {
   type BrowserCommandResult,
   type BrowserOutputCommand,
   type BrowserPerceptionPacket,
+  type ConsoleLogEntry,
+  type ConsoleLogLevel,
   type FixturePageName,
   type HumanHandoffRecord,
+  type NetworkInterceptRule,
+  type NetworkRequestEntry,
   type PageScreenshot,
   type PageSnapshot,
   type PageObservation,
   type PerceptionResult,
+  type ScreenshotDiff,
   type SiteCapabilityManifest,
   type TabId,
+  type TabLogSnapshot,
   type TabSummary,
   type TotpResult,
   type VaultSecretInput,
@@ -48,6 +54,13 @@ type TabRecord = {
   pendingUrl: string | null;
   summary: TabSummary;
   emulatedViewport?: EmulatedViewport;
+  // CDP logging state (buffered per-tab, cleared on navigation)
+  cdpLoggingEnabled: boolean;
+  consoleLogs: ConsoleLogEntry[];
+  networkRequests: Map<string, NetworkRequestEntry>;
+  jsErrors: string[];
+  // Network mock intercept rules (null = disabled)
+  networkMockRules: NetworkInterceptRule[] | null;
 };
 
 type TabsChangedListener = (tabs: TabSummary[]) => void;
@@ -78,6 +91,7 @@ export class TabManager {
   private activeTabId: TabId | null = null;
   private attachedTabId: TabId | null = null;
   private viewport: ViewportRect = DEFAULT_VIEWPORT;
+  private readonly screenshotCache = new Map<string, PageScreenshot>();
 
   constructor(window: BrowserWindow, appDir: string, userDataPath: string, pagePreloadPath: string) {
     this.window = window;
@@ -118,7 +132,14 @@ export class TabManager {
       statusMessage: `Loading ${url}`
     };
 
-    const record: TabRecord = { id, view, summary, lastObservation: null, pendingUrl: url };
+    const record: TabRecord = {
+      id, view, summary, lastObservation: null, pendingUrl: url,
+      cdpLoggingEnabled: false,
+      consoleLogs: [],
+      networkRequests: new Map(),
+      jsErrors: [],
+      networkMockRules: null
+    };
 
     this.tabs.set(id, record);
     this.bindLifecycle(record);
@@ -228,6 +249,9 @@ export class TabManager {
       webContents.debugger.attach("1.3");
     }
 
+    // Enable log/network CDP domains once per tab lifetime (idempotent after first call).
+    await this.enableCdpLogging(tab);
+
     await webContents.debugger.sendCommand("Accessibility.enable");
 
     const [dom, ax] = await Promise.all([
@@ -287,6 +311,118 @@ export class TabManager {
       width: metrics.cssLayoutViewport.clientWidth,
       height: metrics.cssLayoutViewport.clientHeight
     };
+  }
+
+  /** Capture a screenshot and store it in the in-memory cache under `snapshotId`. */
+  async captureNamedScreenshot(tabId: TabId, snapshotId: string): Promise<PageScreenshot> {
+    const shot = await this.captureScreenshot(tabId);
+    this.screenshotCache.set(snapshotId, shot);
+    return shot;
+  }
+
+  /** Compare two previously captured named screenshots pixel-by-pixel. */
+  diffScreenshots(beforeId: string, afterId: string): ScreenshotDiff {
+    const before = this.screenshotCache.get(beforeId);
+    const after  = this.screenshotCache.get(afterId);
+    if (!before) throw new Error(`Screenshot "${beforeId}" not found in cache`);
+    if (!after)  throw new Error(`Screenshot "${afterId}" not found in cache`);
+
+    const imgA = nativeImage.createFromDataURL(`data:image/png;base64,${before.data}`);
+    const imgB = nativeImage.createFromDataURL(`data:image/png;base64,${after.data}`);
+
+    const { width: wA, height: hA } = imgA.getSize();
+    const { width: wB, height: hB } = imgB.getSize();
+    const totalPixels = wA * hA;
+
+    if (wA !== wB || hA !== hB) {
+      return { beforeId, afterId, diffPixelCount: totalPixels, diffPercentage: 100, totalPixels, width: wA, height: hA, capturedAt: Date.now() };
+    }
+
+    const rawA   = imgA.toBitmap(); // BGRA, 4 bytes/pixel
+    const rawB   = imgB.toBitmap();
+    const diffBuf = Buffer.from(rawA); // copy A as base
+    let diffCount = 0;
+
+    for (let i = 0; i < rawA.length; i += 4) {
+      const db = Math.abs(rawA[i]   - rawB[i]);
+      const dg = Math.abs(rawA[i + 1] - rawB[i + 1]);
+      const dr = Math.abs(rawA[i + 2] - rawB[i + 2]);
+      if (dr > 10 || dg > 10 || db > 10) {
+        diffCount++;
+        diffBuf[i]     = 0;   // B
+        diffBuf[i + 1] = 0;   // G
+        diffBuf[i + 2] = 255; // R  (highlight changed pixels red)
+        diffBuf[i + 3] = 255; // A
+      }
+    }
+
+    const diffImg = nativeImage.createFromBitmap(diffBuf, { width: wA, height: hA });
+
+    return {
+      beforeId, afterId,
+      diffPixelCount: diffCount,
+      diffPercentage: Math.round((diffCount / totalPixels) * 10000) / 100,
+      totalPixels,
+      width: wA, height: hA,
+      diffImageData: diffImg.toPNG().toString("base64"),
+      capturedAt: Date.now()
+    };
+  }
+
+  // ── Console / Network logs ────────────────────────────────────────────────
+
+  /** Return a snapshot of all buffered logs for the tab. */
+  getTabLogs(tabId: TabId): TabLogSnapshot {
+    const tab = this.requireTab(tabId);
+    return {
+      tabId,
+      consoleLogs: [...tab.consoleLogs],
+      networkRequests: [...tab.networkRequests.values()],
+      jsErrors: [...tab.jsErrors],
+      capturedAt: Date.now()
+    };
+  }
+
+  /** Clear all buffered logs for the tab. */
+  clearTabLogs(tabId: TabId): void {
+    const tab = this.requireTab(tabId);
+    tab.consoleLogs = [];
+    tab.networkRequests = new Map();
+    tab.jsErrors = [];
+  }
+
+  // ── Network mock / intercept ──────────────────────────────────────────────
+
+  async enableNetworkMock(tabId: TabId, rules: NetworkInterceptRule[]): Promise<void> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+
+    if (!webContents.debugger.isAttached()) {
+      webContents.debugger.attach("1.3");
+    }
+
+    // Reset Fetch domain if rules were already active.
+    if (tab.networkMockRules) {
+      await webContents.debugger.sendCommand("Fetch.disable").catch(() => {});
+    }
+
+    tab.networkMockRules = rules;
+
+    await webContents.debugger.sendCommand("Fetch.enable", {
+      patterns: [{ urlPattern: "*", requestStage: "Request" }]
+    });
+  }
+
+  async disableNetworkMock(tabId: TabId): Promise<void> {
+    const tab = this.requireTab(tabId);
+    tab.networkMockRules = null;
+    if (tab.view.webContents.debugger.isAttached()) {
+      await tab.view.webContents.debugger.sendCommand("Fetch.disable").catch(() => {});
+    }
+  }
+
+  getNetworkMockRules(tabId: TabId): NetworkInterceptRule[] | null {
+    return this.requireTab(tabId).networkMockRules;
   }
 
   async setEmulatedViewport(tabId: TabId, width: number, height: number, mobile: boolean): Promise<void> {
@@ -489,6 +625,11 @@ export class TabManager {
   private bindLifecycle(tab: TabRecord) {
     const { webContents } = tab.view;
 
+    // Route CDP messages to the log/mock handler (bound once; safe before debugger attach).
+    webContents.debugger.on("message", (_event: Electron.Event, method: string, params: Record<string, unknown>) => {
+      this.handleCdpMessage(tab, method, params);
+    });
+
     const updateSummary = () => {
       const liveUrl = webContents.getURL();
       const isLoading = webContents.isLoading();
@@ -527,6 +668,10 @@ export class TabManager {
     webContents.on("did-start-navigation", (event, navigationUrl, _isInPlace, isMainFrame) => {
       if (!event.defaultPrevented && isMainFrame) {
         updateLoadingUrl(navigationUrl);
+        // Clear buffered logs on every main-frame navigation.
+        tab.consoleLogs = [];
+        tab.networkRequests = new Map();
+        tab.jsErrors = [];
       }
     });
     webContents.on("did-navigate", updateSummary);
@@ -547,6 +692,135 @@ export class TabManager {
       };
       this.emitTabsChanged();
     });
+  }
+
+  // ── CDP domain management ─────────────────────────────────────────────────
+
+  private async enableCdpLogging(tab: TabRecord): Promise<void> {
+    if (tab.cdpLoggingEnabled) return;
+    tab.cdpLoggingEnabled = true;
+    const { webContents } = tab.view;
+    await Promise.all([
+      webContents.debugger.sendCommand("Runtime.enable"),
+      webContents.debugger.sendCommand("Log.enable"),
+      webContents.debugger.sendCommand("Network.enable", { maxTotalBufferSize: 0, maxResourceBufferSize: 0 })
+    ]);
+  }
+
+  private handleCdpMessage(tab: TabRecord, method: string, params: Record<string, unknown>): void {
+    switch (method) {
+      case "Log.entryAdded": {
+        const entry = params.entry as Record<string, unknown> | undefined;
+        if (!entry) break;
+        const rawLevel = (entry.level as string) ?? "log";
+        const level: ConsoleLogLevel = ["log", "info", "warn", "error", "debug"].includes(rawLevel)
+          ? rawLevel as ConsoleLogLevel
+          : "log";
+        tab.consoleLogs.push({
+          level,
+          text: (entry.text as string) ?? "",
+          url: entry.url as string | undefined,
+          lineNumber: entry.lineNumber as number | undefined,
+          timestamp: (entry.timestamp as number) ?? Date.now()
+        });
+        break;
+      }
+
+      case "Runtime.exceptionThrown": {
+        const details = params.exceptionDetails as Record<string, unknown> | undefined;
+        if (!details) break;
+        const exception = details.exception as Record<string, unknown> | undefined;
+        const text = (exception?.description as string)
+          ?? (details.text as string)
+          ?? "Uncaught exception";
+        tab.jsErrors.push(text);
+        break;
+      }
+
+      case "Network.requestWillBeSent": {
+        const requestId = params.requestId as string | undefined;
+        const request = params.request as Record<string, unknown> | undefined;
+        if (!requestId || !request) break;
+        tab.networkRequests.set(requestId, {
+          requestId,
+          url: (request.url as string) ?? "",
+          method: (request.method as string) ?? "GET",
+          failed: false,
+          timestamp: (params.timestamp as number) ?? Date.now()
+        });
+        break;
+      }
+
+      case "Network.responseReceived": {
+        const requestId = params.requestId as string | undefined;
+        const response = params.response as Record<string, unknown> | undefined;
+        if (!requestId || !response) break;
+        const existing = tab.networkRequests.get(requestId);
+        if (existing) {
+          existing.statusCode = response.status as number | undefined;
+          existing.statusText = response.statusText as string | undefined;
+          existing.mimeType   = response.mimeType   as string | undefined;
+        }
+        break;
+      }
+
+      case "Network.loadingFailed": {
+        const requestId = params.requestId as string | undefined;
+        if (!requestId) break;
+        const existing = tab.networkRequests.get(requestId);
+        if (existing) {
+          existing.failed    = true;
+          existing.errorText = params.errorText as string | undefined;
+        }
+        break;
+      }
+
+      case "Fetch.requestPaused": {
+        const requestId = params.requestId as string | undefined;
+        const request   = params.request   as Record<string, unknown> | undefined;
+        if (!requestId) break;
+
+        if (!tab.networkMockRules || !request) {
+          // Fetch domain enabled but no rules active — pass through.
+          void tab.view.webContents.debugger
+            .sendCommand("Fetch.continueRequest", { requestId })
+            .catch(() => {});
+          break;
+        }
+
+        const url           = (request.url    as string) ?? "";
+        const requestMethod = (request.method as string) ?? "GET";
+        const matched = tab.networkMockRules.find(rule => matchesMockRule(url, requestMethod, rule));
+
+        if (matched) {
+          const body = matched.responseBody !== undefined
+            ? (typeof matched.responseBody === "string"
+              ? matched.responseBody
+              : JSON.stringify(matched.responseBody))
+            : "";
+          const headers = Object.entries({
+            "Content-Type": (typeof matched.responseBody === "object" && matched.responseBody !== null)
+              ? "application/json"
+              : "text/plain",
+            ...matched.responseHeaders
+          }).map(([name, value]) => ({ name, value }));
+
+          void tab.view.webContents.debugger
+            .sendCommand("Fetch.fulfillRequest", {
+              requestId,
+              responseCode: matched.responseStatus ?? 200,
+              responseHeaders: headers,
+              body: Buffer.from(body).toString("base64")
+            })
+            .catch(() => {});
+        } else {
+          void tab.view.webContents.debugger
+            .sendCommand("Fetch.continueRequest", { requestId })
+            .catch(() => {});
+        }
+        break;
+      }
+    }
   }
 
   private layoutActiveTab() {
@@ -577,4 +851,32 @@ export class TabManager {
       listener(tabs);
     }
   }
+}
+
+// ── Module-level helpers ──────────────────────────────────────────────────────
+
+/**
+ * Returns true if url and method satisfy the given NetworkInterceptRule.
+ * urlPattern supports:
+ *   - star wildcard anywhere (e.g. "star/api/products*")
+ *   - /regex/flags literal regex (e.g. /\/api\/v\d+\//i)
+ */
+function matchesMockRule(url: string, method: string, rule: NetworkInterceptRule): boolean {
+  if (rule.method && rule.method.toUpperCase() !== method.toUpperCase()) return false;
+
+  const pattern = rule.urlPattern;
+
+  // Regex syntax: /pattern/flags
+  const regexMatch = pattern.match(/^\/(.+)\/([gimsuy]*)$/);
+  if (regexMatch) {
+    try {
+      return new RegExp(regexMatch[1], regexMatch[2] ?? "").test(url);
+    } catch {
+      return false;
+    }
+  }
+
+  // Glob: escape regex special chars then replace * with .*
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, String.raw`\$&`).replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`).test(url);
 }

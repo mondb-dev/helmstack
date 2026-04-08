@@ -37,6 +37,19 @@ export type SiteToolDescriptor = {
   requiresApproval?: boolean;
 };
 
+export type NetworkInterceptRule = {
+  /** URL pattern. Use * as wildcard, or wrap in /regex/flags for regular expressions. */
+  urlPattern: string;
+  /** HTTP method to match (e.g. "GET", "POST"). Omit to match any method. */
+  method?: string;
+  /** HTTP response status code. Defaults to 200. */
+  responseStatus?: number;
+  /** Response headers to return. */
+  responseHeaders?: Record<string, string>;
+  /** Response body. Objects are JSON-serialized automatically. */
+  responseBody?: unknown;
+};
+
 export type SiteCapabilityManifest = {
   tabId: TabId;
   origin: string;

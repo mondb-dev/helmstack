@@ -37,12 +37,17 @@ export type {
   BrowserCommandResult,
   BrowserOutputCommand,
   BrowserPerceptionPacket,
+  ConsoleLogEntry,
   HumanHandoffRecord,
+  NetworkInterceptRule,
+  NetworkRequestEntry,
   PageGraph,
   PageObservation,
   PageScreenshot,
+  ScreenshotDiff,
   SiteCapabilityManifest,
   TabId,
+  TabLogSnapshot,
   TabSummary,
   TotpResult
 } from "../../shared/src/index.js";
@@ -55,9 +60,12 @@ import type {
   BrowserOutputCommand,
   BrowserPerceptionPacket,
   HumanHandoffRecord,
+  NetworkInterceptRule,
   PageScreenshot,
+  ScreenshotDiff,
   SiteCapabilityManifest,
   TabId,
+  TabLogSnapshot,
   TabSummary,
   TotpResult
 } from "../../shared/src/index.js";
@@ -248,6 +256,53 @@ export class BrowserClient {
 
   async log(message: string, level: "system" | "agent" | "ai" | "error" | "nav" = "agent"): Promise<void> {
     await this.post("/api/log", { level, message });
+  }
+
+  // ── Dev tools ──────────────────────────────────────────────────────────
+
+  /** Return all buffered console logs, network requests, and JS errors for the tab. */
+  async getLogs(tabId: TabId): Promise<TabLogSnapshot> {
+    return this.get(`/api/tabs/${tabId}/logs`);
+  }
+
+  /** Clear all buffered logs for the tab. */
+  async clearLogs(tabId: TabId): Promise<{ ok: boolean }> {
+    return this.request("DELETE", `/api/tabs/${tabId}/logs`);
+  }
+
+  /**
+   * Enable network request interception for the tab.
+   * Requests matching a rule are fulfilled with the mocked response.
+   * Non-matching requests pass through transparently.
+   */
+  async enableNetworkMock(tabId: TabId, rules: NetworkInterceptRule[]): Promise<{ ok: boolean; rulesCount: number }> {
+    return this.post(`/api/tabs/${tabId}/mock`, { rules });
+  }
+
+  /** Disable network interception and restore normal request handling. */
+  async disableNetworkMock(tabId: TabId): Promise<{ ok: boolean }> {
+    return this.request("DELETE", `/api/tabs/${tabId}/mock`);
+  }
+
+  /** Return the currently active mock rules for the tab (null if disabled). */
+  async getNetworkMockRules(tabId: TabId): Promise<{ rules: NetworkInterceptRule[] | null }> {
+    return this.get(`/api/tabs/${tabId}/mock`);
+  }
+
+  /**
+   * Capture a screenshot and store it in the server-side cache under `snapshotId`.
+   * Use `diffScreenshots` to compare two named captures.
+   */
+  async captureNamedScreenshot(tabId: TabId, snapshotId: string): Promise<PageScreenshot> {
+    return this.post(`/api/tabs/${tabId}/screenshot/named`, { snapshotId });
+  }
+
+  /**
+   * Compare two previously captured named screenshots pixel-by-pixel.
+   * Returns a diff percentage and a base64 PNG with changed pixels highlighted in red.
+   */
+  async diffScreenshots(beforeId: string, afterId: string): Promise<ScreenshotDiff> {
+    return this.post("/api/screenshots/diff", { beforeId, afterId });
   }
 
   // ── SSE stream ──────────────────────────────────────────────────────────

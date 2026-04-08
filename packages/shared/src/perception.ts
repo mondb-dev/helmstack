@@ -2,6 +2,38 @@ import type { TabId } from "./browser.js";
 
 export type PageKind = "landing" | "signup" | "login" | "checkout" | "form" | "dashboard";
 
+// ── Dev-tool observation types ────────────────────────────────────────────────
+
+export type ConsoleLogLevel = "log" | "info" | "warn" | "error" | "debug";
+
+export type ConsoleLogEntry = {
+  level: ConsoleLogLevel;
+  text: string;
+  url?: string;
+  lineNumber?: number;
+  timestamp: number;
+};
+
+export type NetworkRequestEntry = {
+  requestId: string;
+  url: string;
+  method: string;
+  statusCode?: number;
+  statusText?: string;
+  mimeType?: string;
+  failed: boolean;
+  errorText?: string;
+  timestamp: number;
+};
+
+export type TabLogSnapshot = {
+  tabId: TabId;
+  consoleLogs: ConsoleLogEntry[];
+  networkRequests: NetworkRequestEntry[];
+  jsErrors: string[];
+  capturedAt: number;
+};
+
 export type MediaKind = "video" | "audio";
 
 export type MediaReadyState =

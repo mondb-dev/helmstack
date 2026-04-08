@@ -43,6 +43,13 @@ type SseClient = http.ServerResponse;
  * GET  /api/intent
  * PUT  /api/intent                          { intent: string }
  * POST /api/log                             { level?, message }
+ * GET  /api/tabs/:id/logs                  → TabLogSnapshot
+ * DELETE /api/tabs/:id/logs               clears buffered logs
+ * GET  /api/tabs/:id/mock                 → { rules }
+ * POST /api/tabs/:id/mock                 { rules: NetworkInterceptRule[] }
+ * DELETE /api/tabs/:id/mock              disables interception
+ * POST /api/tabs/:id/screenshot/named    { snapshotId } → PageScreenshot
+ * POST /api/screenshots/diff             { beforeId, afterId } → ScreenshotDiff
  *
  * SSE stream
  * ----------
@@ -327,6 +334,52 @@ export class AgentServer {
     if (method === "DELETE" && extDeleteMatch) {
       await this.extensions.removeExtension(extDeleteMatch[1]);
       return json(res, { removed: extDeleteMatch[1] });
+    }
+
+    // ── Console / network logs ────────────────────────────────────────────────
+    const tabLogsMatch = p.match(/^\/api\/tabs\/([^/]+)\/logs$/);
+    if (tabLogsMatch) {
+      if (method === "GET") {
+        return json(res, this.tabs.getTabLogs(tabLogsMatch[1] as TabId));
+      }
+      if (method === "DELETE") {
+        this.tabs.clearTabLogs(tabLogsMatch[1] as TabId);
+        return json(res, { ok: true });
+      }
+    }
+
+    // ── Network mock / intercept ──────────────────────────────────────────────
+    const mockMatch = p.match(/^\/api\/tabs\/([^/]+)\/mock$/);
+    if (mockMatch) {
+      if (method === "GET") {
+        return json(res, { rules: this.tabs.getNetworkMockRules(mockMatch[1] as TabId) });
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        if (!Array.isArray(body.rules)) return error(res, 400, "rules array is required");
+        await this.tabs.enableNetworkMock(mockMatch[1] as TabId, body.rules as import("../../../../packages/shared/src/index.js").NetworkInterceptRule[]);
+        return json(res, { ok: true, rulesCount: (body.rules as unknown[]).length });
+      }
+      if (method === "DELETE") {
+        await this.tabs.disableNetworkMock(mockMatch[1] as TabId);
+        return json(res, { ok: true });
+      }
+    }
+
+    // ── Named screenshot + visual diff ────────────────────────────────────────
+    const namedShotMatch = p.match(/^\/api\/tabs\/([^/]+)\/screenshot\/named$/);
+    if (method === "POST" && namedShotMatch) {
+      const body = await readBody(req);
+      if (typeof body.snapshotId !== "string") return error(res, 400, "snapshotId string is required");
+      return json(res, await this.tabs.captureNamedScreenshot(namedShotMatch[1] as TabId, body.snapshotId));
+    }
+
+    if (method === "POST" && p === "/api/screenshots/diff") {
+      const body = await readBody(req);
+      if (typeof body.beforeId !== "string" || typeof body.afterId !== "string") {
+        return error(res, 400, "beforeId and afterId strings are required");
+      }
+      return json(res, this.tabs.diffScreenshots(body.beforeId, body.afterId));
     }
 
     // ── 404 ──────────────────────────────────────────────────────────────────
