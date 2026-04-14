@@ -30,7 +30,6 @@
         </div>
 
         <section class="toolbar">
-          <div class="toolbar-chip">Perception-first</div>
           <form class="address-form" id="address-form">
             <div class="address-shell">
               <span class="address-prefix">Navigate</span>
@@ -38,9 +37,17 @@
             </div>
             <button class="primary-button" type="submit">Go</button>
           </form>
-          <button class="secondary-button" id="fixture-open-button" type="button">Open Fixture</button>
-          <button class="secondary-button" id="fixture-run-button" type="button">Run Fixture</button>
-          <button class="secondary-button" id="snapshot-button" type="button">Capture Graph</button>
+          <div class="toolbar-menu" id="toolbar-menu">
+            <button class="secondary-button toolbar-menu-trigger" id="toolbar-menu-trigger" type="button">
+              Demos ▾
+            </button>
+            <div class="toolbar-menu-dropdown" id="toolbar-menu-dropdown" hidden>
+              <button class="toolbar-menu-item" id="fixture-open-button" type="button">Open contact fixture</button>
+              <button class="toolbar-menu-item" id="fixture-run-button" type="button">Run contact fixture</button>
+              <div class="toolbar-menu-divider"></div>
+              <button class="toolbar-menu-item" id="snapshot-button" type="button">Capture page graph</button>
+            </div>
+          </div>
         </section>
       </header>
 

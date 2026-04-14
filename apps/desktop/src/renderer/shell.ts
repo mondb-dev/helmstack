@@ -108,7 +108,19 @@ function renderTabs(nextTabs: TabSummary[]) {
       meta.textContent = safeHostLabel(tab.url);
 
       copy.append(title, meta);
-      button.append(status, copy);
+
+      const closeBtn = document.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.className = "tab-close";
+      closeBtn.textContent = "×";
+      closeBtn.title = "Close tab";
+      closeBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        renderTabs(await window.browserShell.closeTab(tab.id));
+        await syncActiveObservation();
+      });
+
+      button.append(status, copy, closeBtn);
       return button;
     })
   );
@@ -592,6 +604,18 @@ async function bootstrap() {
     }
   });
 
+  const toolsMenuTrigger = document.getElementById("toolbar-menu-trigger");
+  const toolsMenuDropdown = document.getElementById("toolbar-menu-dropdown");
+  toolsMenuTrigger?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toolsMenuDropdown?.toggleAttribute("hidden");
+  });
+  document.addEventListener("click", (e) => {
+    if (!toolsMenuTrigger?.contains(e.target as Node) && !toolsMenuDropdown?.contains(e.target as Node)) {
+      toolsMenuDropdown?.setAttribute("hidden", "");
+    }
+  });
+
   newTabButton?.addEventListener("click", async () => {
     renderTabs(await window.browserShell.openTab("https://example.com"));
     await syncActiveObservation();
@@ -599,6 +623,7 @@ async function bootstrap() {
   });
 
   snapshotButton?.addEventListener("click", async () => {
+    toolsMenuDropdown?.setAttribute("hidden", "");
     const activeTab = getActiveTab();
     if (!activeTab) {
       return;
@@ -607,12 +632,14 @@ async function bootstrap() {
   });
 
   fixtureOpenButton?.addEventListener("click", async () => {
+    toolsMenuDropdown?.setAttribute("hidden", "");
     const fixtureUrl = await window.browserShell.getFixtureUrl("contact-form");
     setFixtureStatus(`Opened fixture: ${fixtureUrl}`);
     await navigateActiveTab(fixtureUrl);
   });
 
   fixtureRunButton?.addEventListener("click", async () => {
+    toolsMenuDropdown?.setAttribute("hidden", "");
     try {
       await runContactFixture();
     } catch (error) {
