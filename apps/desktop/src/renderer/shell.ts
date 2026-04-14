@@ -30,6 +30,13 @@ const observationTitle = document.getElementById("observation-title");
 const observationCopy = document.getElementById("observation-copy");
 const fixtureStatus = document.getElementById("fixture-status");
 const vaultList = document.getElementById("vault-list");
+const accountsList = document.getElementById("accounts-list");
+const accountForm = document.getElementById("account-form") as HTMLFormElement | null;
+const accountLabelInput = document.getElementById("account-label") as HTMLInputElement | null;
+const accountOriginInput = document.getElementById("account-origin") as HTMLInputElement | null;
+const accountUsernameInput = document.getElementById("account-username") as HTMLInputElement | null;
+const accountPasswordInput = document.getElementById("account-password") as HTMLInputElement | null;
+const accountTotpInput = document.getElementById("account-totp") as HTMLInputElement | null;
 const approvalModal = document.getElementById("approval-modal");
 const approvalCopy = document.getElementById("approval-copy");
 const approvalEffects = document.getElementById("approval-effects");
@@ -145,6 +152,48 @@ function renderVaultSecrets(secrets: VaultSecretSummary[]) {
 
       item.append(label, value);
       return item;
+    })
+  );
+}
+
+function renderAccounts(accounts: import("../../../../packages/shared/src/index.js").AccountSummary[]) {
+  if (!accountsList) return;
+
+  if (accounts.length === 0) {
+    accountsList.replaceChildren();
+    return;
+  }
+
+  accountsList.replaceChildren(
+    ...accounts.map((account) => {
+      const chip = document.createElement("div");
+      chip.className = "account-chip";
+
+      const body = document.createElement("div");
+      body.className = "account-chip-body";
+
+      const labelEl = document.createElement("div");
+      labelEl.className = "account-chip-label";
+      labelEl.textContent = account.label;
+
+      const meta = document.createElement("div");
+      meta.className = "account-chip-meta";
+      meta.textContent = `${account.username} · ${account.origins.join(", ")}`;
+
+      body.append(labelEl, meta);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "account-chip-delete";
+      deleteBtn.type = "button";
+      deleteBtn.textContent = "×";
+      deleteBtn.title = "Delete account";
+      deleteBtn.addEventListener("click", async () => {
+        await window.browserShell.deleteAccount(account.id);
+        renderAccounts(await window.browserShell.listAccounts());
+      });
+
+      chip.append(body, deleteBtn);
+      return chip;
     })
   );
 }
@@ -495,6 +544,7 @@ function submitIntent() {
 async function bootstrap() {
   renderTabs(await window.browserShell.listTabs());
   renderVaultSecrets(await window.browserShell.listVaultSecrets());
+  renderAccounts(await window.browserShell.listAccounts());
   await syncActiveObservation();
   startViewportStabilizer();
 
@@ -568,6 +618,20 @@ async function bootstrap() {
     } catch (error) {
       setFixtureStatus(error instanceof Error ? error.message : "Fixture runner failed.");
     }
+  });
+
+  accountForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const label = accountLabelInput?.value.trim() ?? "";
+    const origin = accountOriginInput?.value.trim() ?? "";
+    const username = accountUsernameInput?.value.trim() ?? "";
+    const password = accountPasswordInput?.value ?? "";
+    const totpSeed = accountTotpInput?.value.trim() || undefined;
+    if (!label || !origin || !username || !password) return;
+
+    await window.browserShell.saveAccount({ label, origins: [origin], username, password, totpSeed });
+    accountForm.reset();
+    renderAccounts(await window.browserShell.listAccounts());
   });
 
   approvalApproveButton?.addEventListener("click", async () => {

@@ -425,7 +425,7 @@ export type AssertionResult = {
   evidence: AssertionEvidence;
 };
 
- Storage Inspector // 
+// Storage Inspector
 
 export type StorageArea = "local" | "session";
 

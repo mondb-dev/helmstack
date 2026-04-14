@@ -534,6 +534,115 @@ button:active {
   color: var(--muted);
 }
 
+/* ── Accounts card ─────────────────────────────────────────────────────────── */
+
+.accounts-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(81, 165, 255, 0.07), rgba(81, 165, 255, 0.02)),
+    rgba(255, 255, 255, 0.02);
+}
+
+.accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-chip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+}
+
+.account-chip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.account-chip-label {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-chip-meta {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-chip-delete {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.account-chip-delete:hover {
+  border-color: rgba(255, 100, 100, 0.4);
+  color: #ff8888;
+  background: rgba(255, 100, 100, 0.08);
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.account-input::placeholder {
+  color: var(--muted);
+}
+
+.account-input:focus {
+  outline: none;
+  border-color: rgba(81, 165, 255, 0.4);
+  background: rgba(81, 165, 255, 0.06);
+}
+
+.account-save-button {
+  align-self: flex-end;
+  padding: 8px 18px;
+  font-size: 13px;
+}
+
 .snapshot-output {
   margin: 0;
   flex: 1;

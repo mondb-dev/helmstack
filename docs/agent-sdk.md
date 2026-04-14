@@ -177,10 +177,10 @@ await browser.rejectCommand(approvalId);
 Request user intervention when the agent is blocked:
 
 ```typescript
-// Request handoff
+// Request handoff — reason must be one of: "captcha" | "2fa" | "payment" | "legal"
 await browser.execute(tabId, {
-  type: "request_human_handoff",
-  reason: "CAPTCHA detected, need human to solve"
+  type: "await_human",
+  reason: "captcha"
 });
 
 // Wait for user to resolve it (polls SSE stream)
@@ -207,10 +207,11 @@ const matched = await browser.lookupAccounts("https://github.com");
 
 // Create account
 await browser.saveAccount({
-  origin: "https://github.com",
+  label: "GitHub",
+  origins: ["https://github.com"],
   username: "user@example.com",
   password: "secret",
-  totpSecret: "JBSWY3DPEHPK3PXP"
+  totpSeed: "JBSWY3DPEHPK3PXP"   // base32 TOTP seed (optional)
 });
 
 // Update account
@@ -224,7 +225,7 @@ await browser.deleteAccount(accountId);
 // Generate TOTP code
 const totp = await browser.generateTotp(accountId);
 console.log(totp.code);      // "123456"
-console.log(totp.expiresAt); // timestamp
+console.log(totp.expiresIn); // seconds until code expires (max 30)
 ```
 
 ### Intent System

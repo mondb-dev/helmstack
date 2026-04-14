@@ -67,6 +67,22 @@
             <p class="fixture-copy" id="fixture-status">Open the local fixture or run the end-to-end flow with vault-backed values.</p>
             <div class="vault-list" id="vault-list"></div>
           </div>
+
+          <div class="accounts-card">
+            <div class="panel-heading">
+              <span class="eyebrow">Vault</span>
+              <h2>Accounts</h2>
+            </div>
+            <div class="accounts-list" id="accounts-list"></div>
+            <form class="account-form" id="account-form">
+              <input class="account-input" id="account-label" type="text" placeholder="Label (e.g. Amplify dev)" required />
+              <input class="account-input" id="account-origin" type="text" placeholder="Origin (e.g. https://example.com)" required />
+              <input class="account-input" id="account-username" type="text" placeholder="Username" required autocomplete="off" />
+              <input class="account-input" id="account-password" type="password" placeholder="Password" required autocomplete="new-password" />
+              <input class="account-input" id="account-totp" type="text" placeholder="TOTP seed (optional)" autocomplete="off" />
+              <button class="primary-button account-save-button" type="submit">Save account</button>
+            </form>
+          </div>
           <pre class="snapshot-output" id="snapshot-output">No page snapshot captured yet.</pre>
         </aside>
 

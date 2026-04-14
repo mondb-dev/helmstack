@@ -42,7 +42,7 @@ Per tab:
 
 1. ✅ Site capability registry in the main process (`site-capability-registry.ts`)
 2. ✅ `dom` provider over the existing perception layer
-3. ✅ `webmcp` provider adapter that reports availability (detection only)
+3. ✅ `webmcp` provider — detection, tool enumeration, and tool invocation (`navigator.webMcp.invoke`, `window.WebMCP.invoke`, `script[type="application/webmcp+json"]` fetch fallback)
 4. ✅ Agent commands routed through `BrowserOutputCommand`
 5. ✅ Approvals in the browser substrate (not in the cognition runtime)
 6. ✅ HTTP+SSE agent server on `127.0.0.1:7070`
@@ -50,6 +50,5 @@ Per tab:
 
 **Not yet:**
 
-- Real WebMCP tool *invocation* (detection is scaffolded, execution is not)
-- WebMCP manifest parsing and validation
+- WebMCP manifest schema validation (tools are extracted and normalized but not validated against a spec)
 - Preference logic for site tools over DOM fallback when both are available

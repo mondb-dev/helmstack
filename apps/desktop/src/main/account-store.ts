@@ -124,6 +124,16 @@ export class AccountStore {
       .map(summarize);
   }
 
+  /** Return the first full AccountRecord (with plaintext password) matching the given origin. */
+  findRecordByOrigin(origin: string): AccountRecord | null {
+    const domain = toDomain(origin);
+    if (!domain) return null;
+
+    return (
+      [...this.accounts.values()].find((account) => account.origins.some((o) => domainsMatch(o, domain))) ?? null
+    );
+  }
+
   /** Generate a TOTP code for the given account. */
   generateTotp(accountId: string): TotpResult {
     const account = this.accounts.get(accountId);

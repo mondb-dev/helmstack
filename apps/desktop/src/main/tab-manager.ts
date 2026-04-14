@@ -1650,6 +1650,21 @@ export class TabManager {
       };
       this.emitTabsChanged();
     });
+
+    // Auto-respond to HTTP Basic Auth challenges using vault accounts.
+    webContents.on("login", (_event, _request, authInfo, callback) => {
+      if (authInfo.scheme !== "basic") {
+        callback();
+        return;
+      }
+      const origin = `${authInfo.isProxy ? "proxy" : (authInfo.host ? `https://${authInfo.host}` : "")}`;
+      const record = this.accounts.findRecordByOrigin(origin || tab.summary.url);
+      if (record) {
+        callback(record.username, record.password);
+      } else {
+        callback();
+      }
+    });
   }
 
   // ── CDP domain management ─────────────────────────────────────────────────
@@ -1990,7 +2005,7 @@ function computePerceptionDiff(
   };
 }
 
- evaluateAssertionAgainstGraph (module-level) // 
+// evaluateAssertionAgainstGraph (module-level)
 
 /**
  * Pure, synchronous heuristic evaluator.  Takes a pre-captured `PageGraph`
@@ -2012,7 +2027,7 @@ function evaluateAssertionAgainstGraph(
 ): AssertionResult {
   const norm = assertion.toLowerCase().trim();
 
- Build evidence bundle   // 
+  // Build evidence bundle
   const allFields = graph.forms.flatMap(f => f.fields.map(ff => ff.id ?? ff.label ?? ""));
   const evidence: import("../../../../packages/shared/src/index.js").AssertionEvidence = {
     url: graph.url,
@@ -2033,7 +2048,7 @@ function evaluateAssertionAgainstGraph(
     }
   };
 
- Helpers   // 
+  // Helpers
   /** All searchable text on the page as a single lowercase string. */
   const fullText = [
     graph.title,
@@ -2052,7 +2067,7 @@ function evaluateAssertionAgainstGraph(
     return { tabId, assertion, pass: false, confidence, explanation, evidence };
   }
 
- 1. Quantitative: "shows N items / results / " errors /   // 
+  // 1. Quantitative: "shows N items / results / " errors
   const qtyMatch = norm.match(/\b(\d+)\s+(item|result|error|warning|button|link|field|form|message|alert|heading|image|video)s?\b/);
   if (qtyMatch) {
     const expected = parseInt(qtyMatch[1], 10);
@@ -2079,26 +2094,26 @@ function evaluateAssertionAgainstGraph(
       return pass(`The text "${expected} ${noun}" was found on the page.`);
     }
     if (actual === expected) {
-      return pass(`Found exactly ${actual} ${noun}( matches expected ${expected}.`);s) 
+      return pass(`Found exactly ${actual} ${noun}(s) matches expected ${expected}.`);
     }
     if (Math.abs(actual - expected) <= 1) {
-      return fail(`Expected ${expected} ${noun}(s) but found ${ close but not matching.`, "medium");actual} 
+      return fail(`Expected ${expected} ${noun}(s) but found ${actual}, close but not matching.`, "medium");
     }
     return fail(`Expected ${expected} ${noun}(s) but found ${actual}.`);
   }
 
- 2. Absence: "no X", "not visible", "does not exist", "hidden"   // 
+  // 2. Absence: "no X", "not visible", "does not exist", "hidden"
   const absenceMatch = norm.match(/\b(no |not |doesn't |does not |isn't |is not |never |hidden |absent )([\w\s]{2,40})/);
   if (absenceMatch) {
     const subject = absenceMatch[2].trim();
     const found = fullText.includes(subject);
     if (!found) {
-      return pass(`"${subject}" was not found on the  absence confirmed.`);page 
+      return pass(`"${subject}" was not found on the page, absence confirmed.`);
     }
     return fail(`"${subject}" was found on the page but the assertion expects it to be absent.`);
   }
 
- 3. Disabled / enabled state   // 
+  // 3. Disabled / enabled state
   const disabledMatch = norm.match(/\b([\w\s]{2,30})\s+is\s+(disabled|enabled|clickable|active|inactive)\b/);
   if (disabledMatch) {
     const label = disabledMatch[1].trim();
@@ -2114,21 +2129,21 @@ function evaluateAssertionAgainstGraph(
     return fail(`Action "${action.label}" is ${action.disabled ? "disabled" : "enabled"} but assertion expects ${state}.`);
   }
 
- 4. Title assertion   // 
+  // 4. Title assertion
   if (norm.includes("title") || norm.includes("page is") || norm.includes("page title")) {
     const quoted = norm.match(/["']([^"']+)["']/);
     const titleLower = graph.title.toLowerCase();
     if (quoted) {
       const q = quoted[1].toLowerCase();
       if (titleLower.includes(q)) return pass(`Page title "${graph.title}" contains "${quoted[1]}".`);
-      return fail(`Page title is "${graph. does not contain "${quoted[1]}".`);title}" 
+      return fail(`Page title is "${graph.title}" does not contain "${quoted[1]}".`);
     }
-    // No  just check that title is non-emptyquote 
+    // No quote, just check that title is non-empty
     if (graph.title.trim()) return pass(`Page title is "${graph.title}".`, "medium");
     return fail("Page has no title.", "medium");
   }
 
- 5. At-least / more-than / fewer-than   // 
+  // 5. At-least / more-than / fewer-than
   const compMatch = norm.match(/\b(at least|more than|fewer than|less than|at most)\s+(\d+)\s+([\w]+)s?\b/);
   if (compMatch) {
     const op = compMatch[1];
@@ -2138,11 +2153,11 @@ function evaluateAssertionAgainstGraph(
     let ok = false;
     if (op === "at least" || op === "more than") ok = op === "at least" ? count >= n : count > n;
     else ok = op === "at most" ? count <= n : count < n;
-    if (ok) return pass(`There are ${count} ${noun}( satisfies "${op} ${n}".`);s) 
-    return fail(`There are ${count} ${noun}( does not satisfy "${op} ${n}".`);s) 
+    if (ok) return pass(`There are ${count} ${noun}(s) that satisfy "${op} ${n}".`);
+    return fail(`There are ${count} ${noun}(s) that do not satisfy "${op} ${n}".`);
   }
 
- 6. Presence: label/text appears anywhere   // 
+  // 6. Presence: label/text appears anywhere
   // Strip common filler words to get the core subject
   const stripped = norm
     .replace(/\b(the|a|an|is|are|shows?|displays?|contains?|has|have|visible|present|exists?|on the page)\b/g, " ")
@@ -2163,10 +2178,10 @@ function evaluateAssertionAgainstGraph(
     if (!anyPresent) {
       return fail(`None of the key terms (${words.join(", ")}) were found on the page.`, "low");
     }
-    return fail(`Only some key terms were  assertion may not hold. Review evidence.`, "low");found 
+    return fail(`Only some key terms were found. Assertion may not hold. Review evidence.`, "low");
   }
 
- 7. Fallback   // 
+  // 7. Fallback
   return {
     tabId, assertion, pass: false,
     confidence: "low",
