@@ -55,9 +55,11 @@ export type SiteCapabilityManifest = {
   origin: string;
   provider: SiteCapabilityProviderKind;
   isAvailable: boolean;
+  preferred?: boolean;
   discoveredAt: number;
   tools: SiteToolDescriptor[];
   notes: string[];
+  validationNotes?: string[];
 };
 
 export type BrowserPerceptionPacket = {
@@ -66,6 +68,8 @@ export type BrowserPerceptionPacket = {
   observation: PageObservation | null;
   result: PerceptionResult;
   siteCapabilities: SiteCapabilityManifest[];
+  preferredProvider?: SiteCapabilityProviderKind;
+  sitePatterns?: string[];
   intent?: string;
 };
 
@@ -97,7 +101,11 @@ export type BrowserOutputCommand =
 export type HumanHandoffRecord = {
   requestId: string;
   tabId: TabId;
+  relatedTabIds: TabId[];
   reason: "captcha" | "2fa" | "payment" | "legal";
+  groupId?: string;
+  origin?: string;
+  title?: string;
   createdAt: number;
 };
 

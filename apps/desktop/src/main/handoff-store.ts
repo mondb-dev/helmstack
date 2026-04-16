@@ -12,11 +12,19 @@ import type { HumanHandoffRecord, TabId } from "../../../../packages/shared/src/
 export class HandoffStore {
   private readonly pending = new Map<string, HumanHandoffRecord>();
 
-  create(tabId: TabId, reason: HumanHandoffRecord["reason"]): HumanHandoffRecord {
+  create(
+    tabId: TabId,
+    reason: HumanHandoffRecord["reason"],
+    details: Pick<HumanHandoffRecord, "relatedTabIds" | "groupId" | "origin" | "title"> = { relatedTabIds: [tabId] }
+  ): HumanHandoffRecord {
     const record: HumanHandoffRecord = {
       requestId: randomUUID(),
       tabId,
+      relatedTabIds: details.relatedTabIds.length ? details.relatedTabIds : [tabId],
       reason,
+      groupId: details.groupId,
+      origin: details.origin,
+      title: details.title,
       createdAt: Date.now()
     };
     this.pending.set(record.requestId, record);

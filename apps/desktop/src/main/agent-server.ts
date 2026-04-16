@@ -55,6 +55,21 @@ type SseClient = http.ServerResponse;
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
  * GET  /api/tabs/:id/threejs-scene      → ThreeSceneReport
  * POST /api/tabs/:id/assert            { assertion: string } → AssertionResult
+ * GET  /api/tabs/:id/recording          → RecordingSession | null
+ * POST /api/tabs/:id/recording/start    → RecordingSession
+ * POST /api/tabs/:id/recording/stop     → RecordingStopResult
+ * GET  /api/tabs/:id/site-patterns      → { patterns: string[] }
+ * POST /api/tabs/:id/site-patterns      { patterns: string[], mode?: "set" | "add" }
+ * DELETE /api/tabs/:id/site-patterns    clears persisted origin patterns
+ * POST /api/tabs/:id/file-input         { selector, files } → { ok: true }
+ * GET  /api/tabs/:id/downloads          → DownloadEntry[]
+ * DELETE /api/tabs/:id/downloads        clears tracked downloads
+ * GET  /api/tabs/:id/budget             → ResourceBudget | null
+ * POST /api/tabs/:id/budget             → ResourceBudget
+ * DELETE /api/tabs/:id/budget           clears resource budget
+ * GET  /api/tabs/:id/location           → LocationOverride | null
+ * POST /api/tabs/:id/location           → LocationOverride
+ * DELETE /api/tabs/:id/location         clears geolocation/timezone override
  * GET  /api/tabs/:id/storage            → StorageReport (all areas)
  * GET  /api/tabs/:id/storage/:area      area=local|session → StorageEntry[]  (optional ?key=X)
  * POST /api/tabs/:id/storage/:area      { entries: Record<string,string> } → { ok: true }
@@ -459,6 +474,101 @@ export class AgentServer {
         body.assertion
       );
       return json(res, result);
+    }
+
+    const recordingMatch = p.match(/^\/api\/tabs\/([^/]+)\/recording$/);
+    if (recordingMatch && method === "GET") {
+      return json(res, this.tabs.getRecording(recordingMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+    }
+
+    const recordingStartMatch = p.match(/^\/api\/tabs\/([^/]+)\/recording\/start$/);
+    if (recordingStartMatch && method === "POST") {
+      return json(res, this.tabs.startRecording(recordingStartMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+    }
+
+    const recordingStopMatch = p.match(/^\/api\/tabs\/([^/]+)\/recording\/stop$/);
+    if (recordingStopMatch && method === "POST") {
+      return json(res, this.tabs.stopRecording(recordingStopMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+    }
+
+    const sitePatternsMatch = p.match(/^\/api\/tabs\/([^/]+)\/site-patterns$/);
+    if (sitePatternsMatch) {
+      const tid = sitePatternsMatch[1] as import("../../../../packages/shared/src/index.js").TabId;
+      if (method === "GET") {
+        return json(res, { patterns: this.tabs.getSitePatterns(tid) });
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        if (!Array.isArray(body.patterns)) return error(res, 400, "patterns array is required");
+        const mode = body.mode === "set" ? "set" : "add";
+        const patterns = mode === "set"
+          ? this.tabs.setSitePatterns(tid, body.patterns.map(String))
+          : this.tabs.addSitePatterns(tid, body.patterns.map(String));
+        return json(res, { patterns });
+      }
+      if (method === "DELETE") {
+        this.tabs.clearSitePatterns(tid);
+        return json(res, { ok: true });
+      }
+    }
+
+    const fileInputMatch = p.match(/^\/api\/tabs\/([^/]+)\/file-input$/);
+    if (fileInputMatch && method === "POST") {
+      const body = await readBody(req);
+      if (typeof body.selector !== "string" || !Array.isArray(body.files)) {
+        return error(res, 400, "selector string and files array are required");
+      }
+      return json(res, await this.tabs.setFileInputFiles(fileInputMatch[1] as import("../../../../packages/shared/src/index.js").TabId, {
+        selector: body.selector,
+        files: body.files.map(String)
+      }));
+    }
+
+    const downloadsMatch = p.match(/^\/api\/tabs\/([^/]+)\/downloads$/);
+    if (downloadsMatch) {
+      const tid = downloadsMatch[1] as import("../../../../packages/shared/src/index.js").TabId;
+      if (method === "GET") {
+        return json(res, this.tabs.listDownloads(tid));
+      }
+      if (method === "DELETE") {
+        this.tabs.clearDownloads(tid);
+        return json(res, { ok: true });
+      }
+    }
+
+    const budgetMatch = p.match(/^\/api\/tabs\/([^/]+)\/budget$/);
+    if (budgetMatch) {
+      const tid = budgetMatch[1] as import("../../../../packages/shared/src/index.js").TabId;
+      if (method === "GET") {
+        return json(res, this.tabs.getResourceBudget(tid));
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        return json(res, await this.tabs.setResourceBudget(tid, body as import("../../../../packages/shared/src/index.js").ResourceBudget));
+      }
+      if (method === "DELETE") {
+        await this.tabs.clearResourceBudget(tid);
+        return json(res, { ok: true });
+      }
+    }
+
+    const locationMatch = p.match(/^\/api\/tabs\/([^/]+)\/location$/);
+    if (locationMatch) {
+      const tid = locationMatch[1] as import("../../../../packages/shared/src/index.js").TabId;
+      if (method === "GET") {
+        return json(res, this.tabs.getLocationOverride(tid));
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        if (typeof body.latitude !== "number" || typeof body.longitude !== "number") {
+          return error(res, 400, "latitude and longitude are required numbers");
+        }
+        return json(res, await this.tabs.setLocationOverride(tid, body as import("../../../../packages/shared/src/index.js").LocationOverride));
+      }
+      if (method === "DELETE") {
+        await this.tabs.clearLocationOverride(tid);
+        return json(res, { ok: true });
+      }
     }
 
     // ── Storage Inspector ─────────────────────────────────────────────────────

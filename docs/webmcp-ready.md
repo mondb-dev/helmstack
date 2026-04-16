@@ -48,7 +48,7 @@ Per tab:
 6. ✅ HTTP+SSE agent server on `127.0.0.1:7070`
 7. ✅ TypeScript agent SDK (`@helmstack/agent-sdk`)
 
-**Not yet:**
+**Now implemented:**
 
-- WebMCP manifest schema validation (tools are extracted and normalized but not validated against a spec)
-- Preference logic for site tools over DOM fallback when both are available
+- WebMCP manifest schema validation with surfaced validation issues
+- Provider preference logic that marks and orders the preferred provider per tab

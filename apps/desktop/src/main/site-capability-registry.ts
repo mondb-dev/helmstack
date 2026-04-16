@@ -26,6 +26,7 @@ import type {
   WebMcpActionMode,
   WebMcpAvailability,
   WebMcpManifest,
+  WebMcpValidationIssue,
   WebMcpToolDescriptor
 } from "../../../../packages/shared/src/index.js";
 
@@ -46,7 +47,8 @@ export class SiteCapabilityRegistry {
     private readonly accounts: AccountStore,
     private readonly approvals: ApprovalStore,
     private readonly handoffs: HandoffStore,
-    private readonly policies: ApprovalPolicyStore
+    private readonly policies: ApprovalPolicyStore,
+    private readonly getHandoffContext: (tabId: TabId) => Pick<HumanHandoffRecord, "relatedTabIds" | "groupId" | "origin" | "title">
   ) {}
 
   onHandoffRequested(listener: HandoffListener) {
@@ -65,12 +67,15 @@ export class SiteCapabilityRegistry {
   }
 
   async buildPerceptionPacket(tabId: TabId, observation: PageObservation | null, result: PerceptionResult, webContents: WebContents) {
+    const manifests = await this.listCapabilityManifests(tabId, result, webContents);
+    const preferred = manifests.find((manifest) => manifest.preferred)?.provider;
     return {
       tabId,
       emittedAt: Date.now(),
       observation,
       result,
-      siteCapabilities: await this.listCapabilityManifests(tabId, result, webContents)
+      siteCapabilities: manifests,
+      preferredProvider: preferred
     } satisfies BrowserPerceptionPacket;
   }
 
@@ -80,7 +85,11 @@ export class SiteCapabilityRegistry {
       this.buildWebMcpManifest(tabId, result, webContents)
     ]);
 
-    return [domManifest, webMcpManifest];
+    const preferredProvider = pickPreferredProvider(domManifest, webMcpManifest);
+    domManifest.preferred = preferredProvider === "dom";
+    webMcpManifest.preferred = preferredProvider === "webmcp";
+
+    return preferredProvider === "webmcp" ? [webMcpManifest, domManifest] : [domManifest, webMcpManifest];
   }
 
   async executeCommand(
@@ -190,7 +199,7 @@ export class SiteCapabilityRegistry {
   }
 
   private createHandoff(tabId: TabId, command: Extract<BrowserOutputCommand, { type: "await_human" }>): BrowserCommandResult {
-    const record = this.handoffs.create(tabId, command.reason);
+    const record = this.handoffs.create(tabId, command.reason, this.getHandoffContext(tabId));
     for (const listener of this.handoffListeners) {
       listener(record);
     }
@@ -244,15 +253,35 @@ export class SiteCapabilityRegistry {
         availability: "not_exposed",
         discoveredAt: Date.now(),
         tools: [],
+        validationIssues: [],
         notes: [
           "No WebMCP exposure signals were detected on this page.",
           "The browser is ready to host a WebMCP adapter when site detection and invocation are implemented."
-        ]
+        ],
+        validationNotes: []
       };
     }
 
-    const tools = await this.extractWebMcpTools(webContents);
-    const availability: WebMcpAvailability = tools.length > 0 ? "ready" : "unknown";
+    const extracted = await this.extractWebMcpManifestData(webContents);
+    const validationIssues = validateWebMcpManifest(extracted);
+    const tools = this.normalizeWebMcpTools(extracted.tools, validationIssues);
+    const hasErrors = validationIssues.some((issue) => issue.severity === "error");
+    const availability: WebMcpAvailability = hasErrors
+      ? "invalid"
+      : tools.length > 0
+        ? "ready"
+        : "unknown";
+
+    const notes = tools.length > 0
+      ? [`${tools.length} WebMCP tool${tools.length !== 1 ? "s" : ""} discovered on this page.`]
+      : [
+          "WebMCP signals were detected but no tools could be enumerated.",
+          "The site may require interaction before exposing its tool manifest."
+        ];
+
+    if (hasErrors) {
+      notes.unshift("WebMCP manifest exposure was detected, but schema validation failed.");
+    }
 
     return {
       tabId,
@@ -262,61 +291,64 @@ export class SiteCapabilityRegistry {
       availability,
       discoveredAt: Date.now(),
       tools,
-      notes:
-        tools.length > 0
-          ? [`${tools.length} WebMCP tool${tools.length !== 1 ? "s" : ""} discovered on this page.`]
-          : [
-              "WebMCP signals were detected but no tools could be enumerated.",
-              "The site may require interaction before exposing its tool manifest."
-            ]
+      version: extracted.version,
+      validationIssues,
+      notes,
+      validationNotes: validationIssues.map((issue) => `${issue.path}: ${issue.message}`)
     };
   }
 
-  private async extractWebMcpTools(webContents: WebContents): Promise<WebMcpToolDescriptor[]> {
+  private async extractWebMcpManifestData(webContents: WebContents): Promise<{ version?: string; tools: unknown[] }> {
     try {
       const raw: unknown = await webContents.executeJavaScript(
         `(async () => {
           if (typeof navigator !== "undefined" && navigator.webMcp) {
-            if (Array.isArray(navigator.webMcp.tools)) return navigator.webMcp.tools;
+            if (Array.isArray(navigator.webMcp.tools)) return { version: navigator.webMcp.version, tools: navigator.webMcp.tools };
             if (typeof navigator.webMcp.getManifest === "function") {
               const m = await navigator.webMcp.getManifest();
-              if (Array.isArray(m?.tools)) return m.tools;
+              if (Array.isArray(m?.tools)) return { version: m.version, tools: m.tools };
             }
             if (typeof navigator.webMcp.listTools === "function") {
               const t = await navigator.webMcp.listTools();
-              if (Array.isArray(t)) return t;
+              if (Array.isArray(t)) return { version: navigator.webMcp.version, tools: t };
             }
           }
           const webMcp = (typeof window !== "undefined") && (window.WebMCP || window.__WEB_MCP__);
           if (webMcp) {
-            if (Array.isArray(webMcp.tools)) return webMcp.tools;
+            if (Array.isArray(webMcp.tools)) return { version: webMcp.version, tools: webMcp.tools };
             if (typeof webMcp.getManifest === "function") {
               const m = await webMcp.getManifest();
-              if (Array.isArray(m?.tools)) return m.tools;
+              if (Array.isArray(m?.tools)) return { version: m.version, tools: m.tools };
             }
           }
           const scriptEl = document.querySelector('script[type="application/webmcp+json"]');
           if (scriptEl) {
             const manifest = JSON.parse(scriptEl.textContent || "{}");
-            if (Array.isArray(manifest.tools)) return manifest.tools;
+            if (Array.isArray(manifest.tools)) return { version: manifest.version, tools: manifest.tools };
           }
-          return [];
+          return { tools: [] };
         })()`,
         true
       );
-      return this.normalizeWebMcpTools(raw);
+      if (!raw || typeof raw !== "object") return { tools: [] };
+      const manifest = raw as { version?: unknown; tools?: unknown[] };
+      return {
+        ...(typeof manifest.version === "string" ? { version: manifest.version } : {}),
+        tools: Array.isArray(manifest.tools) ? manifest.tools : []
+      };
     } catch {
-      return [];
+      return { tools: [] };
     }
   }
 
-  private normalizeWebMcpTools(raw: unknown): WebMcpToolDescriptor[] {
+  private normalizeWebMcpTools(raw: unknown[], validationIssues: WebMcpValidationIssue[]): WebMcpToolDescriptor[] {
     if (!Array.isArray(raw)) return [];
 
     return raw.flatMap((item: unknown): WebMcpToolDescriptor[] => {
       if (!item || typeof item !== "object" || !("name" in item)) return [];
 
       const tool = item as Record<string, unknown>;
+      if (typeof tool.name !== "string" || tool.name.trim().length === 0) return [];
       const rawParams =
         tool.parameters && typeof tool.parameters === "object" ? (tool.parameters as Record<string, unknown>) : null;
       const rawProps =
@@ -342,6 +374,10 @@ export class SiteCapabilityRegistry {
       const required = Array.isArray(rawParams?.required) ? (rawParams.required as unknown[]).map(String) : undefined;
       const mode: WebMcpActionMode = tool.mode === "imperative" ? "imperative" : "declarative";
       const invocationHint = tool.invocationHint ?? tool.endpoint;
+
+      if (!tool.description) {
+        validationIssues.push({ path: `tools.${tool.name}.description`, message: "Tool description is missing.", severity: "warning" });
+      }
 
       return [
         {
@@ -655,4 +691,48 @@ function originFromUrl(url: string): string {
 
 function isAccountRef(value: unknown): value is AccountRef {
   return Boolean(value && typeof value === "object" && "kind" in value && "accountId" in value && value.kind === "account");
+}
+
+function validateWebMcpManifest(manifest: { version?: string; tools: unknown[] }): WebMcpValidationIssue[] {
+  const issues: WebMcpValidationIssue[] = [];
+
+  if (manifest.version && !/^\d+(\.\d+){0,2}$/.test(manifest.version)) {
+    issues.push({ path: "version", message: "Version should be a simple semver-like string.", severity: "warning" });
+  }
+
+  const seenNames = new Set<string>();
+  for (const [index, item] of manifest.tools.entries()) {
+    if (!item || typeof item !== "object") {
+      issues.push({ path: `tools[${index}]`, message: "Tool entry must be an object.", severity: "error" });
+      continue;
+    }
+
+    const tool = item as Record<string, unknown>;
+    if (typeof tool.name !== "string" || tool.name.trim().length === 0) {
+      issues.push({ path: `tools[${index}].name`, message: "Tool name must be a non-empty string.", severity: "error" });
+      continue;
+    }
+    if (seenNames.has(tool.name)) {
+      issues.push({ path: `tools[${index}].name`, message: `Duplicate tool name \"${tool.name}\".`, severity: "error" });
+    }
+    seenNames.add(tool.name);
+
+    if (tool.parameters && typeof tool.parameters !== "object") {
+      issues.push({ path: `tools[${index}].parameters`, message: "Tool parameters must be an object schema.", severity: "error" });
+    }
+  }
+
+  return issues;
+}
+
+function pickPreferredProvider(domManifest: SiteCapabilityManifest, webMcpManifest: WebMcpManifest): "dom" | "webmcp" {
+  if (
+    webMcpManifest.availability === "ready" &&
+    webMcpManifest.tools.length > 0 &&
+    !webMcpManifest.validationIssues.some((issue) => issue.severity === "error")
+  ) {
+    return "webmcp";
+  }
+
+  return domManifest.tools.length > 0 ? "dom" : "webmcp";
 }

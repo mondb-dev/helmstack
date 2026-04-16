@@ -48,10 +48,14 @@ export type {
   ComponentTreeReport,
   ConsoleLogEntry,
   CookieEntry,
+  DownloadEntry,
   DiffRegion,
+  EventSourceMessageEntry,
+  FileUploadTarget,
   HumanHandoffRecord,
   IndexedDbDatabase,
   IndexedDbObjectStore,
+  LocationOverride,
   NetworkInterceptRule,
   NetworkRequestEntry,
   PageGraph,
@@ -67,6 +71,10 @@ export type {
   StorageArea,
   StorageEntry,
   StorageReport,
+  RecordedCommand,
+  RecordingSession,
+  RecordingStopResult,
+  ResourceBudget,
   TabId,
   TabLogSnapshot,
   TabSummary,
@@ -82,6 +90,7 @@ export type {
   TotpResult,
   ViewportPresetName,
   ViewportSuiteReport,
+  WebSocketFrameEntry,
   VIEWPORT_PRESETS
 } from "../../shared/src/index.js";
 
@@ -96,15 +105,21 @@ import type {
   BrowserPerceptionPacket,
   ComponentTreeReport,
   CookieEntry,
+  DownloadEntry,
   HumanHandoffRecord,
+  LocationOverride,
   NetworkInterceptRule,
   PerceptionDiff,
   PerceptionSnapshotEntry,
   PerformanceReport,
   PageScreenshot,
+  RecordingSession,
+  RecordingStopResult,
+  ResourceBudget,
   ScreenshotDiff,
   SiteCapabilityManifest,
   StorageArea,
+  FileUploadTarget,
   StorageEntry,
   StorageReport,
   TabId,
@@ -314,6 +329,70 @@ export class BrowserClient {
   /** Clear all buffered logs for the tab. */
   async clearLogs(tabId: TabId): Promise<{ ok: boolean }> {
     return this.request("DELETE", `/api/tabs/${tabId}/logs`);
+  }
+
+  async getRecording(tabId: TabId): Promise<RecordingSession | null> {
+    return this.get(`/api/tabs/${tabId}/recording`);
+  }
+
+  async startRecording(tabId: TabId): Promise<RecordingSession> {
+    return this.post(`/api/tabs/${tabId}/recording/start`, {});
+  }
+
+  async stopRecording(tabId: TabId): Promise<RecordingStopResult> {
+    return this.post(`/api/tabs/${tabId}/recording/stop`, {});
+  }
+
+  async getSitePatterns(tabId: TabId): Promise<{ patterns: string[] }> {
+    return this.get(`/api/tabs/${tabId}/site-patterns`);
+  }
+
+  async addSitePatterns(tabId: TabId, patterns: string[]): Promise<{ patterns: string[] }> {
+    return this.post(`/api/tabs/${tabId}/site-patterns`, { patterns, mode: "add" });
+  }
+
+  async setSitePatterns(tabId: TabId, patterns: string[]): Promise<{ patterns: string[] }> {
+    return this.post(`/api/tabs/${tabId}/site-patterns`, { patterns, mode: "set" });
+  }
+
+  async clearSitePatterns(tabId: TabId): Promise<void> {
+    await this.delete(`/api/tabs/${tabId}/site-patterns`);
+  }
+
+  async setFileInputFiles(tabId: TabId, target: FileUploadTarget): Promise<{ ok: true }> {
+    return this.post(`/api/tabs/${tabId}/file-input`, target);
+  }
+
+  async listDownloads(tabId: TabId): Promise<DownloadEntry[]> {
+    return this.get(`/api/tabs/${tabId}/downloads`);
+  }
+
+  async clearDownloads(tabId: TabId): Promise<void> {
+    await this.delete(`/api/tabs/${tabId}/downloads`);
+  }
+
+  async getResourceBudget(tabId: TabId): Promise<ResourceBudget | null> {
+    return this.get(`/api/tabs/${tabId}/budget`);
+  }
+
+  async setResourceBudget(tabId: TabId, budget: ResourceBudget): Promise<ResourceBudget> {
+    return this.post(`/api/tabs/${tabId}/budget`, budget);
+  }
+
+  async clearResourceBudget(tabId: TabId): Promise<void> {
+    await this.delete(`/api/tabs/${tabId}/budget`);
+  }
+
+  async getLocationOverride(tabId: TabId): Promise<LocationOverride | null> {
+    return this.get(`/api/tabs/${tabId}/location`);
+  }
+
+  async setLocationOverride(tabId: TabId, location: LocationOverride): Promise<LocationOverride> {
+    return this.post(`/api/tabs/${tabId}/location`, location);
+  }
+
+  async clearLocationOverride(tabId: TabId): Promise<void> {
+    await this.delete(`/api/tabs/${tabId}/location`);
   }
 
   /**

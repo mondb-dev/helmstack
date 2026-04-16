@@ -18,6 +18,58 @@ export type ViewportRect = {
   height: number;
 };
 
+export type ResourceBudget = {
+  cpuThrottlingRate?: number;
+  downloadThroughputKbps?: number;
+  uploadThroughputKbps?: number;
+  latencyMs?: number;
+  offline?: boolean;
+  maxJsHeapMb?: number;
+};
+
+export type LocationOverride = {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  timezoneId?: string;
+  locale?: string;
+};
+
+export type DownloadEntry = {
+  id: string;
+  tabId: TabId;
+  url: string;
+  filename: string;
+  mimeType?: string;
+  totalBytes: number;
+  receivedBytes: number;
+  state: "progressing" | "completed" | "cancelled" | "interrupted";
+  startedAt: number;
+  finishedAt?: number;
+};
+
+export type FileUploadTarget = {
+  selector: string;
+  files: string[];
+};
+
+export type RecordedCommand = {
+  at: number;
+  source: "command" | "navigate";
+  command: unknown;
+  outcome: "completed" | "awaiting_approval" | "awaiting_human" | "blocked" | "failed";
+};
+
+export type RecordingSession = {
+  tabId: TabId;
+  startedAt: number;
+  commands: RecordedCommand[];
+};
+
+export type RecordingStopResult = RecordingSession & {
+  script: string;
+};
+
 export type PageScreenshot = {
   tabId: TabId;
   capturedAt: number;

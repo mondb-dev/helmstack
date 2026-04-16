@@ -25,10 +25,14 @@ import {
   type ConsoleLogEntry,
   type ConsoleLogLevel,
   type CookieEntry,
+  type DownloadEntry,
   type DiffRegion,
+  type EventSourceMessageEntry,
+  type FileUploadTarget,
   type FixturePageName,
   type HumanHandoffRecord,
   type IndexedDbDatabase,
+  type LocationOverride,
   type NetworkInterceptRule,
   type NetworkRequestEntry,
   type PageGraph,
@@ -39,6 +43,10 @@ import {
   type PerceptionSnapshotEntry,
   type PerformanceReport,
   type PerceptionResult,
+  type RecordedCommand,
+  type RecordingSession,
+  type RecordingStopResult,
+  type ResourceBudget,
   type ScreenshotDiff,
   type SiteCapabilityManifest,
   type StorageArea,
@@ -55,9 +63,11 @@ import {
   type ViewportPresetName,
   type ViewportSuiteReport,
   type ViewportRect,
+  type WebSocketFrameEntry,
   VIEWPORT_PRESETS
 } from "../../../../packages/shared/src/index.js";
 import { SiteCapabilityRegistry } from "./site-capability-registry.js";
+import { SitePatternStore } from "./site-pattern-store.js";
 import { VaultStore } from "./vault-store.js";
 
 type EmulatedViewport = { width: number; height: number; mobile: boolean };
@@ -65,6 +75,7 @@ type EmulatedViewport = { width: number; height: number; mobile: boolean };
 type TabRecord = {
   id: TabId;
   view: WebContentsView;
+  parentTabId?: TabId;
   lastObservation: PageObservation | null;
   pendingUrl: string | null;
   summary: TabSummary;
@@ -73,7 +84,14 @@ type TabRecord = {
   cdpLoggingEnabled: boolean;
   consoleLogs: ConsoleLogEntry[];
   networkRequests: Map<string, NetworkRequestEntry>;
+  webSocketUrls: Map<string, string>;
+  webSocketFrames: WebSocketFrameEntry[];
+  eventSourceEvents: EventSourceMessageEntry[];
   jsErrors: string[];
+  downloads: DownloadEntry[];
+  recording: RecordingSession | null;
+  resourceBudget: ResourceBudget | null;
+  locationOverride: LocationOverride | null;
   // Network mock intercept rules (null = disabled)
   networkMockRules: NetworkInterceptRule[] | null;
 };
@@ -98,6 +116,7 @@ export class TabManager {
   private readonly approvals = new ApprovalStore();
   private readonly handoffs = new HandoffStore();
   private readonly policies: ApprovalPolicyStore;
+  private readonly sitePatterns: SitePatternStore;
   private readonly capabilityRegistry: SiteCapabilityRegistry;
   private readonly tabs = new Map<TabId, TabRecord>();
   private readonly listeners = new Set<TabsChangedListener>();
@@ -108,6 +127,7 @@ export class TabManager {
   private viewport: ViewportRect = DEFAULT_VIEWPORT;
   private readonly screenshotCache = new Map<string, PageScreenshot>();
   private readonly perceptionCache = new Map<string, { graph: PageGraph; tabId: TabId; url: string; title: string; capturedAt: number }>();
+  private readonly downloadTrackingSessions = new WeakSet<Electron.Session>();
 
   constructor(window: BrowserWindow, appDir: string, userDataPath: string, pagePreloadPath: string) {
     this.window = window;
@@ -116,7 +136,15 @@ export class TabManager {
     this.vault = new VaultStore(userDataPath);
     this.accounts = new AccountStore(userDataPath);
     this.policies = new ApprovalPolicyStore(userDataPath);
-    this.capabilityRegistry = new SiteCapabilityRegistry(this.vault, this.accounts, this.approvals, this.handoffs, this.policies);
+    this.sitePatterns = new SitePatternStore(userDataPath);
+    this.capabilityRegistry = new SiteCapabilityRegistry(
+      this.vault,
+      this.accounts,
+      this.approvals,
+      this.handoffs,
+      this.policies,
+      (tabId) => this.getHandoffContext(tabId)
+    );
     this.window.on("resize", () => this.layoutActiveTab());
 
     // Forward approval-queued events to any agent-server subscriber
@@ -127,7 +155,7 @@ export class TabManager {
     });
   }
 
-  async createTab(url = "https://example.com"): Promise<TabSummary[]> {
+  async createTab(url = "https://example.com", parentTabId?: TabId): Promise<TabSummary[]> {
     const id = randomUUID();
     const view = new WebContentsView({
       webPreferences: {
@@ -149,16 +177,24 @@ export class TabManager {
     };
 
     const record: TabRecord = {
-      id, view, summary, lastObservation: null, pendingUrl: url,
+      id, view, parentTabId, summary, lastObservation: null, pendingUrl: url,
       cdpLoggingEnabled: false,
       consoleLogs: [],
       networkRequests: new Map(),
+      webSocketUrls: new Map(),
+      webSocketFrames: [],
+      eventSourceEvents: [],
       jsErrors: [],
+      downloads: [],
+      recording: null,
+      resourceBudget: null,
+      locationOverride: null,
       networkMockRules: null
     };
 
     this.tabs.set(id, record);
     this.bindLifecycle(record);
+    this.ensureDownloadTracking(record);
 
     // Install anti-detection after the first document loads so the WebContents
     // target is fully initialised and the CDP debugger can attach cleanly.
@@ -191,6 +227,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     tab.pendingUrl = url;
     tab.summary = { ...tab.summary, url, status: "loading", statusMessage: `Loading ${url}` };
+    this.recordCommand(tab, "navigate", { type: "navigate", url }, "completed");
     this.emitTabsChanged();
     void tab.view.webContents.loadURL(url).catch(() => {
       tab.pendingUrl = null;
@@ -1331,11 +1368,14 @@ export class TabManager {
   // ── Console / Network logs ────────────────────────────────────────────────
 
   /** Return a snapshot of all buffered logs for the tab. */
-  getTabLogs(tabId: TabId): TabLogSnapshot {    const tab = this.requireTab(tabId);
+  getTabLogs(tabId: TabId): TabLogSnapshot {
+    const tab = this.requireTab(tabId);
     return {
       tabId,
       consoleLogs: [...tab.consoleLogs],
       networkRequests: [...tab.networkRequests.values()],
+      webSocketFrames: [...tab.webSocketFrames],
+      eventSourceEvents: [...tab.eventSourceEvents],
       jsErrors: [...tab.jsErrors],
       capturedAt: Date.now()
     };
@@ -1346,7 +1386,132 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     tab.consoleLogs = [];
     tab.networkRequests = new Map();
+    tab.webSocketUrls = new Map();
+    tab.webSocketFrames = [];
+    tab.eventSourceEvents = [];
     tab.jsErrors = [];
+  }
+
+  startRecording(tabId: TabId): RecordingSession {
+    const tab = this.requireTab(tabId);
+    tab.recording = { tabId, startedAt: Date.now(), commands: [] };
+    return tab.recording;
+  }
+
+  getRecording(tabId: TabId): RecordingSession | null {
+    return this.requireTab(tabId).recording;
+  }
+
+  stopRecording(tabId: TabId): RecordingStopResult {
+    const tab = this.requireTab(tabId);
+    if (!tab.recording) {
+      throw new Error(`No recording in progress for tab ${tabId}`);
+    }
+
+    const recording = tab.recording;
+    tab.recording = null;
+    return {
+      ...recording,
+      script: renderRecordingScript(recording)
+    };
+  }
+
+  getSitePatterns(tabId: TabId): string[] {
+    return this.sitePatterns.get(this.getTabOrigin(tabId));
+  }
+
+  setSitePatterns(tabId: TabId, patterns: string[]): string[] {
+    return this.sitePatterns.set(this.getTabOrigin(tabId), patterns);
+  }
+
+  addSitePatterns(tabId: TabId, patterns: string[]): string[] {
+    return this.sitePatterns.add(this.getTabOrigin(tabId), patterns);
+  }
+
+  clearSitePatterns(tabId: TabId): void {
+    this.sitePatterns.clear(this.getTabOrigin(tabId));
+  }
+
+  async setFileInputFiles(tabId: TabId, target: FileUploadTarget): Promise<{ ok: true }> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+
+    if (!webContents.debugger.isAttached()) {
+      webContents.debugger.attach("1.3");
+    }
+
+    const { root } = await webContents.debugger.sendCommand("DOM.getDocument", { depth: 1 }) as { root: { nodeId: number } };
+    const { nodeId } = await webContents.debugger.sendCommand("DOM.querySelector", {
+      nodeId: root.nodeId,
+      selector: target.selector
+    }) as { nodeId: number };
+
+    if (!nodeId) {
+      throw new Error(`No file input matched selector: ${target.selector}`);
+    }
+
+    const described = await webContents.debugger.sendCommand("DOM.describeNode", { nodeId }) as { node: { backendNodeId: number } };
+    await webContents.debugger.sendCommand("DOM.setFileInputFiles", {
+      backendNodeId: described.node.backendNodeId,
+      files: target.files
+    });
+
+    return { ok: true };
+  }
+
+  listDownloads(tabId: TabId): DownloadEntry[] {
+    return [...this.requireTab(tabId).downloads];
+  }
+
+  clearDownloads(tabId: TabId): void {
+    this.requireTab(tabId).downloads = [];
+  }
+
+  async setResourceBudget(tabId: TabId, budget: ResourceBudget): Promise<ResourceBudget> {
+    const tab = this.requireTab(tabId);
+    tab.resourceBudget = { ...budget };
+    await this.applyResourceBudget(tab);
+    return tab.resourceBudget;
+  }
+
+  getResourceBudget(tabId: TabId): ResourceBudget | null {
+    return this.requireTab(tabId).resourceBudget;
+  }
+
+  async clearResourceBudget(tabId: TabId): Promise<void> {
+    const tab = this.requireTab(tabId);
+    tab.resourceBudget = null;
+    if (!tab.view.webContents.debugger.isAttached()) {
+      tab.view.webContents.debugger.attach("1.3");
+    }
+    await tab.view.webContents.debugger.sendCommand("Emulation.setCPUThrottlingRate", { rate: 1 }).catch(() => {});
+    await tab.view.webContents.debugger.sendCommand("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: 0,
+      downloadThroughput: -1,
+      uploadThroughput: -1
+    }).catch(() => {});
+  }
+
+  async setLocationOverride(tabId: TabId, location: LocationOverride): Promise<LocationOverride> {
+    const tab = this.requireTab(tabId);
+    tab.locationOverride = { ...location };
+    await this.applyLocationOverride(tab);
+    return tab.locationOverride;
+  }
+
+  getLocationOverride(tabId: TabId): LocationOverride | null {
+    return this.requireTab(tabId).locationOverride;
+  }
+
+  async clearLocationOverride(tabId: TabId): Promise<void> {
+    const tab = this.requireTab(tabId);
+    tab.locationOverride = null;
+    if (!tab.view.webContents.debugger.isAttached()) {
+      tab.view.webContents.debugger.attach("1.3");
+    }
+    await tab.view.webContents.debugger.sendCommand("Emulation.clearGeolocationOverride").catch(() => {});
+    await tab.view.webContents.debugger.sendCommand("Emulation.setTimezoneOverride", { timezoneId: "UTC" }).catch(() => {});
   }
 
   // ── Network mock / intercept ──────────────────────────────────────────────
@@ -1411,7 +1576,11 @@ export class TabManager {
   async getPerceptionPacket(tabId: TabId): Promise<BrowserPerceptionPacket> {
     const tab = this.requireTab(tabId);
     const result = await this.capturePerception(tabId);
-    return this.capabilityRegistry.buildPerceptionPacket(tabId, tab.lastObservation, result, tab.view.webContents);
+    const packet = await this.capabilityRegistry.buildPerceptionPacket(tabId, tab.lastObservation, result, tab.view.webContents);
+    return {
+      ...packet,
+      sitePatterns: this.sitePatterns.get(originFromUrl(result.graph.url))
+    };
   }
 
   async listCapabilityManifests(tabId: TabId): Promise<SiteCapabilityManifest[]> {
@@ -1422,8 +1591,14 @@ export class TabManager {
 
   async executeCommand(tabId: TabId, command: BrowserOutputCommand): Promise<BrowserCommandResult> {
     const tab = this.requireTab(tabId);
+    const budgetBlock = await this.checkResourceBudget(tab);
+    if (budgetBlock) {
+      this.recordCommand(tab, "command", command, "blocked");
+      return budgetBlock;
+    }
     const result = await this.capturePerception(tabId);
     const execution = await this.capabilityRegistry.executeCommand(tabId, command, tab.lastObservation, result, tab.view.webContents);
+    this.recordCommand(tab, "command", command, execution.status);
 
     if (execution.status !== "completed") {
       return execution;
@@ -1580,6 +1755,98 @@ export class TabManager {
     }
   }
 
+  private getTabOrigin(tabId: TabId): string {
+    return originFromUrl(this.requireTab(tabId).summary.url);
+  }
+
+  private getHandoffContext(tabId: TabId): Pick<HumanHandoffRecord, "relatedTabIds" | "groupId" | "origin" | "title"> {
+    const tab = this.requireTab(tabId);
+    const origin = originFromUrl(tab.summary.url);
+    const relatedTabIds = [...new Set(
+      [...this.tabs.values()]
+        .filter((entry) => entry.id === tabId || entry.parentTabId === tabId || tab.parentTabId === entry.id || originFromUrl(entry.summary.url) === origin)
+        .map((entry) => entry.id)
+    )];
+
+    return {
+      relatedTabIds: relatedTabIds.length ? relatedTabIds : [tabId],
+      groupId: `${origin}::${tab.parentTabId ?? tabId}`,
+      origin,
+      title: tab.summary.title
+    };
+  }
+
+  private recordCommand(tab: TabRecord, source: RecordedCommand["source"], command: unknown, outcome: RecordedCommand["outcome"]) {
+    if (!tab.recording) return;
+    tab.recording.commands.push({ at: Date.now(), source, command, outcome });
+  }
+
+  private async applyResourceBudget(tab: TabRecord): Promise<void> {
+    const budget = tab.resourceBudget;
+    if (!budget) return;
+
+    const { webContents } = tab.view;
+    if (!webContents.debugger.isAttached()) {
+      webContents.debugger.attach("1.3");
+    }
+
+    await webContents.debugger.sendCommand("Emulation.setCPUThrottlingRate", {
+      rate: Math.max(1, budget.cpuThrottlingRate ?? 1)
+    }).catch(() => {});
+
+    await webContents.debugger.sendCommand("Network.emulateNetworkConditions", {
+      offline: budget.offline ?? false,
+      latency: budget.latencyMs ?? 0,
+      downloadThroughput: budget.downloadThroughputKbps ? budget.downloadThroughputKbps * 1024 / 8 : -1,
+      uploadThroughput: budget.uploadThroughputKbps ? budget.uploadThroughputKbps * 1024 / 8 : -1
+    }).catch(() => {});
+  }
+
+  private async checkResourceBudget(tab: TabRecord): Promise<BrowserCommandResult | null> {
+    if (!tab.resourceBudget?.maxJsHeapMb) return null;
+    const usedHeapMb = await this.getCurrentJsHeapMb(tab);
+    if (usedHeapMb === null || usedHeapMb <= tab.resourceBudget.maxJsHeapMb) return null;
+    return {
+      status: "blocked",
+      command: { type: "request_perception_refresh", tabId: tab.id },
+      reason: `Blocked by resource budget: JS heap ${usedHeapMb.toFixed(1)} MB exceeds ${tab.resourceBudget.maxJsHeapMb} MB.`
+    };
+  }
+
+  private async getCurrentJsHeapMb(tab: TabRecord): Promise<number | null> {
+    const { webContents } = tab.view;
+    if (!webContents.debugger.isAttached()) {
+      webContents.debugger.attach("1.3");
+    }
+    const metrics = await webContents.debugger.sendCommand("Performance.getMetrics") as { metrics?: Array<{ name: string; value: number }> };
+    const heap = metrics.metrics?.find((metric) => metric.name === "JSHeapUsedSize")?.value;
+    return typeof heap === "number" ? heap / (1024 * 1024) : null;
+  }
+
+  private async applyLocationOverride(tab: TabRecord): Promise<void> {
+    const location = tab.locationOverride;
+    if (!location) return;
+
+    const { webContents } = tab.view;
+    if (!webContents.debugger.isAttached()) {
+      webContents.debugger.attach("1.3");
+    }
+
+    await webContents.debugger.sendCommand("Emulation.setGeolocationOverride", {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      accuracy: location.accuracy ?? 1
+    }).catch(() => {});
+
+    if (location.timezoneId) {
+      await webContents.debugger.sendCommand("Emulation.setTimezoneOverride", { timezoneId: location.timezoneId }).catch(() => {});
+    }
+
+    if (location.locale) {
+      await webContents.debugger.sendCommand("Emulation.setLocaleOverride", { locale: location.locale }).catch(() => {});
+    }
+  }
+
   private bindLifecycle(tab: TabRecord) {
     const { webContents } = tab.view;
 
@@ -1629,12 +1896,19 @@ export class TabManager {
         // Clear buffered logs on every main-frame navigation.
         tab.consoleLogs = [];
         tab.networkRequests = new Map();
+        tab.webSocketUrls = new Map();
+        tab.webSocketFrames = [];
+        tab.eventSourceEvents = [];
         tab.jsErrors = [];
       }
     });
     webContents.on("did-navigate", updateSummary);
     webContents.on("did-navigate-in-page", updateSummary);
-    webContents.on("did-finish-load", updateSummary);
+    webContents.on("did-finish-load", () => {
+      updateSummary();
+      void this.applyLocationOverride(tab);
+      void this.applyResourceBudget(tab);
+    });
     webContents.on("did-start-loading", updateSummary);
     webContents.on("did-stop-loading", updateSummary);
     webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -1665,6 +1939,11 @@ export class TabManager {
         callback();
       }
     });
+
+    webContents.setWindowOpenHandler(({ url }) => {
+      void this.createTab(url || "about:blank", tab.id);
+      return { action: "deny" };
+    });
   }
 
   // ── CDP domain management ─────────────────────────────────────────────────
@@ -1676,7 +1955,8 @@ export class TabManager {
     await Promise.all([
       webContents.debugger.sendCommand("Runtime.enable"),
       webContents.debugger.sendCommand("Log.enable"),
-      webContents.debugger.sendCommand("Network.enable", { maxTotalBufferSize: 0, maxResourceBufferSize: 0 })
+      webContents.debugger.sendCommand("Network.enable", { maxTotalBufferSize: 0, maxResourceBufferSize: 0 }),
+      webContents.debugger.sendCommand("Performance.enable", { timeDomain: "timeTicks" }).catch(() => {})
     ]);
   }
 
@@ -1748,6 +2028,66 @@ export class TabManager {
         break;
       }
 
+      case "Network.webSocketCreated": {
+        const requestId = params.requestId as string | undefined;
+        const url = params.url as string | undefined;
+        if (!requestId) break;
+        if (url) {
+          tab.webSocketUrls.set(requestId, url);
+        }
+        tab.webSocketFrames.push({
+          requestId,
+          url,
+          direction: "opened",
+          payload: "",
+          timestamp: Date.now()
+        });
+        break;
+      }
+
+      case "Network.webSocketFrameSent":
+      case "Network.webSocketFrameReceived": {
+        const requestId = params.requestId as string | undefined;
+        const response = params.response as Record<string, unknown> | undefined;
+        if (!requestId || !response) break;
+        tab.webSocketFrames.push({
+          requestId,
+          url: tab.webSocketUrls.get(requestId),
+          direction: method.endsWith("Sent") ? "sent" : "received",
+          opcode: response.opcode as number | undefined,
+          payload: String(response.payloadData ?? ""),
+          timestamp: Date.now()
+        });
+        break;
+      }
+
+      case "Network.webSocketClosed": {
+        const requestId = params.requestId as string | undefined;
+        if (!requestId) break;
+        tab.webSocketFrames.push({
+          requestId,
+          url: tab.webSocketUrls.get(requestId),
+          direction: "closed",
+          payload: "",
+          timestamp: Date.now()
+        });
+        break;
+      }
+
+      case "Network.eventSourceMessageReceived": {
+        const requestId = params.requestId as string | undefined;
+        if (!requestId) break;
+        tab.eventSourceEvents.push({
+          requestId,
+          url: String(params.url ?? ""),
+          eventName: String(params.eventName ?? "message"),
+          eventId: String(params.eventId ?? ""),
+          data: String(params.data ?? ""),
+          timestamp: Date.now()
+        });
+        break;
+      }
+
       case "Fetch.requestPaused": {
         const requestId = params.requestId as string | undefined;
         const request   = params.request   as Record<string, unknown> | undefined;
@@ -1796,6 +2136,46 @@ export class TabManager {
     }
   }
 
+  private ensureDownloadTracking(tab: TabRecord) {
+    const trackedSession = tab.view.webContents.session;
+    if (this.downloadTrackingSessions.has(trackedSession)) {
+      return;
+    }
+
+    this.downloadTrackingSessions.add(trackedSession);
+    trackedSession.on("will-download", (_event, item, webContents) => {
+      const owner = [...this.tabs.values()].find((entry) => entry.view.webContents.id === webContents.id);
+      if (!owner) {
+        return;
+      }
+
+      const download: DownloadEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        tabId: owner.id,
+        url: item.getURL(),
+        filename: item.getFilename(),
+        mimeType: item.getMimeType?.(),
+        totalBytes: item.getTotalBytes(),
+        receivedBytes: item.getReceivedBytes(),
+        state: "progressing",
+        startedAt: Date.now()
+      };
+      owner.downloads.push(download);
+
+      item.on("updated", () => {
+        download.receivedBytes = item.getReceivedBytes();
+        download.totalBytes = item.getTotalBytes();
+        download.state = item.isPaused?.() ? "interrupted" : "progressing";
+      });
+
+      item.once("done", (_doneEvent, state) => {
+        download.state = state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "interrupted";
+        download.finishedAt = Date.now();
+        download.receivedBytes = item.getReceivedBytes();
+      });
+    });
+  }
+
   private layoutActiveTab() {
     if (!this.activeTabId) {
       return;
@@ -1827,6 +2207,42 @@ export class TabManager {
 }
 
 // ── Module-level helpers ──────────────────────────────────────────────────────
+
+function renderRecordingScript(recording: RecordingSession): string {
+  const lines = [
+    'import { createBrowserClient } from "@helmstack/agent-sdk";',
+    "",
+    "const browser = createBrowserClient();",
+    `const tabId = ${JSON.stringify(recording.tabId)};`,
+    "",
+    "async function run() {"
+  ];
+
+  for (const entry of recording.commands) {
+    if (entry.source === "navigate") {
+      const navigate = entry.command as { url?: string };
+      lines.push(`  await browser.navigate(tabId, ${JSON.stringify(navigate.url ?? "")});`);
+      continue;
+    }
+    lines.push(`  await browser.execute(tabId, ${JSON.stringify(entry.command, null, 2).replace(/\n/g, "\n  ")});`);
+  }
+
+  lines.push("}");
+  lines.push("");
+  lines.push("run().catch((error) => {");
+  lines.push("  console.error(error);");
+  lines.push("  process.exitCode = 1;");
+  lines.push("});");
+  return lines.join("\n");
+}
+
+function originFromUrl(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "null";
+  }
+}
 
 /**
  * Given a flat Uint8Array of changed-pixel flags (1 = changed, indexed row-major)

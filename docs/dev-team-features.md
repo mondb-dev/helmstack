@@ -261,7 +261,7 @@ await browser.clearCookies(tabId);   // nuke all cookies for this origin
   rows: Array<{ key: string; value: string }>  // first 100 rows, JSON-serialised }
 ```
 
-### 6. Interaction Recorder → Test Script
+### 6. Interaction Recorder → Test Script ✅
 Record a sequence of agent actions on a tab and export them as a replayable HelmStack script. Dramatically speeds up writing regression tests.
 
 ```typescript
@@ -270,6 +270,24 @@ browser.startRecording(tabId);
 const script = await browser.stopRecording(tabId);
 // exports: navigate, click, fill_form, submit steps with real selectors
 ```
+
+### 12. WebSocket + SSE Monitoring ✅
+Buffered WebSocket frames and EventSource messages are now exposed alongside console logs and network requests.
+
+### 13. File Upload + Download Hooks ✅
+Agents can now set files on live file inputs by selector and inspect tracked downloads per tab.
+
+### 14. Per-Tab Resource Budgets ✅
+Tabs now support CPU throttling, network shaping, offline mode, and a soft JS heap ceiling that blocks commands when exceeded.
+
+### 15. Geolocation + Timezone Spoofing ✅
+Set or clear per-tab geolocation and timezone overrides through the substrate API.
+
+### 16. Persistent Site Pattern Memory ✅
+Persist origin-scoped patterns and surface them in each perception packet.
+
+### 17. Multi-Tab Handoff Context ✅
+Human handoffs now include related tab IDs plus grouping metadata so popup and OAuth flows preserve context.
 
 ### 7. Accessibility Audit ✅
 Run a WCAG 2.2-aligned rule set directly against the live AX tree. No external tooling needed — the AX tree is already captured during every perception call.

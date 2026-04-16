@@ -26,10 +26,30 @@ export type NetworkRequestEntry = {
   timestamp: number;
 };
 
+export type WebSocketFrameEntry = {
+  requestId: string;
+  url?: string;
+  direction: "sent" | "received" | "opened" | "closed";
+  opcode?: number;
+  payload: string;
+  timestamp: number;
+};
+
+export type EventSourceMessageEntry = {
+  requestId: string;
+  url: string;
+  eventName: string;
+  eventId: string;
+  data: string;
+  timestamp: number;
+};
+
 export type TabLogSnapshot = {
   tabId: TabId;
   consoleLogs: ConsoleLogEntry[];
   networkRequests: NetworkRequestEntry[];
+  webSocketFrames: WebSocketFrameEntry[];
+  eventSourceEvents: EventSourceMessageEntry[];
   jsErrors: string[];
   capturedAt: number;
 };

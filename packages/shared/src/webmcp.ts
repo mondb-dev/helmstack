@@ -1,8 +1,14 @@
 import type { SiteCapabilityManifest, SiteToolDescriptor } from "./substrate.js";
 
-export type WebMcpAvailability = "ready" | "unsupported" | "not_exposed" | "unknown";
+export type WebMcpAvailability = "ready" | "unsupported" | "not_exposed" | "unknown" | "invalid";
 
 export type WebMcpActionMode = "declarative" | "imperative";
+
+export type WebMcpValidationIssue = {
+  path: string;
+  message: string;
+  severity: "error" | "warning";
+};
 
 export type WebMcpToolDescriptor = SiteToolDescriptor & {
   provider: "webmcp";
@@ -15,4 +21,5 @@ export type WebMcpManifest = SiteCapabilityManifest & {
   availability: WebMcpAvailability;
   tools: WebMcpToolDescriptor[];
   version?: string;
+  validationIssues: WebMcpValidationIssue[];
 };
