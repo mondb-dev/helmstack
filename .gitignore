@@ -7,6 +7,8 @@ Thumbs.db
 .npm-cache
 .env
 .env.*
+
+# Secrets & certificates
 *.enc
 *.key
 *.pem
@@ -14,9 +16,23 @@ Thumbs.db
 *.p12
 *.pfx
 *.jks
+
+# Databases & logs
 *.sqlite
 *.db
 *.log
+
+# Build & test artifacts
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# Scratch / debug test scripts
+test-electron-*.cjs
+test-electron-*.mjs
+apps/desktop/test-*.cjs
+apps/desktop/test-*.mjs
+
 # Personal sdk-example directory (contains local credentials and config)
 /sdk-example/
 
