@@ -1,12 +1,32 @@
 {
   "name": "@helmstack/agent-sdk",
   "version": "0.1.0",
-  "private": true,
   "description": "Typed client SDK for the HelmStack agent server",
   "license": "MIT",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mondb-dev/helmstack.git",
+    "directory": "packages/agent-sdk"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

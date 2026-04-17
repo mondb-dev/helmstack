@@ -26,8 +26,6 @@ const fixtureOpenButton = document.getElementById("fixture-open-button") as HTML
 const fixtureRunButton = document.getElementById("fixture-run-button") as HTMLButtonElement | null;
 const snapshotOutput = document.getElementById("snapshot-output") as HTMLPreElement | null;
 const viewportFrame = document.getElementById("viewport-frame");
-const observationTitle = document.getElementById("observation-title");
-const observationCopy = document.getElementById("observation-copy");
 const fixtureStatus = document.getElementById("fixture-status");
 const vaultList = document.getElementById("vault-list");
 const accountsList = document.getElementById("accounts-list");
@@ -132,15 +130,6 @@ function renderTabs(nextTabs: TabSummary[]) {
 
   if (activeTab && activeTab.status !== "loading") {
     pendingAddressValue = null;
-  }
-
-  if (observationTitle && activeTab) {
-    observationTitle.textContent =
-      activeTab.status === "error" ? "Navigation failed" : activeTab.status === "loading" ? "Navigating" : "Page observed";
-  }
-
-  if (observationCopy && activeTab?.statusMessage) {
-    observationCopy.textContent = activeTab.statusMessage;
   }
 
   queueViewportSync();
@@ -283,19 +272,8 @@ function startViewportStabilizer(durationMs = 2000, intervalMs = 120) {
   }, durationMs);
 }
 
-function renderObservation(observation: PageObservation) {
-  const activeTab = getActiveTab();
-  if (activeTab && activeTab.status !== "idle") {
-    return;
-  }
-  if (observationTitle) {
-    observationTitle.textContent = `${observation.pageKind} page observed`;
-  }
-  if (observationCopy) {
-    const formCount = observation.forms.length;
-    const actionCount = observation.primaryActions.length;
-    observationCopy.textContent = `${formCount} forms, ${actionCount} actions, ${observation.alerts.length} alerts. Top heading: ${observation.headings[0] || "none"}.`;
-  }
+function renderObservation(_observation: PageObservation) {
+  // Observation data is logged to the terminal output
 }
 
 function renderGraph(graph: PageGraph) {
@@ -573,12 +551,6 @@ async function bootstrap() {
   window.addEventListener("resize", () => startViewportStabilizer(1200, 120));
   window.addEventListener("load", () => startViewportStabilizer(1600, 120));
   window.browserShell.onTabsChanged(renderTabs);
-  window.browserShell.onPageObserved((observation) => {
-    const activeTab = getActiveTab();
-    if (activeTab && activeTab.id === observation.tabId) {
-      renderObservation(observation);
-    }
-  });
 
   addressForm?.addEventListener("submit", async (event) => {
     event.preventDefault();

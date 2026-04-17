@@ -1,8 +1,32 @@
 {
   "name": "@helmstack/perception",
   "version": "0.1.0",
-  "private": true,
   "description": "DOM observation and semantic graph normalization for HelmStack",
   "license": "MIT",
-  "type": "module"
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mondb-dev/helmstack.git",
+    "directory": "packages/perception"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

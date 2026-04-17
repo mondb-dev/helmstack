@@ -27,7 +27,7 @@
  *   // later: stream.close();
  */
 
-import http from "node:http";
+import * as http from "node:http";
 
 // ── Re-export shared types agents need ────────────────────────────────────────
 export type {

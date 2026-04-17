@@ -1,5 +1,10 @@
 # HelmStack
 
+[![CI](https://github.com/mondb-dev/helmstack/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/mondb-dev/helmstack/actions/workflows/ci.yml)
+[![Release](https://github.com/mondb-dev/helmstack/actions/workflows/release.yml/badge.svg)](https://github.com/mondb-dev/helmstack/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://conventionalcommits.org)
+
 HelmStack is an AI-native browser substrate — a perception and execution layer for autonomous agents.
 
 The browser is the eyes and hands:
@@ -135,6 +140,225 @@ Today:
 - Three.js scene inspector — scene graph walk, draw-call stats, FPS estimate, AI feedback workflow
 - natural language assertions — `browser.assert(tabId, "the cart shows 3 items")` with heuristic evaluator + evidence bundle
 - storage inspector — read/write/clear `localStorage`, `sessionStorage`, cookies, IndexedDB
+
+## MCP Server — AI Platform Setup
+
+HelmStack ships a zero-config MCP server (`@helmstack/mcp-server`) that exposes the browser substrate as tools any MCP-compatible client can call. No custom agent code required — just point your AI tool at the server and it can drive a live browser session.
+
+### How it works
+
+1. **Launch HelmStack** — the Electron app starts the HTTP+SSE agent server on `127.0.0.1:7070`
+2. **Start the MCP server** — connects to HelmStack and serves browser tools over stdio to your AI client
+3. **Use your AI as normal** — it can now call `browser_navigate`, `browser_get_perception`, `browser_execute`, etc.
+
+### Prerequisites
+
+```bash
+# 1. Clone and install
+git clone https://github.com/mondb-dev/helmstack.git
+cd helmstack
+npm install && npm run build:packages
+
+# 2. Start the HelmStack desktop app
+npm run dev
+```
+
+The browser is now running and waiting on `127.0.0.1:7070`.
+
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `browser_health` | Check if HelmStack is running |
+| `browser_list_tabs` | List open tabs with ID, title, URL |
+| `browser_open_tab` | Open a new tab (optionally navigate to a URL) |
+| `browser_navigate` | Navigate a tab to a URL |
+| `browser_set_viewport` | Resize a tab's viewport |
+| `browser_get_perception` | Structured DOM graph: forms, fields, actions, a11y metadata |
+| `browser_list_manifests` | Site capability manifests for a tab |
+| `browser_screenshot` | Screenshot a tab (returns base64 PNG) |
+| `browser_execute` | Execute DOM commands (fill form, click, invoke site tools) |
+| `browser_list_approvals` | List pending actions awaiting human approval |
+| `browser_approve` / `browser_reject` | Approve or reject a sensitive pending action |
+| `browser_list_handoffs` | List tasks that require human takeover |
+| `browser_resolve_handoff` | Return control to the agent after a handoff |
+| `browser_list_accounts` | List credential vault entries |
+| `browser_lookup_accounts` | Find credentials by origin (e.g. `https://github.com`) |
+| `browser_generate_totp` | Generate a TOTP 2FA code for an account |
+| `browser_get_intent` / `browser_set_intent` | Read/write the task panel intent |
+| `browser_log` | Write a message to the HelmStack terminal panel |
+
+---
+
+### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "helmstack": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/helmstack/packages/mcp-server/dist/index.js"
+      ],
+      "env": {
+        "HELMSTACK_PORT": "7070"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop. A browser icon will appear in the tool panel — Claude can now browse the web on your behalf.
+
+> **From npm:** If you've installed the package globally (`npm i -g @helmstack/mcp-server`), replace the `args` path with the output of `which helmstack-mcp`.
+
+---
+
+### GitHub Copilot (VS Code)
+
+Add to your VS Code `settings.json`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "helmstack": {
+        "type": "stdio",
+        "command": "node",
+        "args": [
+          "/absolute/path/to/helmstack/packages/mcp-server/dist/index.js"
+        ],
+        "env": {
+          "HELMSTACK_PORT": "7070"
+        }
+      }
+    }
+  }
+}
+```
+
+Or place an `.mcp.json` file at the root of your workspace:
+
+```json
+{
+  "servers": {
+    "helmstack": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./packages/mcp-server/dist/index.js"],
+      "env": { "HELMSTACK_PORT": "7070" }
+    }
+  }
+}
+```
+
+In VS Code Agent Mode (`@agent`), Copilot will now have access to all `browser_*` tools.
+
+---
+
+### Cursor
+
+In Cursor go to **Settings → MCP** and add:
+
+```json
+{
+  "mcpServers": {
+    "helmstack": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/helmstack/packages/mcp-server/dist/index.js"
+      ],
+      "env": {
+        "HELMSTACK_PORT": "7070"
+      }
+    }
+  }
+}
+```
+
+---
+
+### Windsurf (Codeium)
+
+In `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "helmstack": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/helmstack/packages/mcp-server/dist/index.js"
+      ],
+      "env": {
+        "HELMSTACK_PORT": "7070"
+      }
+    }
+  }
+}
+```
+
+---
+
+### Zed
+
+In `~/.config/zed/settings.json`:
+
+```json
+{
+  "context_servers": {
+    "helmstack": {
+      "command": {
+        "path": "node",
+        "args": [
+          "/absolute/path/to/helmstack/packages/mcp-server/dist/index.js"
+        ],
+        "env": {
+          "HELMSTACK_PORT": "7070"
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+### Any MCP-compatible client (generic)
+
+The server communicates over **stdio** using the standard MCP protocol. Pass the command and it will work with any client that respects the spec:
+
+```bash
+# Run directly (useful for testing)
+node /path/to/helmstack/packages/mcp-server/dist/index.js
+
+# Or via npx after publishing
+npx @helmstack/mcp-server
+```
+
+Environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HELMSTACK_PORT` | `7070` | Port the HelmStack desktop app is listening on |
+| `HELMSTACK_HOST` | `127.0.0.1` | Host (never change unless you know what you're doing) |
+
+---
+
+### Example — Claude browsing the web
+
+Once configured, you can ask Claude (or any connected AI):
+
+> *"Go to github.com/mondb-dev/helmstack, find the latest open issue, and summarise it."*
+
+Claude will call:
+1. `browser_list_tabs` → find an active tab
+2. `browser_navigate` → go to GitHub
+3. `browser_get_perception` → read the page DOM
+4. `browser_screenshot` → optionally look at the rendered page
+5. Reply with the summary
 
 ## Agent Example
 
@@ -554,3 +778,25 @@ npm run build
 3. **LLM agent examples** — OpenAI, Anthropic, LangGraph integration demos beyond the basic intent agent
 4. **Packaged installers** — macOS .dmg, Windows .exe, Linux .AppImage/.deb
 5. **Multi-account session isolation** — separate cookie jars per account/profile
+
+## Contributing
+
+We welcome contributions! Please read the [Contributing Guide](./CONTRIBUTING.md) before submitting a PR.
+
+**Quick start:**
+
+```bash
+git clone https://github.com/<your-username>/helmstack.git
+cd helmstack
+npm install
+git checkout develop
+git checkout -b feature/my-feature
+```
+
+All PRs should target the `develop` branch. We use [Conventional Commits](https://conventionalcommits.org) — commit messages are validated automatically.
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full guide on branch strategy, commit conventions, and the PR process.
+
+## License
+
+[MIT](./LICENSE) — Copyright (c) 2025-present HelmStack Contributors

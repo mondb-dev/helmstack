@@ -11,122 +11,120 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="app-shell">
-      <header class="chrome-shell">
-        <div class="window-drag"></div>
-        <div class="chrome-topbar">
-          <div class="brand">
-            <span class="brand-mark"></span>
-            <span class="brand-copy">
-              <strong>HelmStack</strong>
-              <span>AI-native browser substrate</span>
-            </span>
-          </div>
-
-          <div class="tab-rail">
-            <div class="tabs" id="tabs"></div>
-            <button class="tab-action" id="new-tab-button" type="button" aria-label="New tab">+</button>
-          </div>
+    <div class="app">
+      <header class="titlebar">
+        <div class="titlebar-drag"></div>
+        <div class="titlebar-brand">
+          <span class="brand-icon"></span>
+          <span class="brand-name">HelmStack</span>
         </div>
-
-        <section class="toolbar">
-          <form class="address-form" id="address-form">
-            <div class="address-shell">
-              <span class="address-prefix">Navigate</span>
-              <input class="address-input" id="address-input" type="text" spellcheck="false" placeholder="Enter URL or search" />
-            </div>
-            <button class="primary-button" type="submit">Go</button>
-          </form>
-          <div class="toolbar-menu" id="toolbar-menu">
-            <button class="secondary-button toolbar-menu-trigger" id="toolbar-menu-trigger" type="button">
-              Demos ▾
-            </button>
-            <div class="toolbar-menu-dropdown" id="toolbar-menu-dropdown" hidden>
-              <button class="toolbar-menu-item" id="fixture-open-button" type="button">Open contact fixture</button>
-              <button class="toolbar-menu-item" id="fixture-run-button" type="button">Run contact fixture</button>
-              <div class="toolbar-menu-divider"></div>
-              <button class="toolbar-menu-item" id="snapshot-button" type="button">Capture page graph</button>
-            </div>
-          </div>
-        </section>
+        <div class="tab-rail">
+          <div class="tabs" id="tabs"></div>
+          <button class="tab-new" id="new-tab-button" type="button" aria-label="New tab">+</button>
+        </div>
       </header>
 
-      <main class="workspace">
-        <aside class="task-panel">
-          <div class="panel-heading">
-            <span class="eyebrow">Intent</span>
-            <h1>Task panel</h1>
+      <nav class="navbar">
+        <form class="nav-form" id="address-form">
+          <input
+            class="nav-input"
+            id="address-input"
+            type="text"
+            spellcheck="false"
+            placeholder="Enter URL or search..."
+          />
+          <button class="btn btn-primary btn-nav" type="submit">Go</button>
+        </form>
+        <div class="dropdown" id="toolbar-menu">
+          <button class="btn btn-ghost" id="toolbar-menu-trigger" type="button">Demos &#9662;</button>
+          <div class="dropdown-menu" id="toolbar-menu-dropdown" hidden>
+            <button class="dropdown-item" id="fixture-open-button" type="button">Open contact fixture</button>
+            <button class="dropdown-item" id="fixture-run-button" type="button">Run contact fixture</button>
+            <div class="dropdown-divider"></div>
+            <button class="dropdown-item" id="snapshot-button" type="button">Capture page graph</button>
           </div>
-          <textarea class="intent-box" id="intent-box" placeholder="Create an account on Notion using my primary personal email."></textarea>
-          <button class="primary-button intent-run" id="intent-run-button" type="button">Run</button>
-          <div class="panel-heading">
-            <span class="eyebrow">Terminal</span>
-            <h2>Agent output</h2>
-          </div>
-          <div class="terminal-output" id="terminal-output">
-            <div class="terminal-line terminal-system">Waiting for agent...</div>
-          </div>
-          <div class="fixture-card">
-            <div class="panel-heading">
-              <span class="eyebrow">Fixture</span>
-              <h2>Contact form runner</h2>
-            </div>
-            <p class="fixture-copy" id="fixture-status">Open the local fixture or run the end-to-end flow with vault-backed values.</p>
-            <div class="vault-list" id="vault-list"></div>
-          </div>
+        </div>
+      </nav>
 
-          <div class="accounts-card">
-            <div class="panel-heading">
-              <span class="eyebrow">Vault</span>
-              <h2>Accounts</h2>
+      <main class="workspace">
+        <aside class="sidebar">
+          <details class="panel" open>
+            <summary class="panel-header">Agent</summary>
+            <div class="panel-body">
+              <textarea
+                class="intent-input intent-box"
+                id="intent-box"
+                rows="3"
+                placeholder="Describe what you'd like the agent to do..."
+              ></textarea>
+              <button class="btn btn-primary btn-sm" id="intent-run-button" type="button">Run</button>
+              <div class="terminal" id="terminal-output">
+                <div class="terminal-line terminal-system">Waiting for agent...</div>
+              </div>
             </div>
-            <div class="accounts-list" id="accounts-list"></div>
-            <form class="account-form" id="account-form">
-              <input class="account-input" id="account-label" type="text" placeholder="Label (e.g. Amplify dev)" required />
-              <input class="account-input" id="account-origin" type="text" placeholder="Origin (e.g. https://example.com)" required />
-              <input class="account-input" id="account-username" type="text" placeholder="Username" required autocomplete="off" />
-              <input class="account-input" id="account-password" type="password" placeholder="Password" required autocomplete="new-password" />
-              <input class="account-input" id="account-totp" type="text" placeholder="TOTP seed (optional)" autocomplete="off" />
-              <button class="primary-button account-save-button" type="submit">Save account</button>
-            </form>
-          </div>
-          <pre class="snapshot-output" id="snapshot-output">No page snapshot captured yet.</pre>
+          </details>
+
+          <details class="panel">
+            <summary class="panel-header">Accounts</summary>
+            <div class="panel-body">
+              <div class="accounts-list" id="accounts-list"></div>
+              <form class="form-stack" id="account-form">
+                <input class="input" id="account-label" type="text" placeholder="Label (e.g. Amplify dev)" required />
+                <input class="input" id="account-origin" type="text" placeholder="Origin (e.g. https://example.com)" required />
+                <input class="input" id="account-username" type="text" placeholder="Username" required autocomplete="off" />
+                <input class="input" id="account-password" type="password" placeholder="Password" required autocomplete="new-password" />
+                <input class="input" id="account-totp" type="text" placeholder="TOTP seed (optional)" autocomplete="off" />
+                <button class="btn btn-primary btn-sm" type="submit">Save account</button>
+              </form>
+            </div>
+          </details>
+
+          <details class="panel">
+            <summary class="panel-header">Developer</summary>
+            <div class="panel-body">
+              <p class="status-text" id="fixture-status">Run a demo or capture a page graph from the Demos menu.</p>
+              <div class="vault-list" id="vault-list"></div>
+              <pre class="code-block" id="snapshot-output">No snapshot captured yet.</pre>
+            </div>
+          </details>
         </aside>
 
         <section class="viewport-stage">
-          <div class="viewport-frame" id="viewport-frame">
-            <div class="viewport-label">Active page surface</div>
-          </div>
+          <div class="viewport-frame" id="viewport-frame"></div>
         </section>
       </main>
     </div>
 
-    <div class="approval-modal" id="approval-modal" hidden>
-      <div class="approval-backdrop" id="approval-backdrop"></div>
-      <section class="approval-card" role="dialog" aria-modal="true" aria-labelledby="approval-title">
-        <span class="eyebrow">Approval</span>
-        <h2 id="approval-title">Review sensitive action</h2>
-        <p class="approval-copy" id="approval-copy">The browser is waiting for confirmation before it commits a sensitive action.</p>
-        <div class="approval-effects" id="approval-effects"></div>
-        <div class="approval-actions">
-          <button class="secondary-button" id="approval-reject-button" type="button">Reject</button>
-          <button class="primary-button" id="approval-approve-button" type="button">Approve</button>
+    <div class="modal-overlay" id="approval-modal" hidden>
+      <div class="modal-backdrop" id="approval-backdrop"></div>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="approval-title">
+        <div class="modal-header">
+          <span class="badge badge-warning">Approval Required</span>
+          <h2 id="approval-title" class="modal-title">Review sensitive action</h2>
         </div>
-      </section>
+        <p class="modal-text" id="approval-copy">The agent is waiting for confirmation before performing a sensitive action.</p>
+        <div class="effects-list" id="approval-effects"></div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="approval-reject-button" type="button">Reject</button>
+          <button class="btn btn-primary" id="approval-approve-button" type="button">Approve</button>
+        </div>
+      </div>
     </div>
 
-    <div class="approval-modal" id="handoff-modal" hidden>
-      <div class="approval-backdrop" id="handoff-backdrop"></div>
-      <section class="approval-card" role="dialog" aria-modal="true" aria-labelledby="handoff-title">
-        <span class="eyebrow">Human handoff</span>
-        <h2 id="handoff-title">Agent needs your help</h2>
-        <p class="approval-copy" id="handoff-copy">The agent has paused and is waiting for you to complete a step manually.</p>
-        <p class="approval-copy" id="handoff-reason" style="font-weight:600;margin-top:0;"></p>
-        <div class="approval-actions">
-          <button class="secondary-button" id="handoff-cancel-button" type="button">Cancel agent</button>
-          <button class="primary-button" id="handoff-done-button" type="button">Done — Resume agent</button>
+    <div class="modal-overlay" id="handoff-modal" hidden>
+      <div class="modal-backdrop" id="handoff-backdrop"></div>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="handoff-title">
+        <div class="modal-header">
+          <span class="badge badge-info">Human Handoff</span>
+          <h2 id="handoff-title" class="modal-title">Agent needs your help</h2>
         </div>
-      </section>
+        <p class="modal-text" id="handoff-copy">The agent has paused and is waiting for you to complete a step manually.</p>
+        <p class="modal-text modal-text-emphasis" id="handoff-reason"></p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="handoff-cancel-button" type="button">Cancel agent</button>
+          <button class="btn btn-primary" id="handoff-done-button" type="button">Done &mdash; Resume agent</button>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="./shell.js"></script>

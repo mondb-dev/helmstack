@@ -1,15 +1,36 @@
 {
   "name": "@helmstack/mcp-server",
   "version": "0.1.0",
-  "private": true,
   "description": "MCP server exposing the HelmStack browser substrate as tools",
   "license": "MIT",
   "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
-    "helmstack-mcp": "./src/index.ts"
+    "helmstack-mcp": "./dist/index.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
   "scripts": {
+    "build": "tsup",
     "start": "node --experimental-strip-types src/index.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mondb-dev/helmstack.git",
+    "directory": "packages/mcp-server"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@helmstack/agent-sdk": "*",
