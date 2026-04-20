@@ -140,6 +140,13 @@ export type BrowserClientOptions = {
   host?: string;
   /** Request timeout in ms. Default: 30_000 */
   timeout?: number;
+  /**
+   * Unique identifier for this agent instance.
+   * When set, the server enforces tab ownership: this agent only sees and
+   * can act on tabs it created. Tabs created without an agent ID remain
+   * accessible to all agents (backward-compatible).
+   */
+  agentId?: string;
 };
 
 export type StreamHandlers = {
@@ -163,11 +170,13 @@ export class BrowserClient {
   private readonly host: string;
   private readonly port: number;
   private readonly timeout: number;
+  private readonly agentId: string | undefined;
 
   constructor(opts: BrowserClientOptions = {}) {
     this.host    = opts.host    ?? "127.0.0.1";
     this.port    = opts.port    ?? 7070;
     this.timeout = opts.timeout ?? 30_000;
+    this.agentId = opts.agentId;
   }
 
   // ── Health ──────────────────────────────────────────────────────────────
@@ -752,7 +761,7 @@ export class BrowserClient {
       if (!alive) return;
 
       const req = http.get(
-        { host: this.host, port: this.port, path: "/api/stream" },
+        { host: this.host, port: this.port, path: "/api/stream", headers: this.agentId ? { "X-Agent-ID": this.agentId } : undefined },
         (res) => {
           let buf = "";
           let eventType = "message";
@@ -826,6 +835,7 @@ export class BrowserClient {
         "Content-Type": "application/json"
       };
       if (bodyStr) headers["Content-Length"] = Buffer.byteLength(bodyStr);
+      if (this.agentId) headers["X-Agent-ID"] = this.agentId;
 
       const req = http.request(
         {

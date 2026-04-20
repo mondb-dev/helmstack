@@ -7,12 +7,13 @@ import type {
   BrowserOutputCommand,
   HumanHandoffRecord,
   TabId,
+  TabSummary,
   VaultSecretInput,
 } from "../../../../packages/shared/src/index.js";
 import type { TabManager } from "./tab-manager.js";
 import type { ExtensionManager } from "./extension-manager.js";
 
-type SseClient = http.ServerResponse;
+type SseClient = { res: http.ServerResponse; agentId: string | null };
 
 /**
  * HTTP + Server-Sent Events server that exposes the browser substrate to
@@ -95,6 +96,10 @@ export class AgentServer {
   private readonly clients = new Set<SseClient>();
   private intent = "";
   private logListeners: Array<(entry: AgentLogEntry) => void> = [];
+  /** agentId → tabId: tracks which agent created which tab */
+  private readonly tabOwners = new Map<TabId, string>();
+  /** agentId → intent string: per-agent intent, falls back to global */
+  private readonly perAgentIntents = new Map<string, string>();
 
   constructor(
     private readonly tabs: TabManager,
@@ -103,10 +108,22 @@ export class AgentServer {
   ) {
     this.server = http.createServer(this.handle.bind(this));
 
-    tabs.onTabsChanged((t) => this.broadcast("tabs_changed", t));
-    tabs.onPageObserved((o) => this.broadcast("page_observed", o));
-    tabs.onApprovalQueued((a) => this.broadcast("approval_queued", a));
-    tabs.onHandoffRequested((h: HumanHandoffRecord) => this.broadcast("human_handoff_requested", h));
+    tabs.onTabsChanged((allTabs) => {
+      // Prune owners for tabs that have been closed
+      const alive = new Set(allTabs.map(t => t.id));
+      for (const tabId of this.tabOwners.keys()) {
+        if (!alive.has(tabId)) this.tabOwners.delete(tabId);
+      }
+      // Send each SSE client a view filtered to only their tabs
+      for (const client of this.clients) {
+        const filtered = this.filterTabsForAgent(allTabs, client.agentId);
+        const frame = `event: tabs_changed\ndata: ${JSON.stringify(filtered)}\n\n`;
+        try { client.res.write(frame); } catch { this.clients.delete(client); }
+      }
+    });
+    tabs.onPageObserved((o) => this.broadcastTabEvent("page_observed", o, o.tabId));
+    tabs.onApprovalQueued((a) => this.broadcastTabEvent("approval_queued", a, a.tabId));
+    tabs.onHandoffRequested((h: HumanHandoffRecord) => this.broadcastTabEvent("human_handoff_requested", h, h.tabId));
   }
 
   start(): Promise<void> {
@@ -128,12 +145,18 @@ export class AgentServer {
     });
   }
 
-  setIntent(value: string): void {
-    this.intent = value;
-    this.broadcast("intent_changed", { intent: value });
+  setIntent(value: string, agentId: string | null = null): void {
+    if (agentId !== null) {
+      this.perAgentIntents.set(agentId, value);
+      this.broadcastToAgent("intent_changed", { intent: value }, agentId);
+    } else {
+      this.intent = value;
+      this.broadcast("intent_changed", { intent: value });
+    }
   }
 
-  getIntent(): string {
+  getIntent(agentId: string | null = null): string {
+    if (agentId !== null) return this.perAgentIntents.get(agentId) ?? this.intent;
     return this.intent;
   }
 
@@ -151,17 +174,60 @@ export class AgentServer {
     const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of this.clients) {
       try {
-        client.write(frame);
+        client.res.write(frame);
       } catch {
         this.clients.delete(client);
       }
     }
   }
 
+  /** Broadcast only to the agent that owns the given tab (+ unauthenticated clients). */
+  private broadcastTabEvent(event: string, data: unknown, tabId: TabId) {
+    if (this.clients.size === 0) return;
+    const owner = this.tabOwners.get(tabId);
+    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of this.clients) {
+      if (client.agentId === null || owner === undefined || owner === client.agentId) {
+        try { client.res.write(frame); } catch { this.clients.delete(client); }
+      }
+    }
+  }
+
+  /** Broadcast only to clients identified as the given agent (+ unauthenticated clients). */
+  private broadcastToAgent(event: string, data: unknown, agentId: string) {
+    if (this.clients.size === 0) return;
+    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of this.clients) {
+      if (client.agentId === null || client.agentId === agentId) {
+        try { client.res.write(frame); } catch { this.clients.delete(client); }
+      }
+    }
+  }
+
+  /** Extract the agent ID from the X-Agent-ID request header, or null if absent. */
+  private agentIdOf(req: http.IncomingMessage): string | null {
+    const h = req.headers["x-agent-id"];
+    if (typeof h === "string" && h.trim()) return h.trim();
+    return null;
+  }
+
+  /** Returns true if the requesting agent may access this tab. */
+  private isTabAccessible(tabId: TabId, agentId: string | null): boolean {
+    if (agentId === null) return true; // unauthenticated: full backward compat
+    const owner = this.tabOwners.get(tabId);
+    return owner === undefined || owner === agentId;
+  }
+
+  /** Filter a tab list to only the tabs visible to this agent. */
+  private filterTabsForAgent(tabs: TabSummary[], agentId: string | null): TabSummary[] {
+    if (agentId === null) return tabs;
+    return tabs.filter(t => this.isTabAccessible(t.id, agentId));
+  }
+
   private handle(req: http.IncomingMessage, res: http.ServerResponse) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Agent-ID");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -191,8 +257,10 @@ export class AgentServer {
         Connection: "keep-alive"
       });
       res.write(": connected\n\n");
-      this.clients.add(res);
-      req.on("close", () => this.clients.delete(res));
+      const agentId = this.agentIdOf(req);
+      const client: SseClient = { res, agentId };
+      this.clients.add(client);
+      req.on("close", () => this.clients.delete(client));
       return;
     }
 
@@ -203,14 +271,16 @@ export class AgentServer {
 
     // ── Intent ────────────────────────────────────────────────────────────────
     if (method === "GET" && p === "/api/intent") {
-      return json(res, { intent: this.intent });
+      const agentId = this.agentIdOf(req);
+      return json(res, { intent: this.getIntent(agentId) });
     }
 
     if (method === "PUT" && p === "/api/intent") {
+      const agentId = this.agentIdOf(req);
       const body = await readBody(req);
       if (typeof body.intent !== "string") return error(res, 400, "intent string is required");
-      this.setIntent(body.intent);
-      return json(res, { intent: this.intent });
+      this.setIntent(body.intent, agentId);
+      return json(res, { intent: this.getIntent(agentId) });
     }
 
     // ── Agent log ─────────────────────────────────────────────────────────────
@@ -227,13 +297,30 @@ export class AgentServer {
 
     // ── Tabs ─────────────────────────────────────────────────────────────────
     if (method === "GET" && p === "/api/tabs") {
-      return json(res, this.tabs.listTabs());
+      const agentId = this.agentIdOf(req);
+      return json(res, this.filterTabsForAgent(this.tabs.listTabs(), agentId));
     }
 
     if (method === "POST" && p === "/api/tabs") {
+      const agentId = this.agentIdOf(req);
       const body = await readBody(req);
       const url = typeof body.url === "string" ? body.url : undefined;
-      return json(res, await this.tabs.createTab(url));
+      const existingIds = new Set(this.tabs.listTabs().map(t => t.id));
+      const tabs = await this.tabs.createTab(url);
+      if (agentId !== null) {
+        const newTab = tabs.find(t => !existingIds.has(t.id));
+        if (newTab) this.tabOwners.set(newTab.id, agentId);
+      }
+      return json(res, this.filterTabsForAgent(tabs, agentId));
+    }
+
+    // ── Tab-scope ownership guard ────────────────────────────────────────────
+    const tabScopeMatch = p.match(/^\/api\/tabs\/([^/]+)/);
+    if (tabScopeMatch) {
+      const agentId = this.agentIdOf(req);
+      if (!this.isTabAccessible(tabScopeMatch[1] as TabId, agentId)) {
+        return error(res, 403, "tab is owned by another agent");
+      }
     }
 
     const navMatch = p.match(/^\/api\/tabs\/([^/]+)\/navigate$/);
@@ -246,7 +333,7 @@ export class AgentServer {
     const perceptionMatch = p.match(/^\/api\/tabs\/([^/]+)\/perception$/);
     if (method === "GET" && perceptionMatch) {
       const packet = await this.tabs.getPerceptionPacket(perceptionMatch[1] as TabId);
-      return json(res, { ...packet, intent: this.intent });
+      return json(res, { ...packet, intent: this.getIntent(this.agentIdOf(req)) });
     }
 
     const manifestsMatch = p.match(/^\/api\/tabs\/([^/]+)\/manifests$/);
@@ -285,35 +372,63 @@ export class AgentServer {
 
     // ── Approvals ────────────────────────────────────────────────────────────
     if (method === "GET" && p === "/api/approvals") {
-      return json(res, this.tabs.listPendingApprovals());
+      const agentId = this.agentIdOf(req);
+      const all = this.tabs.listPendingApprovals();
+      return json(res, agentId === null ? all : all.filter(a => this.isTabAccessible(a.tabId, agentId)));
     }
 
     const approveMatch = p.match(/^\/api\/approvals\/([^/]+)\/approve$/);
     if (method === "POST" && approveMatch) {
+      const agentId = this.agentIdOf(req);
+      const pending = this.tabs.listPendingApprovals();
+      const approval = pending.find(a => a.requestId === approveMatch[1]);
+      if (approval && !this.isTabAccessible(approval.tabId, agentId)) return error(res, 403, "approval belongs to another agent");
       return json(res, await this.tabs.approveCommand(approveMatch[1]));
     }
 
     const rejectMatch = p.match(/^\/api\/approvals\/([^/]+)\/reject$/);
     if (method === "POST" && rejectMatch) {
+      const agentId = this.agentIdOf(req);
+      const pending = this.tabs.listPendingApprovals();
+      const approval = pending.find(a => a.requestId === rejectMatch[1]);
+      if (approval && !this.isTabAccessible(approval.tabId, agentId)) return error(res, 403, "approval belongs to another agent");
       return json(res, this.tabs.rejectCommand(rejectMatch[1]));
     }
 
     // ── Handoffs ─────────────────────────────────────────────────────────────
     if (method === "GET" && p === "/api/handoffs") {
-      return json(res, this.tabs.listHandoffs());
+      const agentId = this.agentIdOf(req);
+      const all = this.tabs.listHandoffs();
+      return json(res, agentId === null ? all : all.filter(h => this.isTabAccessible(h.tabId, agentId)));
     }
 
     const handoffResolveMatch = p.match(/^\/api\/handoffs\/([^/]+)\/resolve$/);
     if (method === "POST" && handoffResolveMatch) {
+      const agentId = this.agentIdOf(req);
+      const handoffs = this.tabs.listHandoffs();
+      const handoff = handoffs.find(h => h.requestId === handoffResolveMatch[1]);
+      if (handoff && !this.isTabAccessible(handoff.tabId, agentId)) return error(res, 403, "handoff belongs to another agent");
       const result = this.tabs.resolveHandoff(handoffResolveMatch[1]);
-      this.broadcast("human_handoff_resolved", { requestId: handoffResolveMatch[1] });
+      if (handoff) {
+        this.broadcastTabEvent("human_handoff_resolved", { requestId: handoffResolveMatch[1] }, handoff.tabId);
+      } else {
+        this.broadcast("human_handoff_resolved", { requestId: handoffResolveMatch[1] });
+      }
       return json(res, result);
     }
 
     const handoffCancelMatch = p.match(/^\/api\/handoffs\/([^/]+)\/cancel$/);
     if (method === "POST" && handoffCancelMatch) {
+      const agentId = this.agentIdOf(req);
+      const handoffs = this.tabs.listHandoffs();
+      const handoff = handoffs.find(h => h.requestId === handoffCancelMatch[1]);
+      if (handoff && !this.isTabAccessible(handoff.tabId, agentId)) return error(res, 403, "handoff belongs to another agent");
       const result = this.tabs.cancelHandoff(handoffCancelMatch[1]);
-      this.broadcast("human_handoff_resolved", { requestId: handoffCancelMatch[1], cancelled: true });
+      if (handoff) {
+        this.broadcastTabEvent("human_handoff_resolved", { requestId: handoffCancelMatch[1], cancelled: true }, handoff.tabId);
+      } else {
+        this.broadcast("human_handoff_resolved", { requestId: handoffCancelMatch[1], cancelled: true });
+      }
       return json(res, result);
     }
 
