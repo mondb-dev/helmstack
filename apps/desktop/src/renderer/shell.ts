@@ -461,7 +461,17 @@ async function handleCommandResult(result: BrowserCommandResult) {
 
   if (result.status === "awaiting_human") {
     setFixtureStatus(`Agent paused: ${result.reason} — take over and click Done.`);
-    showHandoffModal({ requestId: result.requestId, tabId: "", reason: result.reason, createdAt: Date.now() });
+    const activeTab = getActiveTab();
+    const tabId = activeTab?.id ?? "";
+    showHandoffModal({
+      requestId: result.requestId,
+      tabId,
+      relatedTabIds: tabId ? [tabId] : [],
+      reason: result.reason,
+      origin: activeTab ? safeHostLabel(activeTab.url) : undefined,
+      title: activeTab?.title,
+      createdAt: Date.now()
+    });
     return result;
   }
 

@@ -14,6 +14,25 @@ export type ConsoleLogEntry = {
   timestamp: number;
 };
 
+export type NetworkSecurityDetails = {
+  /** TLS protocol version, e.g. "TLS 1.3". */
+  protocol: string;
+  /** Key exchange algorithm, e.g. "ECDHE_RSA". Empty string when not applicable. */
+  keyExchange: string;
+  /** Cipher suite, e.g. "AES_128_GCM". */
+  cipher: string;
+  /** Certificate subject CN / SAN primary name. */
+  subjectName: string;
+  /** Certificate issuer organisation. */
+  issuer: string;
+  /** Certificate valid-from (Unix seconds). */
+  validFrom: number;
+  /** Certificate valid-to (Unix seconds). */
+  validTo: number;
+  /** SANs listed on the certificate. */
+  sanList: string[];
+};
+
 export type NetworkRequestEntry = {
   requestId: string;
   url: string;
@@ -24,6 +43,16 @@ export type NetworkRequestEntry = {
   failed: boolean;
   errorText?: string;
   timestamp: number;
+  /** Outgoing request headers. */
+  requestHeaders?: Record<string, string>;
+  /** Response headers (Cache-Control, CSP, HSTS, X-Frame-Options, etc.). */
+  responseHeaders?: Record<string, string>;
+  /** TLS / SSL details when the connection used HTTPS. */
+  securityDetails?: NetworkSecurityDetails;
+  /** True when the response was served from the browser disk cache. */
+  fromDiskCache?: boolean;
+  /** True when the response was served by a Service Worker. */
+  fromServiceWorker?: boolean;
 };
 
 export type WebSocketFrameEntry = {

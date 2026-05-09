@@ -26,6 +26,9 @@ import {
   type ConsoleLogLevel,
   type CookieEntry,
   type DownloadEntry,
+  type ElementStyleAssertionReport,
+  type ElementStyleInspection,
+  type ElementStyleInspectionReport,
   type DiffRegion,
   type EventSourceMessageEntry,
   type FileUploadTarget,
@@ -49,6 +52,8 @@ import {
   type ResourceBudget,
   type ScreenshotDiff,
   type SiteCapabilityManifest,
+  type StyleAssertion,
+  type StyleAssertionCheck,
   type StorageArea,
   type StorageEntry,
   type StorageReport,
@@ -641,11 +646,16 @@ export class TabManager {
   // ── Accessibility Audit ───────────────────────────────────────────────────
 
   /**
-   * Run a focused WCAG 2.2-aligned rule set against the live AX tree.
-   * No external tooling required — checks are derived purely from the
-   * accessibility tree already captured during perception.
+   * Run a comprehensive WCAG 2.2-aligned accessibility audit against the live
+   * AX tree plus select DOM checks. Covers 12 rules across all four WCAG
+   * principles, returns per-violation remediation guidance, a 0–100 score,
+   * principle breakdown, deduplicated rule summaries, and top recommendations.
    */
   async auditAccessibility(tabId: TabId): Promise<import("../../../../packages/shared/src/index.js").A11yAuditReport> {
+    type A11yViolation = import("../../../../packages/shared/src/index.js").A11yViolation;
+    type A11yRuleSummary = import("../../../../packages/shared/src/index.js").A11yRuleSummary;
+    type A11yWcagPrinciple = import("../../../../packages/shared/src/index.js").A11yWcagPrinciple;
+
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
@@ -653,82 +663,431 @@ export class TabManager {
       webContents.debugger.attach("1.3");
     }
 
-    await webContents.debugger.sendCommand("Accessibility.enable");
-    const { nodes } = await webContents.debugger.sendCommand("Accessibility.getFullAXTree", {}) as {
-      nodes: Array<{
-        nodeId: string;
-        role?: { value: string };
-        name?: { value: string };
-        description?: { value: string };
-        properties?: Array<{ name: string; value: { value: unknown } }>;
-        childIds?: string[];
-        backendDOMNodeId?: number;
-      }>
+    // ── Rule metadata ───────────────────────────────────────────────────────
+
+    type RuleMeta = {
+      wcag: string;
+      level: "A" | "AA" | "AAA";
+      principle: A11yWcagPrinciple;
+      impact: import("../../../../packages/shared/src/index.js").A11yImpact;
+      title: string;
     };
 
-    const violations: import("../../../../packages/shared/src/index.js").A11yViolation[] = [];
+    const RULES: Record<string, RuleMeta> = {
+      "1.1.1-image-alt":          { wcag: "1.1.1", level: "A",  principle: "perceivable",     impact: "critical", title: "Images must have a non-empty accessible name" },
+      "1.3.1-input-label":        { wcag: "1.3.1", level: "A",  principle: "perceivable",     impact: "serious",  title: "Form inputs must have an accessible label" },
+      "1.3.1-table-header":       { wcag: "1.3.1", level: "A",  principle: "perceivable",     impact: "moderate", title: "Table header cells must have a discernible name" },
+      "2.1.1-interactive-label":  { wcag: "2.1.1", level: "A",  principle: "operable",        impact: "critical", title: "Interactive elements must be keyboard-operable" },
+      "2.4.2-page-title":         { wcag: "2.4.2", level: "A",  principle: "operable",        impact: "serious",  title: "Page must have a descriptive <title>" },
+      "2.4.3-heading-order":      { wcag: "2.4.3", level: "A",  principle: "operable",        impact: "moderate", title: "Heading levels must not skip ranks" },
+      "2.4.4-link-purpose":       { wcag: "2.4.4", level: "A",  principle: "operable",        impact: "moderate", title: "Link text must be meaningful out of context" },
+      "2.4.6-button-label":       { wcag: "2.4.6", level: "AA", principle: "operable",        impact: "serious",  title: "Buttons must have an accessible name" },
+      "2.4.6-link-label":         { wcag: "2.4.6", level: "AA", principle: "operable",        impact: "serious",  title: "Links must have an accessible name" },
+      "3.1.1-page-lang":          { wcag: "3.1.1", level: "A",  principle: "understandable",  impact: "serious",  title: "HTML element must have a lang attribute" },
+      "4.1.2-aria-required-attr": { wcag: "4.1.2", level: "A",  principle: "robust",          impact: "critical", title: "ARIA widget roles must have required state attributes" },
+      "4.1.3-disabled-label":     { wcag: "4.1.3", level: "AA", principle: "robust",          impact: "minor",    title: "Disabled controls must still have an accessible name" },
+    };
+
+    // ── Fetch AX tree and DOM-level checks in parallel ──────────────────────
+
+    await webContents.debugger.sendCommand("Accessibility.enable");
+
+    const [axResult, domChecks] = await Promise.all([
+      webContents.debugger.sendCommand("Accessibility.getFullAXTree", {}) as Promise<{
+        nodes: Array<{
+          nodeId: string;
+          role?: { value: string };
+          name?: { value: string };
+          ignored?: boolean;
+          properties?: Array<{ name: string; value: { value: unknown } }>;
+          childIds?: string[];
+          backendDOMNodeId?: number;
+        }>;
+      }>,
+      webContents.debugger.sendCommand("Runtime.evaluate", {
+        expression: `(function() {
+          var html = document.documentElement;
+          var lang = html ? html.getAttribute('lang') : null;
+          var title = document.title;
+          return { lang: lang, title: title };
+        })()`,
+        returnByValue: true,
+      }) as Promise<{ result: { value: { lang: string | null; title: string } } }>,
+    ]);
+
+    const { nodes } = axResult;
+    const { lang: pageLang, title: pageTitle } = domChecks.result.value;
+
+    const violations: A11yViolation[] = [];
     let passes = 0;
 
+    // Helper to build a stable selector hint from an AX node.
+    const selectorFor = (node: (typeof nodes)[number], role: string): string =>
+      node.backendDOMNodeId ? `[data-ax-node="${node.nodeId}"]` : `[role="${role}"]`;
+
+    // Helper to push a violation using the rule metadata.
+    const push = (ruleId: string, node: (typeof nodes)[number], role: string, name: string | undefined, description: string, remediation: string) => {
+      const meta = RULES[ruleId];
+      violations.push({
+        rule: ruleId,
+        impact: meta.impact,
+        wcagCriteria: meta.wcag,
+        wcagLevel: meta.level,
+        principle: meta.principle,
+        selector: selectorFor(node, role),
+        description,
+        remediation,
+        role,
+        name,
+      });
+    };
+
+    // ── DOM-level checks (page-wide) ────────────────────────────────────────
+
+    // 3.1.1 — HTML lang attribute
+    if (!pageLang || pageLang.trim() === "") {
+      // Use a synthetic node placeholder for document-level violations
+      const docNode = { nodeId: "document", backendDOMNodeId: undefined, role: undefined, name: undefined, properties: [], childIds: [] };
+      violations.push({
+        rule: "3.1.1-page-lang",
+        impact: RULES["3.1.1-page-lang"].impact,
+        wcagCriteria: "3.1.1",
+        wcagLevel: "A",
+        principle: "understandable",
+        selector: "html",
+        description: "The <html> element has no lang attribute.",
+        remediation: 'Add a lang attribute to the root element: <html lang="en">. Use a valid BCP 47 language tag matching the page\'s primary language.',
+        role: "document",
+      });
+    }
+
+    // 2.4.2 — Page title
+    if (!pageTitle || pageTitle.trim() === "") {
+      violations.push({
+        rule: "2.4.2-page-title",
+        impact: RULES["2.4.2-page-title"].impact,
+        wcagCriteria: "2.4.2",
+        wcagLevel: "A",
+        principle: "operable",
+        selector: "head > title",
+        description: "The page has no <title> or its title is empty.",
+        remediation: "Add a <title> element inside <head> that briefly describes the page's purpose or current view. Avoid generic titles like 'Page' or 'Untitled'.",
+        role: "document",
+      });
+    }
+
+    // ── Ambiguous-link-text word list (2.4.4) ───────────────────────────────
+    const GENERIC_LINK_TEXTS = new Set([
+      "click here", "here", "read more", "more", "details", "learn more",
+      "this", "link", "click", "go", "view", "see more", "continue", "next",
+    ]);
+
+    // ── ARIA roles that require specific state properties ───────────────────
+    // Maps AX property name (as returned by CDP) to the role(s) that require it.
+    const ARIA_REQUIRED: Record<string, string[]> = {
+      checked:    ["checkbox", "radio", "menuitemcheckbox", "menuitemradio", "treeitem", "switch"],
+      expanded:   ["combobox", "listbox", "tree", "treegrid", "rowgroup"],
+      valuenow:   ["slider", "scrollbar", "spinbutton"],
+    };
+
+    // ── Per-node checks ─────────────────────────────────────────────────────
+
+    let lastHeadingLevel = 0;
+
     for (const node of nodes) {
+      if (node.ignored) continue;
+
       const role = node.role?.value ?? "generic";
       const name = node.name?.value;
+      const trimmedName = name?.trim() ?? "";
       const props = Object.fromEntries(
         (node.properties ?? []).map(p => [p.name, p.value?.value])
       );
-      const selector = node.backendDOMNodeId ? `[data-ax-id="${node.nodeId}"]` : `[role="${role}"]`;
 
       let nodeViolations = 0;
 
-      // 1.1.1 — Images must have alt text (non-empty accessible name)
+      // ── 1.1.1 — Images must have a non-empty accessible name ───────────────
       if (role === "img") {
-        if (!name || name.trim() === "" || name === "image") {
-          violations.push({ rule: "1.1.1-image-alt", impact: "critical", selector, role, name,
-            description: "Image has no accessible name. Add alt text or an aria-label." });
+        if (!trimmedName || trimmedName === "image") {
+          push(
+            "1.1.1-image-alt", node, role, name,
+            "Image is missing an accessible name.",
+            'Add descriptive alt text (alt="...") to the <img> element. For decorative images use alt="" and role="presentation". Avoid generic text like "image" or "photo".'
+          );
           nodeViolations++;
         }
       }
 
-      // 2.4.6 — Buttons and links must have a discernible name
-      if ((role === "button" || role === "link") && (!name || name.trim() === "")) {
-        violations.push({ rule: "2.4.6-label", impact: "serious", selector, role, name,
-          description: `${role === "button" ? "Button" : "Link"} has no accessible name. Add text content or an aria-label.` });
+      // ── 1.3.1 — Form inputs must have an accessible label ──────────────────
+      if ((role === "textbox" || role === "combobox" || role === "spinbutton" || role === "searchbox") && !trimmedName) {
+        push(
+          "1.3.1-input-label", node, role, name,
+          `${role} input has no accessible label.`,
+          "Associate a <label> element using the for/id pair, or add an aria-label / aria-labelledby attribute. Placeholder text alone does not count as a label."
+        );
         nodeViolations++;
       }
 
-      // 4.1.3 — Interactive controls must not be both disabled and focusable without label
-      if (props["disabled"] === true && (role === "button" || role === "textbox") && (!name || name.trim() === "")) {
-        violations.push({ rule: "4.1.3-disabled-label", impact: "minor", selector, role, name,
-          description: `Disabled ${role} has no accessible name. Screen readers still announce it.` });
+      // ── 1.3.1 — Table header cells must have a name ────────────────────────
+      if ((role === "columnheader" || role === "rowheader") && !trimmedName) {
+        push(
+          "1.3.1-table-header", node, role, name,
+          `${role === "columnheader" ? "Column" : "Row"} header cell has no accessible name.`,
+          "Add descriptive text content to the <th> element. Avoid empty header cells — if a column needs no visual header, provide a visually-hidden text label."
+        );
         nodeViolations++;
       }
 
-      // 1.3.5 — Form inputs should have an associated label
-      if ((role === "textbox" || role === "combobox" || role === "spinbutton") && (!name || name.trim() === "")) {
-        violations.push({ rule: "1.3.1-input-label", impact: "serious", selector, role, name,
-          description: "Form input has no accessible label. Use a <label>, aria-label, or aria-labelledby." });
-        nodeViolations++;
-      }
-
-      // 2.4.3 — Ensure heading hierarchy is not skipped (h1→h3 without h2)
+      // ── 2.4.3 — Heading levels must not skip ranks ─────────────────────────
       if (role === "heading") {
         const level = Number(props["level"]) || 0;
-        if (level > 1) {
-          // Check stored last heading level (module-local to this audit call via closure)
-          // We track this inline — simple heuristic, not full tree walk.
-          // Violation stored by buildAxSelectorHint-style naming.
+        if (level > 0) {
+          if (lastHeadingLevel > 0 && level > lastHeadingLevel + 1) {
+            push(
+              "2.4.3-heading-order", node, role, name,
+              `Heading level skips from h${lastHeadingLevel} to h${level}.`,
+              `Use consecutive heading levels. Add an h${lastHeadingLevel + 1} between h${lastHeadingLevel} and h${level}, or restructure the document outline so no levels are skipped.`
+            );
+            nodeViolations++;
+          }
+          lastHeadingLevel = level;
         }
       }
 
+      // ── 2.4.4 — Links must have meaningful text ────────────────────────────
+      if (role === "link") {
+        if (!trimmedName) {
+          push(
+            "2.4.6-link-label", node, role, name,
+            "Link has no accessible name.",
+            "Add descriptive text content to the <a> element, or use aria-label / aria-labelledby to provide a name that describes the link destination."
+          );
+          nodeViolations++;
+        } else if (GENERIC_LINK_TEXTS.has(trimmedName.toLowerCase())) {
+          push(
+            "2.4.4-link-purpose", node, role, name,
+            `Link text "${trimmedName}" is ambiguous out of context.`,
+            `Replace or augment the link text to describe the destination. Use aria-label to add context, e.g. aria-label="Read more about pricing". Avoid generic phrases like "click here" or "read more".`
+          );
+          nodeViolations++;
+        }
+      }
+
+      // ── 2.4.6 — Buttons must have an accessible name ───────────────────────
+      if (role === "button" && !trimmedName) {
+        push(
+          "2.4.6-button-label", node, role, name,
+          "Button has no accessible name.",
+          "Add visible text content inside the <button>, or use aria-label for icon-only buttons. If using an icon, add a visually-hidden <span> or aria-label describing the action."
+        );
+        nodeViolations++;
+      }
+
+      // ── 4.1.2 — ARIA widget roles must have required state attributes ───────
+      for (const [prop, requiredByRoles] of Object.entries(ARIA_REQUIRED)) {
+        if (requiredByRoles.includes(role) && props[prop] === undefined) {
+          push(
+            "4.1.2-aria-required-attr", node, role, name,
+            `Element with role="${role}" is missing required ARIA state: ${prop}.`,
+            `Add the ${prop === "checked" ? "aria-checked" : prop === "expanded" ? "aria-expanded" : "aria-valuenow"} attribute to satisfy the WAI-ARIA spec for role="${role}". Update it dynamically to reflect the current widget state.`
+          );
+          nodeViolations++;
+        }
+      }
+
+      // ── 4.1.3 — Disabled controls must still have an accessible name ────────
+      if (props["disabled"] === true && (role === "button" || role === "textbox" || role === "combobox") && !trimmedName) {
+        push(
+          "4.1.3-disabled-label", node, role, name,
+          `Disabled ${role} has no accessible name.`,
+          "Screen readers still announce disabled elements. Add an aria-label or aria-labelledby so users understand what the control is for even when disabled."
+        );
+        nodeViolations++;
+      }
+
       if (nodeViolations === 0) passes++;
+    }
+
+    // ── Aggregate results ───────────────────────────────────────────────────
+
+    const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+    const byPrinciple: Record<A11yWcagPrinciple, number> = {
+      perceivable: 0, operable: 0, understandable: 0, robust: 0,
+    };
+    const ruleViolationCounts: Record<string, number> = {};
+
+    for (const v of violations) {
+      counts[v.impact]++;
+      byPrinciple[v.principle]++;
+      ruleViolationCounts[v.rule] = (ruleViolationCounts[v.rule] ?? 0) + 1;
+    }
+
+    // Score: start at 100, deduct weighted penalty capped per tier
+    const penalty =
+      Math.min(counts.critical * 8,  48) +
+      Math.min(counts.serious  * 4,  32) +
+      Math.min(counts.moderate * 2,  12) +
+      Math.min(counts.minor    * 1,   5);
+    const score = Math.max(0, 100 - penalty);
+
+    // Deduplicated rule summaries, sorted by severity then count
+    const severityOrder: Record<string, number> = { critical: 0, serious: 1, moderate: 2, minor: 3 };
+    const violatedRules: A11yRuleSummary[] = Object.entries(ruleViolationCounts)
+      .map(([ruleId, count]): A11yRuleSummary => {
+        const meta = RULES[ruleId];
+        return {
+          ruleId,
+          wcagCriteria: meta.wcag,
+          wcagLevel: meta.level,
+          principle: meta.principle,
+          impact: meta.impact,
+          description: meta.title,
+          count,
+        };
+      })
+      .sort((a, b) =>
+        severityOrder[a.impact] - severityOrder[b.impact] ||
+        b.count - a.count
+      );
+
+    // Top-priority plain-English recommendations (deduplicated, ordered by impact)
+    const recommendations: string[] = [];
+    const seen = new Set<string>();
+    for (const r of violatedRules) {
+      if (seen.has(r.ruleId)) continue;
+      seen.add(r.ruleId);
+      switch (r.ruleId) {
+        case "1.1.1-image-alt":
+          recommendations.push(`Add descriptive alt text to ${r.count} image${r.count > 1 ? "s" : ""}. Use alt="" for purely decorative images.`);
+          break;
+        case "1.3.1-input-label":
+          recommendations.push(`Label ${r.count} form input${r.count > 1 ? "s" : ""} using <label for="…">, aria-label, or aria-labelledby.`);
+          break;
+        case "1.3.1-table-header":
+          recommendations.push(`Add descriptive text to ${r.count} empty table header cell${r.count > 1 ? "s" : ""}.`);
+          break;
+        case "2.1.1-interactive-label":
+          recommendations.push(`Ensure all ${r.count} interactive element${r.count > 1 ? "s" : ""} are keyboard-operable (Tab / Enter / Space).`);
+          break;
+        case "2.4.2-page-title":
+          recommendations.push("Add a meaningful <title> element that describes the page's content or current view.");
+          break;
+        case "2.4.3-heading-order":
+          recommendations.push(`Fix ${r.count} heading level skip${r.count > 1 ? "s" : ""} — use consecutive h1→h2→h3 levels without gaps.`);
+          break;
+        case "2.4.4-link-purpose":
+          recommendations.push(`Replace ${r.count} generic link text${r.count > 1 ? "s" : ""} ("click here", "read more") with descriptive labels.`);
+          break;
+        case "2.4.6-button-label":
+          recommendations.push(`Name ${r.count} unlabelled button${r.count > 1 ? "s" : ""}. Use visible text or aria-label for icon-only buttons.`);
+          break;
+        case "2.4.6-link-label":
+          recommendations.push(`Add accessible names to ${r.count} link${r.count > 1 ? "s" : ""} that currently have no text.`);
+          break;
+        case "3.1.1-page-lang":
+          recommendations.push('Set the page language on the <html> element (e.g. <html lang="en">) so screen readers use the correct pronunciation engine.');
+          break;
+        case "4.1.2-aria-required-attr":
+          recommendations.push(`Add missing ARIA state attributes to ${r.count} widget${r.count > 1 ? "s" : ""} (aria-checked, aria-expanded, aria-valuenow as appropriate).`);
+          break;
+        case "4.1.3-disabled-label":
+          recommendations.push(`Add accessible names to ${r.count} disabled control${r.count > 1 ? "s" : ""} so screen readers can still identify them.`);
+          break;
+      }
+    }
+
+    if (counts.critical === 0 && counts.serious === 0 && violations.length === 0) {
+      recommendations.push("No violations detected. Use the element style inspector for text contrast (WCAG 1.4.3), then manually review focus-visible styling (WCAG 2.4.7) and motion sensitivity (WCAG 2.3.3).");
+    } else if (counts.critical > 0 || counts.serious > 0) {
+      recommendations.push("Prioritise critical and serious violations first — they block access for screen reader and keyboard-only users.");
     }
 
     return {
       tabId,
       url: webContents.getURL(),
       capturedAt: Date.now(),
+      score,
       violations,
+      violationCounts: counts,
+      byPrinciple,
+      violatedRules,
+      recommendations,
       passes,
-      nodeCount: nodes.length
+      nodeCount: nodes.length,
+    };
+  }
+
+  // ── Element Style Inspector ───────────────────────────────────────────────
+
+  /**
+   * Inspect computed styles, layout box, contrast, and common style issues for
+   * elements matching a selector. Traverses same-origin iframes and open shadow
+   * roots in the page context.
+   */
+  async inspectElementStyles(tabId: TabId, selector: string, options: { limit?: number } = {}): Promise<ElementStyleInspectionReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    const limit = clampInt(options.limit ?? 20, 1, 100);
+
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: `(${buildElementStyleInspectorScript()})(${JSON.stringify({ selector, limit })})`,
+      returnByValue: true,
+      awaitPromise: true
+    }) as { result: { value?: Omit<ElementStyleInspectionReport, "tabId" | "capturedAt"> } };
+
+    const value = result.result.value;
+    if (!value) {
+      return {
+        tabId,
+        url: webContents.getURL(),
+        capturedAt: Date.now(),
+        selector,
+        matchedCount: 0,
+        inspectedCount: 0,
+        elements: [],
+        warnings: ["Style inspection did not return a value."]
+      };
+    }
+
+    return {
+      ...value,
+      tabId,
+      capturedAt: Date.now()
+    };
+  }
+
+  /**
+   * Assert computed style expectations for all elements matching a selector.
+   * Supports exact/contains/regex checks plus numeric min/max thresholds.
+   */
+  async assertElementStyles(
+    tabId: TabId,
+    selector: string,
+    assertions: StyleAssertion[],
+    options: { limit?: number } = {}
+  ): Promise<ElementStyleAssertionReport> {
+    const inspection = await this.inspectElementStyles(tabId, selector, options);
+    const checks: StyleAssertionCheck[] = [];
+
+    for (const element of inspection.elements) {
+      for (const assertion of assertions) {
+        checks.push(evaluateStyleAssertion(element, assertion));
+      }
+    }
+
+    const issues = inspection.elements.flatMap((element) => element.issues);
+    const pass = inspection.matchedCount > 0 && checks.length > 0 && checks.every((check) => check.pass);
+
+    return {
+      tabId,
+      url: inspection.url,
+      capturedAt: Date.now(),
+      selector,
+      pass,
+      matchedCount: inspection.matchedCount,
+      checks,
+      inspected: inspection.elements,
+      issues
     };
   }
 
@@ -1994,12 +2353,19 @@ export class TabManager {
         const requestId = params.requestId as string | undefined;
         const request = params.request as Record<string, unknown> | undefined;
         if (!requestId || !request) break;
+        const rawReqHeaders = request.headers as Record<string, unknown> | undefined;
+        const requestHeaders: Record<string, string> | undefined = rawReqHeaders
+          ? Object.fromEntries(
+              Object.entries(rawReqHeaders).map(([k, v]) => [k, String(v)])
+            )
+          : undefined;
         tab.networkRequests.set(requestId, {
           requestId,
           url: (request.url as string) ?? "",
           method: (request.method as string) ?? "GET",
           failed: false,
-          timestamp: (params.timestamp as number) ?? Date.now()
+          timestamp: (params.timestamp as number) ?? Date.now(),
+          requestHeaders
         });
         break;
       }
@@ -2013,6 +2379,29 @@ export class TabManager {
           existing.statusCode = response.status as number | undefined;
           existing.statusText = response.statusText as string | undefined;
           existing.mimeType   = response.mimeType   as string | undefined;
+          existing.fromDiskCache    = (response.fromDiskCache    as boolean | undefined) ?? false;
+          existing.fromServiceWorker = (response.fromServiceWorker as boolean | undefined) ?? false;
+
+          const rawHeaders = response.headers as Record<string, unknown> | undefined;
+          if (rawHeaders) {
+            existing.responseHeaders = Object.fromEntries(
+              Object.entries(rawHeaders).map(([k, v]) => [k, String(v)])
+            );
+          }
+
+          const sd = response.securityDetails as Record<string, unknown> | undefined;
+          if (sd) {
+            existing.securityDetails = {
+              protocol:    (sd.protocol    as string) ?? "",
+              keyExchange: (sd.keyExchange as string) ?? "",
+              cipher:      (sd.cipher      as string) ?? "",
+              subjectName: (sd.subjectName as string) ?? "",
+              issuer:      (sd.issuer      as string) ?? "",
+              validFrom:   (sd.validFrom   as number) ?? 0,
+              validTo:     (sd.validTo     as number) ?? 0,
+              sanList:     Array.isArray(sd.sanList) ? (sd.sanList as string[]) : []
+            };
+          }
         }
         break;
       }
@@ -2207,6 +2596,466 @@ export class TabManager {
 }
 
 // ── Module-level helpers ──────────────────────────────────────────────────────
+
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.floor(value)));
+}
+
+function evaluateStyleAssertion(element: ElementStyleInspection, assertion: StyleAssertion): StyleAssertionCheck {
+  const property = toKebabCase(assertion.property);
+  const actual = element.computed[property] ?? element.computed[assertion.property];
+  const expected = describeStyleExpectation(assertion);
+
+  if (actual === undefined) {
+    return {
+      elementIndex: element.index,
+      selectorHint: element.selectorHint,
+      property,
+      actual,
+      expected,
+      pass: false,
+      message: `Property "${property}" was not captured for ${element.selectorHint}.`
+    };
+  }
+
+  const checks: Array<{ pass: boolean; message: string }> = [];
+  const tolerance = assertion.tolerance ?? 0;
+
+  if (assertion.equals !== undefined) {
+    const expectedValue = String(assertion.equals);
+    const numericExpected = typeof assertion.equals === "number" ? assertion.equals : parseCssNumber(expectedValue);
+    const numericActual = parseCssNumber(actual);
+    const pass =
+      numericExpected !== null && numericActual !== null
+        ? Math.abs(numericActual - numericExpected) <= tolerance
+        : canonicalCssValue(actual) === canonicalCssValue(expectedValue);
+    checks.push({
+      pass,
+      message: pass ? `${property} equals ${expectedValue}.` : `${property} expected ${expectedValue}, got ${actual}.`
+    });
+  }
+
+  if (assertion.not !== undefined) {
+    const disallowed = String(assertion.not);
+    const pass = canonicalCssValue(actual) !== canonicalCssValue(disallowed);
+    checks.push({
+      pass,
+      message: pass ? `${property} is not ${disallowed}.` : `${property} should not be ${disallowed}.`
+    });
+  }
+
+  if (assertion.contains !== undefined) {
+    const pass = actual.toLowerCase().includes(assertion.contains.toLowerCase());
+    checks.push({
+      pass,
+      message: pass ? `${property} contains ${assertion.contains}.` : `${property} does not contain ${assertion.contains}; got ${actual}.`
+    });
+  }
+
+  if (assertion.matches !== undefined) {
+    let pass = false;
+    try {
+      pass = new RegExp(assertion.matches).test(actual);
+    } catch {
+      pass = false;
+    }
+    checks.push({
+      pass,
+      message: pass ? `${property} matches /${assertion.matches}/.` : `${property} does not match /${assertion.matches}/; got ${actual}.`
+    });
+  }
+
+  if (assertion.min !== undefined) {
+    const numericActual = parseCssNumber(actual);
+    const pass = numericActual !== null && numericActual >= assertion.min;
+    checks.push({
+      pass,
+      message: pass ? `${property} is at least ${assertion.min}.` : `${property} expected >= ${assertion.min}, got ${actual}.`
+    });
+  }
+
+  if (assertion.max !== undefined) {
+    const numericActual = parseCssNumber(actual);
+    const pass = numericActual !== null && numericActual <= assertion.max;
+    checks.push({
+      pass,
+      message: pass ? `${property} is at most ${assertion.max}.` : `${property} expected <= ${assertion.max}, got ${actual}.`
+    });
+  }
+
+  if (checks.length === 0) {
+    return {
+      elementIndex: element.index,
+      selectorHint: element.selectorHint,
+      property,
+      actual,
+      expected,
+      pass: false,
+      message: `No assertion operator was supplied for "${property}".`
+    };
+  }
+
+  const failed = checks.find((check) => !check.pass);
+  return {
+    elementIndex: element.index,
+    selectorHint: element.selectorHint,
+    property,
+    actual,
+    expected,
+    pass: failed === undefined,
+    message: failed?.message ?? checks.map((check) => check.message).join(" ")
+  };
+}
+
+function describeStyleExpectation(assertion: StyleAssertion): string {
+  const parts: string[] = [];
+  if (assertion.equals !== undefined) parts.push(`equals ${assertion.equals}`);
+  if (assertion.not !== undefined) parts.push(`not ${assertion.not}`);
+  if (assertion.contains !== undefined) parts.push(`contains ${assertion.contains}`);
+  if (assertion.matches !== undefined) parts.push(`matches /${assertion.matches}/`);
+  if (assertion.min !== undefined) parts.push(`min ${assertion.min}`);
+  if (assertion.max !== undefined) parts.push(`max ${assertion.max}`);
+  return parts.join("; ") || "unspecified";
+}
+
+function toKebabCase(value: string): string {
+  return value.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`).replace(/^-/, "");
+}
+
+function parseCssNumber(value: string): number | null {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function canonicalCssValue(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  const hex = trimmed.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const raw = hex[1];
+    const full = raw.length === 3 ? raw.split("").map((c) => c + c).join("") : raw;
+    const r = Number.parseInt(full.slice(0, 2), 16);
+    const g = Number.parseInt(full.slice(2, 4), 16);
+    const b = Number.parseInt(full.slice(4, 6), 16);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  return trimmed.replace(/\s+/g, " ").replace(/\s*,\s*/g, ",");
+}
+
+function buildElementStyleInspectorScript() {
+  const fn = (payload: { selector: string; limit: number }) => {
+    const selector = String(payload.selector || "");
+    const limit = Math.max(1, Math.min(100, Number(payload.limit) || 20));
+    const warnings: string[] = [];
+    const properties = [
+      "display", "visibility", "opacity", "pointer-events", "position", "z-index",
+      "top", "right", "bottom", "left", "overflow", "overflow-x", "overflow-y",
+      "box-sizing", "width", "height", "min-width", "min-height", "max-width", "max-height",
+      "margin-top", "margin-right", "margin-bottom", "margin-left",
+      "padding-top", "padding-right", "padding-bottom", "padding-left",
+      "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+      "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
+      "border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
+      "border-radius", "color", "background-color", "font-family", "font-size", "font-weight",
+      "line-height", "letter-spacing", "text-align", "text-decoration-line", "white-space",
+      "text-overflow", "box-shadow", "filter", "transform", "transition-duration",
+      "animation-name", "animation-duration", "flex-direction", "align-items", "justify-content",
+      "gap", "row-gap", "column-gap", "grid-template-columns", "grid-template-rows"
+    ];
+
+    const roots = collectRoots();
+    const matches: Element[] = [];
+    for (const root of roots) {
+      try {
+        matches.push(...Array.from(root.querySelectorAll(selector)));
+      } catch (error) {
+        warnings.push(error instanceof Error ? error.message : "Invalid selector.");
+        break;
+      }
+    }
+
+    const seen = new Set<Element>();
+    const elements = matches
+      .filter((element) => {
+        if (seen.has(element)) return false;
+        seen.add(element);
+        return true;
+      })
+      .slice(0, limit)
+      .map((element, index) => inspectElement(element, index));
+
+    if (matches.length > limit) {
+      warnings.push(`Matched ${matches.length} elements; inspected first ${limit}.`);
+    }
+
+    return {
+      url: window.location.href,
+      selector,
+      matchedCount: matches.length,
+      inspectedCount: elements.length,
+      elements,
+      warnings
+    };
+
+    function collectRoots(): ParentNode[] {
+      const collected: ParentNode[] = [document];
+      const queue: ParentNode[] = [document];
+      const seenRoots = new Set<ParentNode>([document]);
+
+      while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current) break;
+        for (const element of Array.from(current.querySelectorAll("*"))) {
+          const maybeShadow = (element as HTMLElement).shadowRoot;
+          if (maybeShadow && !seenRoots.has(maybeShadow)) {
+            seenRoots.add(maybeShadow);
+            collected.push(maybeShadow);
+            queue.push(maybeShadow);
+          }
+
+          if (element.tagName.toLowerCase() === "iframe") {
+            try {
+              const doc = (element as HTMLIFrameElement).contentDocument;
+              if (doc && !seenRoots.has(doc)) {
+                seenRoots.add(doc);
+                collected.push(doc);
+                queue.push(doc);
+              }
+            } catch {
+              // Cross-origin iframe; skip.
+            }
+          }
+        }
+      }
+
+      return collected;
+    }
+
+    function inspectElement(element: Element, index: number) {
+      const view = element.ownerDocument.defaultView || window;
+      const style = view.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const computed: Record<string, string> = {};
+      for (const property of properties) {
+        computed[property] = style.getPropertyValue(property);
+      }
+
+      const margin = edges(style, "margin", "");
+      const border = edges(style, "border", "-width");
+      const padding = edges(style, "padding", "");
+      const isVisible =
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        Number(style.opacity || "1") > 0 &&
+        rect.width > 0 &&
+        rect.height > 0;
+      const inViewport =
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < view.innerHeight &&
+        rect.left < view.innerWidth;
+
+      const contrast = getContrast(element, style);
+      const issues = collectIssues(element, style, rect, isVisible, inViewport, contrast);
+      const className = element.getAttribute("class") || undefined;
+      const text = normalizeText(element.textContent || "");
+
+      return {
+        index,
+        selectorHint: selectorHint(element),
+        tagName: element.tagName.toLowerCase(),
+        ...(element.id ? { id: element.id } : {}),
+        ...(className ? { className } : {}),
+        ...(element.getAttribute("role") ? { role: element.getAttribute("role") || undefined } : {}),
+        ...(element.getAttribute("aria-label") ? { ariaLabel: element.getAttribute("aria-label") || undefined } : {}),
+        ...(text ? { text: text.slice(0, 160) } : {}),
+        isVisible,
+        inViewport,
+        bounds: roundRect(rect),
+        box: {
+          margin,
+          border,
+          padding,
+          content: {
+            width: round(Math.max(0, rect.width - border.left - border.right - padding.left - padding.right)),
+            height: round(Math.max(0, rect.height - border.top - border.bottom - padding.top - padding.bottom))
+          }
+        },
+        computed,
+        ...(contrast ? { contrast } : {}),
+        issues
+      };
+    }
+
+    function collectIssues(
+      element: Element,
+      style: CSSStyleDeclaration,
+      rect: DOMRect,
+      isVisible: boolean,
+      inViewport: boolean,
+      contrast: ReturnType<typeof getContrast>
+    ) {
+      const issues: Array<{ kind: string; severity: string; message: string; property?: string; value?: string | number | boolean }> = [];
+      if (!isVisible) {
+        issues.push({ kind: "not_visible", severity: "warning", message: "Element is not visible.", property: "display/visibility/opacity" });
+      }
+      if (rect.width === 0 || rect.height === 0) {
+        issues.push({ kind: "zero_size", severity: "error", message: "Element has a zero-width or zero-height bounding box." });
+      }
+      if (isVisible && !inViewport) {
+        issues.push({ kind: "offscreen", severity: "warning", message: "Element is rendered outside the current viewport." });
+      }
+      if (style.pointerEvents === "none") {
+        issues.push({ kind: "pointer_events_none", severity: isInteractive(element) ? "error" : "info", message: "Element ignores pointer events.", property: "pointer-events", value: "none" });
+      }
+      if (contrast && !contrast.passesAA) {
+        issues.push({ kind: "low_contrast", severity: "error", message: `Text contrast ratio ${contrast.ratio}:1 is below WCAG AA.`, property: "color/background-color", value: contrast.ratio });
+      }
+      if (isInteractive(element) && isVisible && (rect.width < 44 || rect.height < 44)) {
+        issues.push({ kind: "small_tap_target", severity: "warning", message: "Interactive target is smaller than 44x44 CSS px.", value: `${round(rect.width)}x${round(rect.height)}` });
+      }
+      if (hasClippedContent(element, style)) {
+        issues.push({ kind: "clipped_content", severity: "warning", message: "Element content appears clipped by overflow settings.", property: "overflow", value: style.overflow });
+      }
+      const z = Number.parseInt(style.zIndex || "0", 10);
+      if (Number.isFinite(z) && z >= 1000) {
+        issues.push({ kind: "high_z_index", severity: "info", message: "Element uses a high z-index.", property: "z-index", value: z });
+      }
+      if (style.position === "fixed" || style.position === "sticky") {
+        issues.push({ kind: "fixed_or_sticky", severity: "info", message: `Element is ${style.position} positioned.`, property: "position", value: style.position });
+      }
+      return issues;
+    }
+
+    function edges(style: CSSStyleDeclaration, prefix: string, suffix: string) {
+      return {
+        top: round(cssNumber(style.getPropertyValue(prefix + "-top" + suffix))),
+        right: round(cssNumber(style.getPropertyValue(prefix + "-right" + suffix))),
+        bottom: round(cssNumber(style.getPropertyValue(prefix + "-bottom" + suffix))),
+        left: round(cssNumber(style.getPropertyValue(prefix + "-left" + suffix)))
+      };
+    }
+
+    function getContrast(element: Element, style: CSSStyleDeclaration) {
+      const text = normalizeText(element.textContent || "");
+      if (!text) return null;
+      const fg = parseColor(style.color);
+      const bg = findEffectiveBackground(element);
+      if (!fg || !bg || fg.a === 0) return null;
+      const ratio = contrastRatio(fg, bg);
+      const fontSizePx = cssNumber(style.fontSize);
+      const fontWeight = style.fontWeight;
+      const large = fontSizePx >= 24 || (fontSizePx >= 18.66 && Number.parseInt(fontWeight, 10) >= 600);
+      return {
+        foreground: colorString(fg),
+        background: colorString(bg),
+        ratio: round(ratio),
+        fontSizePx: round(fontSizePx),
+        fontWeight,
+        passesAA: ratio >= (large ? 3 : 4.5),
+        passesLargeTextAA: ratio >= 3
+      };
+    }
+
+    function findEffectiveBackground(element: Element) {
+      let current: Element | null = element;
+      while (current) {
+        const view = current.ownerDocument.defaultView || window;
+        const bg = parseColor(view.getComputedStyle(current).backgroundColor);
+        if (bg && bg.a > 0) return bg;
+        current = current.parentElement;
+      }
+      return { r: 255, g: 255, b: 255, a: 1 };
+    }
+
+    function parseColor(value: string) {
+      const match = value.match(/rgba?\(([^)]+)\)/i);
+      if (!match) return null;
+      const parts = match[1].split(",").map((part) => Number.parseFloat(part.trim()));
+      if (parts.length < 3 || parts.some((part) => !Number.isFinite(part))) return null;
+      return { r: parts[0], g: parts[1], b: parts[2], a: parts[3] ?? 1 };
+    }
+
+    function contrastRatio(a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }) {
+      const l1 = luminance(a);
+      const l2 = luminance(b);
+      const high = Math.max(l1, l2);
+      const low = Math.min(l1, l2);
+      return (high + 0.05) / (low + 0.05);
+    }
+
+    function luminance(c: { r: number; g: number; b: number }) {
+      const channel = (value: number) => {
+        const normalized = value / 255;
+        return normalized <= 0.03928 ? normalized / 12.92 : Math.pow((normalized + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+    }
+
+    function colorString(c: { r: number; g: number; b: number; a: number }) {
+      return c.a === 1 ? `rgb(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)})` : `rgba(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)}, ${round(c.a)})`;
+    }
+
+    function hasClippedContent(element: Element, style: CSSStyleDeclaration) {
+      const html = element as HTMLElement;
+      const overflow = `${style.overflow} ${style.overflowX} ${style.overflowY}`;
+      if (!/(hidden|clip|scroll)/.test(overflow)) return false;
+      return html.scrollWidth > html.clientWidth + 1 || html.scrollHeight > html.clientHeight + 1;
+    }
+
+    function isInteractive(element: Element) {
+      const tag = element.tagName.toLowerCase();
+      const role = element.getAttribute("role") || "";
+      return ["a", "button", "input", "select", "textarea", "summary"].includes(tag) || ["button", "link", "checkbox", "radio", "tab", "menuitem", "switch"].includes(role);
+    }
+
+    function selectorHint(element: Element) {
+      const tag = element.tagName.toLowerCase();
+      if (element.id) return `${tag}#${cssEscape(element.id)}`;
+      const classList = Array.from(element.classList).slice(0, 3);
+      if (classList.length) return `${tag}.${classList.map(cssEscape).join(".")}`;
+      const parent = element.parentElement;
+      if (!parent) return tag;
+      const siblings = Array.from(parent.children).filter((child) => child.tagName === element.tagName);
+      const index = siblings.indexOf(element) + 1;
+      return siblings.length > 1 ? `${tag}:nth-of-type(${index})` : tag;
+    }
+
+    function cssEscape(value: string) {
+      if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
+      return value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+    }
+
+    function roundRect(rect: DOMRect) {
+      return {
+        x: round(rect.x),
+        y: round(rect.y),
+        top: round(rect.top),
+        right: round(rect.right),
+        bottom: round(rect.bottom),
+        left: round(rect.left),
+        width: round(rect.width),
+        height: round(rect.height)
+      };
+    }
+
+    function cssNumber(value: string) {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function round(value: number) {
+      return Math.round(value * 100) / 100;
+    }
+
+    function normalizeText(value: string) {
+      return value.replace(/\s+/g, " ").trim();
+    }
+  };
+
+  return fn.toString();
+}
 
 function renderRecordingScript(recording: RecordingSession): string {
   const lines = [
@@ -2500,7 +3349,7 @@ function evaluateAssertionAgainstGraph(
       message: graph.alerts.length,
       alert:   graph.alerts.length,
       heading: graph.headings.length,
-      image:   graph.media.filter(m => m.kind === "image").length,
+      image:   (graph.accessibility.roleCounts.img ?? 0) + (graph.accessibility.roleCounts.image ?? 0),
       video:   graph.media.filter(m => m.kind === "video").length
     };
     // Also check if the exact number appears in visible text (e.g. "3 items in cart")

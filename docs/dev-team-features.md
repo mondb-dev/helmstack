@@ -271,26 +271,26 @@ const script = await browser.stopRecording(tabId);
 // exports: navigate, click, fill_form, submit steps with real selectors
 ```
 
-### 12. WebSocket + SSE Monitoring ✅
+### 7. WebSocket + SSE Monitoring ✅
 Buffered WebSocket frames and EventSource messages are now exposed alongside console logs and network requests.
 
-### 13. File Upload + Download Hooks ✅
+### 8. File Upload + Download Hooks ✅
 Agents can now set files on live file inputs by selector and inspect tracked downloads per tab.
 
-### 14. Per-Tab Resource Budgets ✅
+### 9. Per-Tab Resource Budgets ✅
 Tabs now support CPU throttling, network shaping, offline mode, and a soft JS heap ceiling that blocks commands when exceeded.
 
-### 15. Geolocation + Timezone Spoofing ✅
+### 10. Geolocation + Timezone Spoofing ✅
 Set or clear per-tab geolocation and timezone overrides through the substrate API.
 
-### 16. Persistent Site Pattern Memory ✅
+### 11. Persistent Site Pattern Memory ✅
 Persist origin-scoped patterns and surface them in each perception packet.
 
-### 17. Multi-Tab Handoff Context ✅
+### 12. Multi-Tab Handoff Context ✅
 Human handoffs now include related tab IDs plus grouping metadata so popup and OAuth flows preserve context.
 
-### 7. Accessibility Audit ✅
-Run a WCAG 2.2-aligned rule set directly against the live AX tree. No external tooling needed — the AX tree is already captured during every perception call.
+### 13. Accessibility Inspector ✅
+Comprehensive WCAG 2.2 audit against the live AX tree and DOM. Returns a 0–100 score, per-violation remediation guidance, principle breakdown, deduplicated rule summaries, and an ordered recommendations list. No external tooling required.
 
 **API**
 ```
@@ -300,14 +300,33 @@ GET /api/tabs/:id/a11y  → A11yAuditReport
 ```typescript
 const report = await browser.auditAccessibility(tabId);
 
-// Print all violations
-for (const v of report.violations) {
-  console.log(`[${v.impact}] ${v.rule}: ${v.description}`);
-  console.log(`  selector: ${v.selector}`);
+// At-a-glance summary
+console.log(`Score: ${report.score}/100`);
+console.log(`${report.violationCounts.critical} critical, ${report.violationCounts.serious} serious, ` +
+            `${report.violationCounts.moderate} moderate, ${report.violationCounts.minor} minor`);
+
+// By WCAG principle
+console.log("Perceivable violations:",    report.byPrinciple.perceivable);
+console.log("Operable violations:",       report.byPrinciple.operable);
+console.log("Understandable violations:", report.byPrinciple.understandable);
+console.log("Robust violations:",         report.byPrinciple.robust);
+
+// Deduplicated rule summaries (ordered by severity)
+for (const rule of report.violatedRules) {
+  console.log(`[WCAG ${rule.wcagCriteria} ${rule.wcagLevel}] ${rule.description} — ${rule.count} instance(s)`);
 }
 
-console.log(`${report.passes} nodes passed, ${report.violations.length} violations`);
-console.log(`Checked ${report.nodeCount} AX nodes`);
+// Individual violations with remediation instructions
+for (const v of report.violations) {
+  console.log(`[${v.impact}] ${v.rule} @ ${v.selector}`);
+  console.log(`  ${v.description}`);
+  console.log(`  Fix: ${v.remediation}`);
+}
+
+// Plain-English action items, ordered by priority
+for (const rec of report.recommendations) {
+  console.log("→", rec);
+}
 ```
 
 **Response shape** (`A11yAuditReport`):
@@ -315,35 +334,128 @@ console.log(`Checked ${report.nodeCount} AX nodes`);
 interface A11yAuditReport {
   tabId: string;
   url: string;
-  capturedAt: number;          // Unix ms
+  capturedAt: number;           // Unix ms
+  score: number;                // 0–100; 100 = zero violations
   violations: A11yViolation[];
-  passes: number;              // nodes that passed all rules
-  nodeCount: number;           // total AX nodes inspected
+  violationCounts: {
+    critical: number; serious: number; moderate: number; minor: number;
+  };
+  byPrinciple: {
+    perceivable: number; operable: number; understandable: number; robust: number;
+  };
+  violatedRules: A11yRuleSummary[];   // deduplicated, sorted by severity
+  recommendations: string[];          // ordered plain-English action items
+  passes: number;               // nodes that passed all applicable rules
+  nodeCount: number;            // total AX nodes inspected
 }
 
 interface A11yViolation {
-  rule: string;       // e.g. "1.1.1-image-alt"
+  rule: string;           // e.g. "1.1.1-image-alt"
   impact: "critical" | "serious" | "moderate" | "minor";
-  selector: string;   // CSS-style selector hint for the offending node
-  description: string;
-  role: string;       // AX role, e.g. "img", "button"
-  name?: string;      // accessible name, if any
+  wcagCriteria: string;   // e.g. "1.1.1"
+  wcagLevel: "A" | "AA" | "AAA";
+  principle: "perceivable" | "operable" | "understandable" | "robust";
+  selector: string;       // CSS-style selector hint for the offending node
+  description: string;    // what is wrong
+  remediation: string;    // how to fix it
+  role: string;           // AX role, e.g. "img", "button"
+  name?: string;          // accessible name, if any
+}
+
+interface A11yRuleSummary {
+  ruleId: string;
+  wcagCriteria: string;
+  wcagLevel: "A" | "AA" | "AAA";
+  principle: "perceivable" | "operable" | "understandable" | "robust";
+  impact: "critical" | "serious" | "moderate" | "minor";
+  description: string;    // plain English rule title
+  count: number;          // total violations for this rule
 }
 ```
 
-**Rules implemented:**
-| Rule ID | WCAG SC | Description |
+**Scoring**
+Score starts at 100 and deductions are applied per severity tier (capped so a single category can't monopolise the total):
+| Severity | Deduction per violation | Tier cap |
 |---|---|---|
-| `1.1.1-image-alt` | 1.1.1 | Images must have a non-empty accessible name |
-| `2.4.6-label` | 2.4.6 | Buttons and links must have a discernible name |
-| `1.3.1-input-label` | 1.3.1 | Text inputs must have an associated label |
-| `4.1.3-disabled-label` | 4.1.3 | Disabled controls still need accessible names |
+| critical | 8 pts | 48 pts |
+| serious | 4 pts | 32 pts |
+| moderate | 2 pts | 12 pts |
+| minor | 1 pt | 5 pts |
 
-**How it works**: CDP `Accessibility.getFullAXTree` returns all AX nodes. Each node is checked against the rule set. Nodes with `backendDOMNodeId` get a stable selector hint; others fall back to a role-based selector.
+**Rules implemented:**
+| Rule ID | WCAG SC | Level | Principle | Impact | Description |
+|---|---|---|---|---|---|
+| `1.1.1-image-alt` | 1.1.1 | A | Perceivable | Critical | Images must have a non-empty accessible name |
+| `1.3.1-input-label` | 1.3.1 | A | Perceivable | Serious | Form inputs must have an accessible label |
+| `1.3.1-table-header` | 1.3.1 | A | Perceivable | Moderate | Table header cells must have a name |
+| `2.4.2-page-title` | 2.4.2 | A | Operable | Serious | Page must have a descriptive `<title>` |
+| `2.4.3-heading-order` | 2.4.3 | A | Operable | Moderate | Heading levels must not skip ranks |
+| `2.4.4-link-purpose` | 2.4.4 | A | Operable | Moderate | Link text must be meaningful out of context |
+| `2.4.6-button-label` | 2.4.6 | AA | Operable | Serious | Buttons must have an accessible name |
+| `2.4.6-link-label` | 2.4.6 | AA | Operable | Serious | Links must have an accessible name |
+| `3.1.1-page-lang` | 3.1.1 | A | Understandable | Serious | HTML element must have a `lang` attribute |
+| `4.1.2-aria-required-attr` | 4.1.2 | A | Robust | Critical | ARIA widget roles must include required states (`aria-checked`, `aria-expanded`, `aria-valuenow`) |
+| `4.1.3-disabled-label` | 4.1.3 | AA | Robust | Minor | Disabled controls must still have an accessible name |
+
+**How it works**: CDP `Accessibility.getFullAXTree` returns all AX nodes; `Runtime.evaluate` checks DOM-level conditions (page lang, page title) that aren't in the AX tree. Ignored nodes are skipped. The heading-order check is stateful — it tracks the last observed heading level as nodes are traversed in tree order and flags any level jump > 1. Score, principle counts, and recommendations are computed in-process with no external dependencies.
+
+> **Related checks** — Text contrast is covered by the element style inspector below. Focus-visible styling (WCAG 2.4.7) and motion sensitivity (2.3.3) still require interactive or visual inspection and are flagged in recommendations when no other violations exist.
 
 ---
 
-### 8. Component Tree Awareness ✅
+### 14. Element Style Inspector ✅
+Inspect computed CSS, layout geometry, box model, and contrast for elements matching a selector. This gives agents direct evidence for design regressions like wrong colors, missing spacing, clipped content, invisible controls, small tap targets, or accidental overlay/z-index problems.
+
+**API**
+```
+POST /api/tabs/:id/styles/inspect  { selector, limit? }             → ElementStyleInspectionReport
+POST /api/tabs/:id/styles/assert   { selector, assertions, limit? } → ElementStyleAssertionReport
+```
+
+**SDK**
+```typescript
+const styles = await browser.inspectElementStyles(tabId, ".primary-button");
+const button = styles.elements[0];
+
+console.log(button.computed["background-color"]);
+console.log(button.box.padding);
+console.log(button.bounds);
+console.log(button.contrast?.ratio);
+console.log(button.issues);
+
+await browser.assertElementStyles(tabId, ".primary-button", [
+  { property: "background-color", equals: "#2563eb" },
+  { property: "border-radius", min: 6 },
+  { property: "font-weight", min: 600 },
+  { property: "text-transform", not: "uppercase" }
+]);
+```
+
+**MCP**
+| Tool | Purpose |
+|---|---|
+| `browser_inspect_element_styles` | Return computed style, bounds, box model, contrast, and issue flags for matched elements |
+| `browser_assert_element_styles` | Check CSS assertions across matched elements without needing a separate test runner |
+
+**Issue flags**
+| Issue | What it detects |
+|---|---|
+| `not_visible` | `display:none`, `visibility:hidden`, or zero opacity |
+| `zero_size` | Element has no rendered width or height |
+| `offscreen` | Element bounds are outside the viewport |
+| `low_contrast` | Text contrast fails WCAG AA for normal-sized text |
+| `small_tap_target` | Interactive element is smaller than the 44×44px recommended target |
+| `clipped_content` | Scroll dimensions exceed the visible box under clipping overflow |
+| `pointer_events_none` | Element ignores pointer input |
+| `high_z_index` | High stacking value that can indicate overlay conflicts |
+| `fixed_or_sticky` | Fixed/sticky positioning that can cover content during scrolling |
+
+**Assertions**
+Each assertion targets one computed CSS property and supports `equals`, `contains`, `matches`, `not`, `min`, `max`, and optional numeric `tolerance`. Color comparisons normalize common RGB/hex forms, and numeric comparisons parse CSS lengths such as `16px`.
+
+---
+
+### 15. Component Tree Awareness ✅
 Probe React, Vue 3, Vue 2, or Svelte devtools hooks and return a lightweight component tree. Runs entirely in-page via `Runtime.evaluate` — no browser extension required.
 
 **API**
@@ -395,7 +507,7 @@ interface ComponentNode {
 
 Props are shallow-stringified (functions shown as `[function]`, objects as `[object]`) to keep payloads small. Tree depth is capped at 30 levels.
 
-### 9. Responsive Multi-Viewport Comparison ✅
+### 16. Responsive Multi-Viewport Comparison ✅
 Capture screenshots at multiple named breakpoints in one call, with optional pairwise pixel diffs. Saves and restores the original viewport.
 
 **API**
@@ -438,7 +550,7 @@ for (const { from, to, diff } of report.diffs) {
 
 ---
 
-### 10. Natural Language Assertions ✅
+### 17. Natural Language Assertions ✅
 
 Point the agent at the live page and assert something in plain English. The server captures a fresh `PageGraph` and runs a heuristic evaluator — no LLM required for the common cases.
 
@@ -500,7 +612,7 @@ if (!result.pass && result.confidence === "low") {
 | Comparative | `"at least 2 forms"`, `"fewer than 5 headings"` |
 | Fallback | Low-confidence result with evidence for LLM forwarding |
 
-### 11. "What Broke?" Post-Deploy Diff ✅
+### 18. "What Broke?" Post-Deploy Diff ✅
 Save a named perception snapshot before a deploy, then diff before/after to get a structured list of every structural change — headings added/removed, forms changed, actions gone, alerts added, title changed. No visual screenshots needed.
 
 **API**
@@ -638,19 +750,19 @@ via a 300 ms `requestAnimationFrame` sample.
 ### Per-node information
 
 Each `ThreeObject` in the scene tree includes:
-- ` e.g. `Mesh`, `PointLight`, `PerspectiveCamera`, `InstancedMesh`type` 
+- `type`, e.g. `Mesh`, `PointLight`, `PerspectiveCamera`, `InstancedMesh`
 - `position / rotation / scale`
 - `castShadow / receiveShadow`
-- ` vertex count, index count, attribute namesgeometry` 
-- ` type, color (hex), opacity, wireframe, side, depthWritematerials` 
-- ` intensity, color, castShadow, distance, anglelightProps` 
-- ` fov, near, far, zoomcameraProps` 
-- ` for `InstancedMesh`instanceCount` 
+- `geometry`: vertex count, index count, attribute names
+- `materials`: type, color (hex), opacity, wireframe, side, depthWrite
+- `lightProps`: intensity, color, castShadow, distance, angle
+- `cameraProps`: fov, near, far, zoom
+- `instanceCount` for `InstancedMesh`
 
 ### AI feedback workflow
 
 ```ts
-import { BrowserClient } from "@openvisual/agent-sdk";
+import { BrowserClient } from "@helmstack/agent-sdk";
 
 const browser = new BrowserClient();
 const report = await browser.captureThreeJsScene(tabId);

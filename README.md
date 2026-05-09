@@ -86,7 +86,7 @@ Each tab can expose multiple capability providers:
 
 Today:
 - `dom` is implemented
-- `webmcp` is scaffolded for detection and future invocation
+- `webmcp` detection, tool enumeration, validation, and invocation are implemented for `navigator.webMcp`, `window.WebMCP` / `window.__WEB_MCP__`, and `script[type="application/webmcp+json"]` endpoint manifests
 
 ## Repository Layout
 
@@ -130,10 +130,11 @@ Today:
 - media perception — video/audio state capture (`ObservedMedia` in `PageGraph`)
 - action retry/recovery — `withDomRetry()` with exponential backoff (3 attempts)
 
-**Dev tooling (all exposed via REST + SDK)**
+**Dev tooling (exposed via REST, SDK, and MCP)**
 - responsive multi-viewport capture suite — screenshot at mobile/tablet/desktop/4K simultaneously, with optional diffs
 - performance metrics — Core Web Vitals + extended CDP metrics (LCP, CLS, FID/INP, TBT, TTI, JS heap, layout counts)
 - accessibility audit — WCAG 2.2-aligned rule set against the live AX tree (img alt, button/link labels, input labels)
+- element style inspector — computed CSS, box model, contrast ratio, viewport bounds, and issue detection
 - component tree capture — React 16–18, Vue 2/3, Svelte detection with depth-limited prop extraction
 - visual snapshot diff — pixel-level diff with blended overlay, bounding-box change regions, named snapshots
 - "What Broke?" perception diff — structured before/after `PageGraph` comparison (headings, forms, actions, alerts, title)
@@ -187,6 +188,27 @@ The browser is now running and waiting on `127.0.0.1:7070`.
 | `browser_generate_totp` | Generate a TOTP 2FA code for an account |
 | `browser_get_intent` / `browser_set_intent` | Read/write the task panel intent |
 | `browser_log` | Write a message to the HelmStack terminal panel |
+| `browser_get_tab_logs` / `browser_clear_tab_logs` | Inspect or clear console, network, WebSocket, EventSource, and JS error logs |
+| `browser_network_audit` | Summarise response headers, TLS details, cache status, and failed requests |
+| `browser_get_network_mock` / `browser_enable_network_mock` / `browser_disable_network_mock` | Inspect or control request mocking |
+| `browser_capture_named_screenshot` / `browser_diff_screenshots` | Capture named screenshots and compare visual changes |
+| `browser_list_screenshots` / `browser_delete_screenshot` | Manage cached screenshot snapshots |
+| `browser_viewport_suite` | Capture responsive screenshots across viewport presets |
+| `browser_performance` / `browser_a11y_audit` | Capture performance metrics and accessibility findings |
+| `browser_inspect_element_styles` | Inspect computed styles, box model, contrast, bounds, and style issues for matched elements |
+| `browser_assert_element_styles` | Assert CSS values or numeric thresholds for matched elements |
+| `browser_component_tree` / `browser_threejs_scene` | Inspect framework component trees and Three.js scenes |
+| `browser_assert` | Evaluate a natural-language assertion against page evidence |
+| `browser_get_recording` / `browser_start_recording` / `browser_stop_recording` | Record browser commands and export a replay script |
+| `browser_get_site_patterns` / `browser_add_site_patterns` / `browser_set_site_patterns` / `browser_clear_site_patterns` | Manage remembered site patterns |
+| `browser_set_file_input_files` | Attach local files to a page file input |
+| `browser_list_downloads` / `browser_clear_downloads` | Inspect and clear tracked downloads |
+| `browser_get_resource_budget` / `browser_set_resource_budget` / `browser_clear_resource_budget` | Control CPU, network, and heap budgets |
+| `browser_get_location_override` / `browser_set_location_override` / `browser_clear_location_override` | Control geolocation, timezone, and locale overrides |
+| `browser_capture_storage` / `browser_get_storage` / `browser_set_storage` / `browser_clear_storage` | Inspect and mutate local/session storage |
+| `browser_get_cookies` / `browser_set_cookie` / `browser_delete_cookie` / `browser_clear_cookies` | Inspect and mutate cookies |
+| `browser_save_perception_snapshot` / `browser_diff_perception` | Save and compare semantic page snapshots |
+| `browser_list_perception_snapshots` / `browser_delete_perception_snapshot` | Manage cached perception snapshots |
 
 ---
 
@@ -344,6 +366,7 @@ Environment variables:
 |----------|---------|-------------|
 | `HELMSTACK_PORT` | `7070` | Port the HelmStack desktop app is listening on |
 | `HELMSTACK_HOST` | `127.0.0.1` | Host (never change unless you know what you're doing) |
+| `HELMSTACK_AUTH_TOKEN` | unset | Optional shared token. If the desktop app is launched with this set, MCP/SDK clients must send the same value. |
 
 ---
 
@@ -513,6 +536,20 @@ for (const v of report.violations) {
 }
 ```
 
+### Element Style Inspector
+
+```typescript
+const styles = await browser.inspectElementStyles(tabId, ".primary-button");
+console.log(styles.elements[0].computed["background-color"]);
+console.log(styles.elements[0].contrast?.ratio);
+
+await browser.assertElementStyles(tabId, ".primary-button", [
+  { property: "background-color", equals: "#2563eb" },
+  { property: "border-radius", min: 6 },
+  { property: "font-weight", min: 600 }
+]);
+```
+
 ### Component Tree (React / Vue / Svelte)
 
 ```typescript
@@ -523,10 +560,10 @@ console.log(`Framework: ${ct.framework}, ${ct.nodeCount} components`);
 ### Visual Snapshot Diff
 
 ```typescript
-const before = await browser.takeScreenshot(tabId, "before-deploy");
+await browser.captureNamedScreenshot(tabId, "before-deploy");
 // … make changes …
-const after  = await browser.takeScreenshot(tabId, "after-deploy");
-const diff   = await browser.diffScreenshots("before-deploy", "after-deploy");
+await browser.captureNamedScreenshot(tabId, "after-deploy");
+const diff = await browser.diffScreenshots("before-deploy", "after-deploy");
 console.log(`${diff.diffPixelCount} changed pixels across ${diff.diffRegions.length} regions`);
 ```
 
@@ -573,7 +610,6 @@ See [`docs/dev-team-features.md`](docs/dev-team-features.md) for the complete AP
 
 ## Not Implemented Yet
 
-- real WebMCP invocation (detection scaffolded, invocation pending)
 - packaged OS installers (macOS .dmg, Windows .exe, Linux .AppImage)
 
 ## Platforms
@@ -773,8 +809,8 @@ npm run build
 
 ## Immediate Next Steps
 
-1. **WebMCP invocation** — real site-provided structured capabilities (detection is scaffolded, invocation is not)
-2. **Interaction recorder** — record agent actions on a tab and export as a replayable HelmStack test script
+1. **Origin allowlisting UI** — optional browser-managed allowlist for REST clients outside the stdio MCP bridge
+2. **MCP resources/prompts** — expose large cached artifacts as MCP resources and add reusable prompts for audits/regressions
 3. **LLM agent examples** — OpenAI, Anthropic, LangGraph integration demos beyond the basic intent agent
 4. **Packaged installers** — macOS .dmg, Windows .exe, Linux .AppImage/.deb
 5. **Multi-account session isolation** — separate cookie jars per account/profile

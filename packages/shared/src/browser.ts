@@ -226,28 +226,192 @@ export type PerformanceReport = {
 
 export type A11yImpact = "critical" | "serious" | "moderate" | "minor";
 
+export type A11yWcagPrinciple = "perceivable" | "operable" | "understandable" | "robust";
+
 export type A11yViolation = {
+  /** Rule identifier, e.g. "1.1.1-image-alt". */
   rule: string;
   impact: A11yImpact;
+  /** WCAG success criterion, e.g. "1.1.1". */
+  wcagCriteria: string;
+  /** Conformance level: A, AA, or AAA. */
+  wcagLevel: "A" | "AA" | "AAA";
+  /** Which of the four WCAG principles this falls under. */
+  principle: A11yWcagPrinciple;
   /** CSS-style selector hint identifying the offending node. */
   selector: string;
   /** Human-readable explanation of why this is a violation. */
   description: string;
+  /** Specific remediation instructions for this violation. */
+  remediation: string;
   /** AX role of the node, e.g. "button", "img". */
   role: string;
   /** Accessible name of the node, if present. */
   name?: string;
 };
 
+/** Per-rule summary across all violations of that rule. */
+export type A11yRuleSummary = {
+  ruleId: string;
+  wcagCriteria: string;
+  wcagLevel: "A" | "AA" | "AAA";
+  principle: A11yWcagPrinciple;
+  impact: A11yImpact;
+  /** Plain English description of the rule. */
+  description: string;
+  /** Total number of violations for this rule. */
+  count: number;
+};
+
 export type A11yAuditReport = {
   tabId: TabId;
   url: string;
   capturedAt: number;
+  /**
+   * Accessibility score 0–100.
+   * 100 = zero violations. Weighted by severity:
+   * critical × 8, serious × 4, moderate × 2, minor × 1 (capped per tier).
+   */
+  score: number;
   violations: A11yViolation[];
-  /** Number of checked nodes that passed all rules. */
+  /** Violation counts by severity level. */
+  violationCounts: {
+    critical: number;
+    serious: number;
+    moderate: number;
+    minor: number;
+  };
+  /** Violation counts grouped by WCAG principle. */
+  byPrinciple: Record<A11yWcagPrinciple, number>;
+  /** Deduplicated summaries for each rule that produced violations. */
+  violatedRules: A11yRuleSummary[];
+  /** Ordered list of top-priority plain-English recommendations. */
+  recommendations: string[];
+  /** Number of checked nodes that passed all applicable rules. */
   passes: number;
   /** Total AX nodes inspected. */
   nodeCount: number;
+};
+
+// ── Element Style Inspector ────────────────────────────────────────────────
+
+export type ElementStyleIssueSeverity = "info" | "warning" | "error";
+
+export type ElementStyleIssueKind =
+  | "not_visible"
+  | "zero_size"
+  | "offscreen"
+  | "low_contrast"
+  | "small_tap_target"
+  | "clipped_content"
+  | "pointer_events_none"
+  | "high_z_index"
+  | "fixed_or_sticky";
+
+export type ElementStyleRect = {
+  x: number;
+  y: number;
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
+export type ElementBoxEdges = {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+};
+
+export type ElementStyleIssue = {
+  kind: ElementStyleIssueKind;
+  severity: ElementStyleIssueSeverity;
+  message: string;
+  property?: string;
+  value?: string | number | boolean;
+};
+
+export type ElementContrastInfo = {
+  foreground: string;
+  background: string;
+  ratio: number;
+  fontSizePx: number;
+  fontWeight: string;
+  passesAA: boolean;
+  passesLargeTextAA: boolean;
+};
+
+export type ElementStyleInspection = {
+  index: number;
+  selectorHint: string;
+  tagName: string;
+  id?: string;
+  className?: string;
+  role?: string;
+  ariaLabel?: string;
+  text?: string;
+  isVisible: boolean;
+  inViewport: boolean;
+  bounds: ElementStyleRect;
+  box: {
+    margin: ElementBoxEdges;
+    border: ElementBoxEdges;
+    padding: ElementBoxEdges;
+    content: {
+      width: number;
+      height: number;
+    };
+  };
+  computed: Record<string, string>;
+  contrast?: ElementContrastInfo;
+  issues: ElementStyleIssue[];
+};
+
+export type ElementStyleInspectionReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  selector: string;
+  matchedCount: number;
+  inspectedCount: number;
+  elements: ElementStyleInspection[];
+  warnings: string[];
+};
+
+export type StyleAssertion = {
+  property: string;
+  equals?: string | number;
+  contains?: string;
+  matches?: string;
+  not?: string | number;
+  min?: number;
+  max?: number;
+  tolerance?: number;
+};
+
+export type StyleAssertionCheck = {
+  elementIndex: number;
+  selectorHint: string;
+  property: string;
+  actual?: string;
+  expected: string;
+  pass: boolean;
+  message: string;
+};
+
+export type ElementStyleAssertionReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  selector: string;
+  pass: boolean;
+  matchedCount: number;
+  checks: StyleAssertionCheck[];
+  inspected: ElementStyleInspection[];
+  issues: ElementStyleIssue[];
 };
 
 // ── Component Tree ────────────────────────────────────────────────────────

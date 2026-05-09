@@ -73,7 +73,8 @@ import { createBrowserClient } from "@helmstack/agent-sdk";
 const browser = createBrowserClient({
   host: "127.0.0.1",    // default
   port: 7070,            // default
-  timeout: 30000         // default: 30s
+  timeout: 30000,        // default: 30s
+  authToken: process.env.HELMSTACK_AUTH_TOKEN // optional
 });
 ```
 
@@ -477,6 +478,25 @@ for (const v of report.violations) {
 }
 ```
 
+### Element Style Inspector
+
+```typescript
+const styles = await browser.inspectElementStyles(tabId, ".primary-button");
+const button = styles.elements[0];
+
+console.log(button.bounds);
+console.log(button.box.padding);
+console.log(button.computed["background-color"]);
+console.log(button.contrast?.ratio);
+console.log(button.issues);
+
+await browser.assertElementStyles(tabId, ".primary-button", [
+  { property: "background-color", equals: "#2563eb" },
+  { property: "border-radius", min: 6 },
+  { property: "font-weight", min: 600 }
+]);
+```
+
 ### Component Tree
 
 ```typescript
@@ -488,13 +508,13 @@ console.log(`Framework: ${ct.framework}, ${ct.nodeCount} components`);
 ### Visual Snapshot Diff
 
 ```typescript
-const before = await browser.takeScreenshot(tabId, "before");
+await browser.captureNamedScreenshot(tabId, "before");
 // … make changes …
-const after  = await browser.takeScreenshot(tabId, "after");
-const diff   = await browser.diffScreenshots("before", "after");
+await browser.captureNamedScreenshot(tabId, "after");
+const diff = await browser.diffScreenshots("before", "after");
 console.log(`${diff.diffPixelCount} changed pixels`);
 console.log(`${diff.diffRegions.length} change regions`);
-// diff.overlayPng — blended overlay (40% original + 60% red tint)
+// diff.diffImageData — blended overlay (40% original + 60% red tint)
 ```
 
 ### Perception Diff ("What Broke?")

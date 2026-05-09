@@ -33,7 +33,9 @@ import * as http from "node:http";
 export type {
   A11yAuditReport,
   A11yImpact,
+  A11yRuleSummary,
   A11yViolation,
+  A11yWcagPrinciple,
   AccountInput,
   AccountSummary,
   AccountUpdate,
@@ -50,6 +52,8 @@ export type {
   CookieEntry,
   DownloadEntry,
   DiffRegion,
+  ElementStyleAssertionReport,
+  ElementStyleInspectionReport,
   EventSourceMessageEntry,
   FileUploadTarget,
   HumanHandoffRecord,
@@ -68,6 +72,7 @@ export type {
   PerformanceReport,
   ScreenshotDiff,
   SiteCapabilityManifest,
+  StyleAssertion,
   StorageArea,
   StorageEntry,
   StorageReport,
@@ -106,6 +111,8 @@ import type {
   ComponentTreeReport,
   CookieEntry,
   DownloadEntry,
+  ElementStyleAssertionReport,
+  ElementStyleInspectionReport,
   HumanHandoffRecord,
   LocationOverride,
   NetworkInterceptRule,
@@ -118,6 +125,7 @@ import type {
   ResourceBudget,
   ScreenshotDiff,
   SiteCapabilityManifest,
+  StyleAssertion,
   StorageArea,
   FileUploadTarget,
   StorageEntry,
@@ -140,6 +148,11 @@ export type BrowserClientOptions = {
   host?: string;
   /** Request timeout in ms. Default: 30_000 */
   timeout?: number;
+  /**
+   * Optional local REST auth token. Must match HELMSTACK_AUTH_TOKEN on the
+   * desktop app when that environment variable is set.
+   */
+  authToken?: string;
   /**
    * Unique identifier for this agent instance.
    * When set, the server enforces tab ownership: this agent only sees and
@@ -170,12 +183,14 @@ export class BrowserClient {
   private readonly host: string;
   private readonly port: number;
   private readonly timeout: number;
+  private readonly authToken: string | undefined;
   private readonly agentId: string | undefined;
 
   constructor(opts: BrowserClientOptions = {}) {
     this.host    = opts.host    ?? "127.0.0.1";
     this.port    = opts.port    ?? 7070;
     this.timeout = opts.timeout ?? 30_000;
+    this.authToken = opts.authToken;
     this.agentId = opts.agentId;
   }
 
@@ -503,19 +518,87 @@ export class BrowserClient {
   }
 
   /**
-   * Run a WCAG 2.2-aligned accessibility audit against the live AX tree.
-   * No external tooling required — checks are derived from the AX tree
-   * already captured during perception.
+   * Run a comprehensive WCAG 2.2-aligned accessibility audit against the live
+   * AX tree and select DOM checks. Covers 12 rules across all four WCAG
+   * principles. Returns per-violation remediation guidance, a 0–100 score,
+   * principle breakdown, deduplicated rule summaries, and top recommendations.
+   *
+   * Rules checked:
+   * - 1.1.1 (A)  Images must have a non-empty accessible name
+   * - 1.3.1 (A)  Form inputs must have an accessible label
+   * - 1.3.1 (A)  Table header cells must have a name
+   * - 2.4.2 (A)  Page must have a descriptive <title>
+   * - 2.4.3 (A)  Heading levels must not skip ranks
+   * - 2.4.4 (A)  Link text must be meaningful out of context
+   * - 2.4.6 (AA) Buttons must have an accessible name
+   * - 2.4.6 (AA) Links must have an accessible name
+   * - 3.1.1 (A)  HTML element must have a lang attribute
+   * - 4.1.2 (A)  ARIA widget roles must include required state attributes
+   * - 4.1.3 (AA) Disabled controls must still have an accessible name
    *
    * @example
    * const report = await browser.auditAccessibility(tabId);
-   * for (const v of report.violations) {
-   *   console.log(`[${v.impact}] ${v.rule}: ${v.description} (${v.selector})`);
+   * console.log(`Score: ${report.score}/100`);
+   * console.log(`${report.violationCounts.critical} critical, ${report.violationCounts.serious} serious`);
+   *
+   * for (const rule of report.violatedRules) {
+   *   console.log(`[${rule.wcagLevel}] ${rule.wcagCriteria} — ${rule.description} (${rule.count} instances)`);
    * }
-   * console.log(`${report.passes} nodes passed, ${report.violations.length} violations`);
+   * for (const rec of report.recommendations) {
+   *   console.log("→", rec);
+   * }
    */
   async auditAccessibility(tabId: TabId): Promise<A11yAuditReport> {
     return this.get(`/api/tabs/${tabId}/a11y`);
+  }
+
+  /**
+   * Inspect computed styles, box model, contrast, viewport bounds, and common
+   * style issues for elements matching a selector.
+   *
+   * @example
+   * const report = await browser.inspectElementStyles(tabId, ".primary-button");
+   * console.log(report.elements[0].computed["background-color"]);
+   * console.log(report.elements[0].contrast?.ratio);
+   */
+  async inspectElementStyles(
+    tabId: TabId,
+    selector: string,
+    options: { limit?: number } = {}
+  ): Promise<ElementStyleInspectionReport> {
+    return this.post(`/api/tabs/${tabId}/styles/inspect`, { selector, ...options });
+  }
+
+  /**
+   * Assert computed style expectations for every matched element. Supports
+   * exact values, substring checks, regex matches, numeric min/max thresholds,
+   * and optional numeric tolerance.
+   *
+   * @example
+   * await browser.assertElementStyles(tabId, ".primary-button", [
+   *   { property: "background-color", equals: "#2563eb" },
+   *   { property: "border-radius", min: 6 },
+   *   { property: "font-weight", min: 600 }
+   * ]);
+   */
+  async assertElementStyles(
+    tabId: TabId,
+    selector: string,
+    assertions: StyleAssertion[],
+    options: { limit?: number; throw?: boolean } = {}
+  ): Promise<ElementStyleAssertionReport> {
+    const result = await this.post<ElementStyleAssertionReport>(`/api/tabs/${tabId}/styles/assert`, {
+      selector,
+      assertions,
+      limit: options.limit
+    });
+    if (!result.pass && options.throw !== false) {
+      const failed = result.checks.filter((check) => !check.pass).slice(0, 5).map((check) => check.message).join("; ");
+      const err = new Error(`Style assertion failed for ${selector}: ${failed || "no matched elements or no passing checks"}`);
+      err.name = "AssertionError";
+      throw err;
+    }
+    return result;
   }
 
   /**
@@ -761,7 +844,7 @@ export class BrowserClient {
       if (!alive) return;
 
       const req = http.get(
-        { host: this.host, port: this.port, path: "/api/stream", headers: this.agentId ? { "X-Agent-ID": this.agentId } : undefined },
+        { host: this.host, port: this.port, path: "/api/stream", headers: this.buildHeaders(false) },
         (res) => {
           let buf = "";
           let eventType = "message";
@@ -835,7 +918,7 @@ export class BrowserClient {
         "Content-Type": "application/json"
       };
       if (bodyStr) headers["Content-Length"] = Buffer.byteLength(bodyStr);
-      if (this.agentId) headers["X-Agent-ID"] = this.agentId;
+      Object.assign(headers, this.buildHeaders(false));
 
       const req = http.request(
         {
@@ -873,6 +956,17 @@ export class BrowserClient {
       if (bodyStr) req.write(bodyStr);
       req.end();
     });
+  }
+
+  private buildHeaders(includeJson = true): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (includeJson) {
+      headers["Accept"] = "application/json";
+      headers["Content-Type"] = "application/json";
+    }
+    if (this.agentId) headers["X-Agent-ID"] = this.agentId;
+    if (this.authToken) headers["Authorization"] = `Bearer ${this.authToken}`;
+    return headers;
   }
 }
 

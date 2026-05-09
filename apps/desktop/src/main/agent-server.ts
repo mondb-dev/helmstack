@@ -53,6 +53,8 @@ type SseClient = { res: http.ServerResponse; agentId: string | null };
  * POST /api/tabs/:id/viewport-suite      { presets?, includeDiffs? } → ViewportSuiteReport
  * GET  /api/tabs/:id/performance         → PerformanceReport
  * GET  /api/tabs/:id/a11y               → A11yAuditReport
+ * POST /api/tabs/:id/styles/inspect     { selector, limit? } → ElementStyleInspectionReport
+ * POST /api/tabs/:id/styles/assert      { selector, assertions, limit? } → ElementStyleAssertionReport
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
  * GET  /api/tabs/:id/threejs-scene      → ThreeSceneReport
  * POST /api/tabs/:id/assert            { assertion: string } → AssertionResult
@@ -104,7 +106,8 @@ export class AgentServer {
   constructor(
     private readonly tabs: TabManager,
     private readonly extensions: ExtensionManager,
-    readonly port: number = 7070
+    readonly port: number = 7070,
+    private readonly authToken: string | null = process.env.HELMSTACK_AUTH_TOKEN || null
   ) {
     this.server = http.createServer(this.handle.bind(this));
 
@@ -139,7 +142,7 @@ export class AgentServer {
   stop(): Promise<void> {
     return new Promise((resolve) => {
       for (const client of this.clients) {
-        client.end();
+        client.res.end();
       }
       this.server.close(() => resolve());
     });
@@ -227,11 +230,17 @@ export class AgentServer {
   private handle(req: http.IncomingMessage, res: http.ServerResponse) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Agent-ID");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Agent-ID, X-HelmStack-Token");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    if (!this.isAuthorized(req)) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
       return;
     }
 
@@ -565,6 +574,39 @@ export class AgentServer {
       return json(res, await this.tabs.auditAccessibility(a11yMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
     }
 
+    // ── Element style inspector ───────────────────────────────────────────────
+    const styleInspectMatch = p.match(/^\/api\/tabs\/([^/]+)\/styles\/inspect$/);
+    if (method === "POST" && styleInspectMatch) {
+      const body = await readBody(req);
+      if (typeof body.selector !== "string" || !body.selector.trim()) {
+        return error(res, 400, "selector string is required");
+      }
+      const limit = typeof body.limit === "number" ? body.limit : undefined;
+      return json(res, await this.tabs.inspectElementStyles(
+        styleInspectMatch[1] as import("../../../../packages/shared/src/index.js").TabId,
+        body.selector,
+        { limit }
+      ));
+    }
+
+    const styleAssertMatch = p.match(/^\/api\/tabs\/([^/]+)\/styles\/assert$/);
+    if (method === "POST" && styleAssertMatch) {
+      const body = await readBody(req);
+      if (typeof body.selector !== "string" || !body.selector.trim()) {
+        return error(res, 400, "selector string is required");
+      }
+      if (!Array.isArray(body.assertions)) {
+        return error(res, 400, "assertions array is required");
+      }
+      const limit = typeof body.limit === "number" ? body.limit : undefined;
+      return json(res, await this.tabs.assertElementStyles(
+        styleAssertMatch[1] as import("../../../../packages/shared/src/index.js").TabId,
+        body.selector,
+        body.assertions as import("../../../../packages/shared/src/index.js").StyleAssertion[],
+        { limit }
+      ));
+    }
+
     // ── Component tree ────────────────────────────────────────────────────────
     const ctreeMatch = p.match(/^\/api\/tabs\/([^/]+)\/component-tree$/);
     if (method === "GET" && ctreeMatch) {
@@ -713,7 +755,8 @@ export class AgentServer {
         return json(res, { ok: true });
       }
       if (method === "DELETE") {
-        const body = req.headers["content-length"] !== "0" ? await readBody(req).catch(() => ({})) : {};
+        const body: Record<string, unknown> =
+          req.headers["content-length"] !== "0" ? await readBody(req).catch(() => ({})) : {};
         const keys = Array.isArray(body.keys) ? body.keys as string[] : undefined;
         await this.tabs.clearStorage(tid, area, keys);
         return json(res, { ok: true });
@@ -780,6 +823,18 @@ export class AgentServer {
 
     // ── 404 ──────────────────────────────────────────────────────────────────
     return error(res, 404, "Not found");
+  }
+
+  private isAuthorized(req: http.IncomingMessage): boolean {
+    if (!this.authToken) return true;
+
+    const tokenHeader = req.headers["x-helmstack-token"];
+    const token = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
+    if (token === this.authToken) return true;
+
+    const authHeader = req.headers.authorization;
+    const auth = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+    return auth === `Bearer ${this.authToken}`;
   }
 }
 
