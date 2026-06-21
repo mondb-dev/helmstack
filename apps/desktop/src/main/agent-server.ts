@@ -1,19 +1,68 @@
 import http from "node:http";
 
 import type {
-  AccountInput,
   AccountUpdate,
   AgentLogEntry,
   BrowserOutputCommand,
+  CookieEntry,
+  DiffRegion,
   HumanHandoffRecord,
+  LocationOverride,
+  MediaEmulation,
+  StorageArea,
+  StyleAssertion,
   TabId,
   TabSummary,
-  VaultSecretInput,
+  ViewportPresetName,
 } from "../../../../packages/shared/src/index.js";
 import type { TabManager } from "./tab-manager.js";
 import type { ExtensionManager } from "./extension-manager.js";
+import { parseAccountInput, parseNetworkMockRules, parseResourceBudget, parseViewportBody } from "./request-validation.js";
 
 type SseClient = { res: http.ServerResponse; agentId: string | null };
+
+/** Loopback host names that are safe for a localhost-only control plane. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
+/** Extract the bare hostname from a `Host`/`Origin` authority, handling IPv6 brackets. */
+export function parseHostname(authority: string | undefined): string | null {
+  if (!authority) return null;
+  const trimmed = authority.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("[")) {
+    const end = trimmed.indexOf("]");
+    return end > 1 ? trimmed.slice(1, end).toLowerCase() : null;
+  }
+  return trimmed.split(":")[0]!.toLowerCase();
+}
+
+/**
+ * DNS-rebinding guard: the `Host` header must resolve to a loopback name.
+ * A malicious page that rebinds a domain to 127.0.0.1 still sends its own
+ * domain in `Host`, so rejecting non-loopback hosts blocks the attack.
+ */
+export function isLoopbackHostHeader(hostHeader: string | undefined): boolean {
+  const host = parseHostname(hostHeader);
+  return host !== null && LOOPBACK_HOSTS.has(host);
+}
+
+/**
+ * Cross-origin guard. Non-browser clients (Node, curl, the SDK) send no
+ * `Origin` header and are allowed. Browsers always attach `Origin` on
+ * cross-origin requests, so any web page hitting the control plane is
+ * rejected unless it is itself served from loopback.
+ */
+export function isAllowedOrigin(originHeader: string | undefined): boolean {
+  if (!originHeader) return true;
+  if (originHeader === "null") return false; // opaque origin (sandboxed iframe, data: URL)
+  try {
+    // URL.hostname keeps IPv6 brackets ("[::1]"); strip them before matching.
+    const hostname = new URL(originHeader).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    return LOOPBACK_HOSTS.has(hostname);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * HTTP + Server-Sent Events server that exposes the browser substrate to
@@ -45,19 +94,31 @@ type SseClient = { res: http.ServerResponse; agentId: string | null };
  * PUT  /api/intent                          { intent: string }
  * POST /api/log                             { level?, message }
  * GET  /api/tabs/:id/logs                  → TabLogSnapshot
+ * GET  /api/tabs/:id/har                   → HarArchive (HAR 1.2)
  * DELETE /api/tabs/:id/logs               clears buffered logs * GET  /api/tabs/:id/mock                 → { rules }
  * POST /api/tabs/:id/mock                 { rules: NetworkInterceptRule[] }
  * DELETE /api/tabs/:id/mock              disables interception
  * POST /api/tabs/:id/screenshot/named    { snapshotId } → PageScreenshot
- * POST /api/screenshots/diff             { beforeId, afterId } → ScreenshotDiff
- * POST /api/tabs/:id/viewport-suite      { presets?, includeDiffs? } → ViewportSuiteReport
+ * POST /api/screenshots/diff             { beforeId, afterId, ignoreRegions?, perceptual?, threshold? } → ScreenshotDiff
+ * POST /api/tabs/:id/changed-elements     { regions: DiffRegion[] } → ChangedElement[]
+ * POST /api/tabs/:id/viewport-suite      { presets?, includeDiffs?, includeLayoutIssues? } → ViewportSuiteReport
  * GET  /api/tabs/:id/performance         → PerformanceReport
+ * GET  /api/tabs/:id/health               → HealthReport (aggregated scorecard)
  * GET  /api/tabs/:id/a11y               → A11yAuditReport
+ * GET  /api/tabs/:id/focus-order        → FocusOrderReport
  * POST /api/tabs/:id/styles/inspect     { selector, limit? } → ElementStyleInspectionReport
  * POST /api/tabs/:id/styles/assert      { selector, assertions, limit? } → ElementStyleAssertionReport
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
+ * GET  /api/tabs/:id/design-tokens      → DesignTokensReport
+ * GET  /api/tabs/:id/component-sources  → ComponentSourceReport (click-to-component)
+ * GET  /api/tabs/:id/layout-issues      → LayoutIssuesReport
+ * GET  /api/tabs/:id/media-state        → MediaStateReport
+ * GET  /api/tabs/:id/mutations          → MutationTimelineReport (?durationMs=)
  * GET  /api/tabs/:id/threejs-scene      → ThreeSceneReport
  * POST /api/tabs/:id/assert            { assertion: string } → AssertionResult
+ * GET  /api/tabs/:id/watches           → AssertionWatch[]
+ * POST /api/tabs/:id/watches           { assertion: string } → AssertionWatch
+ * DELETE /api/tabs/:id/watches/:wid    → { removed: boolean }
  * GET  /api/tabs/:id/recording          → RecordingSession | null
  * POST /api/tabs/:id/recording/start    → RecordingSession
  * POST /api/tabs/:id/recording/stop     → RecordingStopResult
@@ -73,6 +134,9 @@ type SseClient = { res: http.ServerResponse; agentId: string | null };
  * GET  /api/tabs/:id/location           → LocationOverride | null
  * POST /api/tabs/:id/location           → LocationOverride
  * DELETE /api/tabs/:id/location         clears geolocation/timezone override
+ * GET  /api/tabs/:id/media              → MediaEmulation | null
+ * POST /api/tabs/:id/media              → MediaEmulation (colorScheme/reducedMotion/forcedColors/media)
+ * DELETE /api/tabs/:id/media            clears CSS media emulation
  * GET  /api/tabs/:id/storage            → StorageReport (all areas)
  * GET  /api/tabs/:id/storage/:area      area=local|session → StorageEntry[]  (optional ?key=X)
  * POST /api/tabs/:id/storage/:area      { entries: Record<string,string> } → { ok: true }
@@ -91,7 +155,7 @@ type SseClient = { res: http.ServerResponse; agentId: string | null };
  * SSE stream
  * ----------
  * GET  /api/stream
- * Events: tabs_changed | page_observed | approval_queued | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log
+ * Events: tabs_changed | page_observed | approval_queued | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed
  */
 export class AgentServer {
   private readonly server: http.Server;
@@ -125,8 +189,15 @@ export class AgentServer {
       }
     });
     tabs.onPageObserved((o) => this.broadcastTabEvent("page_observed", o, o.tabId));
+    tabs.onAssertionTransition((t) => this.broadcastTabEvent("assertion_changed", t, t.tabId));
     tabs.onApprovalQueued((a) => this.broadcastTabEvent("approval_queued", a, a.tabId));
     tabs.onHandoffRequested((h: HumanHandoffRecord) => this.broadcastTabEvent("human_handoff_requested", h, h.tabId));
+  }
+
+  /** The actual TCP port the server is bound to (useful when constructed with port 0). */
+  get boundPort(): number | null {
+    const addr = this.server.address();
+    return addr && typeof addr === "object" ? addr.port : null;
   }
 
   start(): Promise<void> {
@@ -227,14 +298,41 @@ export class AgentServer {
     return tabs.filter(t => this.isTabAccessible(t.id, agentId));
   }
 
+  /** The active REST auth token, or null when auth is disabled. */
+  getAuthToken(): string | null {
+    return this.authToken;
+  }
+
   private handle(req: http.IncomingMessage, res: http.ServerResponse) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Agent-ID, X-HelmStack-Token");
+    const origin = headerValue(req.headers.origin);
+
+    // Echo CORS headers only for loopback origins — never a wildcard. A non
+    // loopback origin gets no Access-Control-Allow-Origin, so even if the
+    // request slips through, a browser cannot read the response.
+    if (origin && isAllowedOrigin(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Agent-ID, X-HelmStack-Token");
+    }
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // DNS-rebinding guard: reject any request whose Host is not loopback.
+    if (!isLoopbackHostHeader(headerValue(req.headers.host))) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Forbidden: non-loopback Host header" }));
+      return;
+    }
+
+    // Cross-origin guard: reject browser-originated cross-site requests.
+    if (!isAllowedOrigin(origin)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Forbidden: cross-origin request rejected" }));
       return;
     }
 
@@ -269,7 +367,23 @@ export class AgentServer {
       const agentId = this.agentIdOf(req);
       const client: SseClient = { res, agentId };
       this.clients.add(client);
-      req.on("close", () => this.clients.delete(client));
+
+      // Heartbeat: a comment frame every 25s keeps idle connections alive
+      // through proxies/load balancers and lets us detect dead sockets.
+      const heartbeat = setInterval(() => {
+        try {
+          res.write(": ping\n\n");
+        } catch {
+          clearInterval(heartbeat);
+          this.clients.delete(client);
+        }
+      }, 25_000);
+      heartbeat.unref?.();
+
+      req.on("close", () => {
+        clearInterval(heartbeat);
+        this.clients.delete(client);
+      });
       return;
     }
 
@@ -359,7 +473,10 @@ export class AgentServer {
 
     const screenshotMatch = p.match(/^\/api\/tabs\/([^/]+)\/screenshot$/);
     if (method === "GET" && screenshotMatch) {
-      const shot = await this.tabs.captureScreenshot(screenshotMatch[1] as TabId);
+      const shot = await this.tabs.captureScreenshot(screenshotMatch[1] as TabId, {
+        fullPage: url.searchParams.get("fullPage") === "true",
+        ...(url.searchParams.get("selector") ? { selector: url.searchParams.get("selector")! } : {})
+      });
       // Optionally serve raw PNG for easier consumption
       const accept = req.headers["accept"] ?? "";
       if (accept.includes("image/png")) {
@@ -372,11 +489,11 @@ export class AgentServer {
 
     const viewportMatch = p.match(/^\/api\/tabs\/([^/]+)\/viewport$/);
     if (method === "POST" && viewportMatch) {
-      const body = await readBody(req);
-      const { width, height, mobile } = body as { width: number; height: number; mobile?: boolean };
-      if (typeof width !== "number" || typeof height !== "number") return error(res, 400, "width and height are required numbers");
-      await this.tabs.setEmulatedViewport(viewportMatch[1] as TabId, width, height, mobile ?? false);
-      return json(res, { ok: true, width, height, mobile: mobile ?? false });
+      const parsed = parseViewportBody(await readBody(req));
+      if (!parsed.ok) return error(res, 400, parsed.error);
+      const { width, height, mobile } = parsed.value;
+      await this.tabs.setEmulatedViewport(viewportMatch[1] as TabId, width, height, mobile);
+      return json(res, { ok: true, width, height, mobile });
     }
 
     // ── Approvals ────────────────────────────────────────────────────────────
@@ -447,12 +564,9 @@ export class AgentServer {
     }
 
     if (method === "POST" && p === "/api/accounts") {
-      const body = await readBody(req);
-      if (typeof body.label !== "string") return error(res, 400, "label is required");
-      if (!Array.isArray(body.origins)) return error(res, 400, "origins array is required");
-      if (typeof body.username !== "string") return error(res, 400, "username is required");
-      if (typeof body.password !== "string") return error(res, 400, "password is required");
-      return json(res, this.tabs.saveAccount(body as unknown as AccountInput));
+      const parsed = parseAccountInput(await readBody(req));
+      if (!parsed.ok) return error(res, 400, parsed.error);
+      return json(res, this.tabs.saveAccount(parsed.value));
     }
 
     const accountLookupMatch = p.match(/^\/api\/accounts\/lookup\/(.+)$/);
@@ -506,6 +620,12 @@ export class AgentServer {
       }
     }
 
+    // ── HAR export ─────────────────────────────────────────────────────────────
+    const harMatch = p.match(/^\/api\/tabs\/([^/]+)\/har$/);
+    if (method === "GET" && harMatch) {
+      return json(res, this.tabs.exportHar(harMatch[1] as TabId));
+    }
+
     // ── Network mock / intercept ──────────────────────────────────────────────
     const mockMatch = p.match(/^\/api\/tabs\/([^/]+)\/mock$/);
     if (mockMatch) {
@@ -513,10 +633,10 @@ export class AgentServer {
         return json(res, { rules: this.tabs.getNetworkMockRules(mockMatch[1] as TabId) });
       }
       if (method === "POST") {
-        const body = await readBody(req);
-        if (!Array.isArray(body.rules)) return error(res, 400, "rules array is required");
-        await this.tabs.enableNetworkMock(mockMatch[1] as TabId, body.rules as import("../../../../packages/shared/src/index.js").NetworkInterceptRule[]);
-        return json(res, { ok: true, rulesCount: (body.rules as unknown[]).length });
+        const parsed = parseNetworkMockRules(await readBody(req));
+        if (!parsed.ok) return error(res, 400, parsed.error);
+        await this.tabs.enableNetworkMock(mockMatch[1] as TabId, parsed.value);
+        return json(res, { ok: true, rulesCount: parsed.value.length });
       }
       if (method === "DELETE") {
         await this.tabs.disableNetworkMock(mockMatch[1] as TabId);
@@ -529,7 +649,10 @@ export class AgentServer {
     if (method === "POST" && namedShotMatch) {
       const body = await readBody(req);
       if (typeof body.snapshotId !== "string") return error(res, 400, "snapshotId string is required");
-      return json(res, await this.tabs.captureNamedScreenshot(namedShotMatch[1] as TabId, body.snapshotId));
+      return json(res, await this.tabs.captureNamedScreenshot(namedShotMatch[1] as TabId, body.snapshotId, {
+        fullPage: body.fullPage === true,
+        ...(typeof body.selector === "string" ? { selector: body.selector } : {})
+      }));
     }
 
     if (method === "POST" && p === "/api/screenshots/diff") {
@@ -537,7 +660,18 @@ export class AgentServer {
       if (typeof body.beforeId !== "string" || typeof body.afterId !== "string") {
         return error(res, 400, "beforeId and afterId strings are required");
       }
-      return json(res, this.tabs.diffScreenshots(body.beforeId, body.afterId));
+      const ignoreRegions = Array.isArray(body.ignoreRegions) ? body.ignoreRegions as DiffRegion[] : undefined;
+      const perceptual = body.perceptual === true;
+      const threshold = typeof body.threshold === "number" ? body.threshold : undefined;
+      return json(res, this.tabs.diffScreenshots(body.beforeId, body.afterId, { ignoreRegions, perceptual, threshold }));
+    }
+
+    // ── Map diff regions → changed DOM elements ───────────────────────────────
+    const changedElementsMatch = p.match(/^\/api\/tabs\/([^/]+)\/changed-elements$/);
+    if (method === "POST" && changedElementsMatch) {
+      const body = await readBody(req);
+      if (!Array.isArray(body.regions)) return error(res, 400, "regions array is required");
+      return json(res, await this.tabs.mapRegionsToElements(changedElementsMatch[1] as TabId, body.regions as DiffRegion[]));
     }
 
     // List all named screenshots in cache
@@ -557,21 +691,34 @@ export class AgentServer {
     const viewportSuiteMatch = p.match(/^\/api\/tabs\/([^/]+)\/viewport-suite$/);
     if (method === "POST" && viewportSuiteMatch) {
       const body = await readBody(req);
-      const presets = Array.isArray(body.presets) ? body.presets as import("../../../../packages/shared/src/index.js").ViewportPresetName[] : undefined;
+      const presets = Array.isArray(body.presets) ? body.presets as ViewportPresetName[] : undefined;
       const includeDiffs = body.includeDiffs === true;
-      return json(res, await this.tabs.captureViewportSuite(viewportSuiteMatch[1] as import("../../../../packages/shared/src/index.js").TabId, presets, includeDiffs));
+      const includeLayoutIssues = body.includeLayoutIssues === true;
+      return json(res, await this.tabs.captureViewportSuite(viewportSuiteMatch[1] as TabId, presets, includeDiffs, includeLayoutIssues));
     }
 
     // ── Performance metrics ───────────────────────────────────────────────────
     const perfMatch = p.match(/^\/api\/tabs\/([^/]+)\/performance$/);
     if (method === "GET" && perfMatch) {
-      return json(res, await this.tabs.capturePerformanceMetrics(perfMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+      return json(res, await this.tabs.capturePerformanceMetrics(perfMatch[1] as TabId));
+    }
+
+    // ── Aggregated page-health scorecard ──────────────────────────────────────
+    const healthMatch = p.match(/^\/api\/tabs\/([^/]+)\/health$/);
+    if (method === "GET" && healthMatch) {
+      return json(res, await this.tabs.captureHealthReport(healthMatch[1] as TabId));
     }
 
     // ── Accessibility audit ───────────────────────────────────────────────────
     const a11yMatch = p.match(/^\/api\/tabs\/([^/]+)\/a11y$/);
     if (method === "GET" && a11yMatch) {
-      return json(res, await this.tabs.auditAccessibility(a11yMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+      return json(res, await this.tabs.auditAccessibility(a11yMatch[1] as TabId));
+    }
+
+    // ── Keyboard / focus-order audit ──────────────────────────────────────────
+    const focusOrderMatch = p.match(/^\/api\/tabs\/([^/]+)\/focus-order$/);
+    if (method === "GET" && focusOrderMatch) {
+      return json(res, await this.tabs.auditFocusOrder(focusOrderMatch[1] as TabId));
     }
 
     // ── Element style inspector ───────────────────────────────────────────────
@@ -583,7 +730,7 @@ export class AgentServer {
       }
       const limit = typeof body.limit === "number" ? body.limit : undefined;
       return json(res, await this.tabs.inspectElementStyles(
-        styleInspectMatch[1] as import("../../../../packages/shared/src/index.js").TabId,
+        styleInspectMatch[1] as TabId,
         body.selector,
         { limit }
       ));
@@ -600,9 +747,9 @@ export class AgentServer {
       }
       const limit = typeof body.limit === "number" ? body.limit : undefined;
       return json(res, await this.tabs.assertElementStyles(
-        styleAssertMatch[1] as import("../../../../packages/shared/src/index.js").TabId,
+        styleAssertMatch[1] as TabId,
         body.selector,
-        body.assertions as import("../../../../packages/shared/src/index.js").StyleAssertion[],
+        body.assertions as StyleAssertion[],
         { limit }
       ));
     }
@@ -610,13 +757,44 @@ export class AgentServer {
     // ── Component tree ────────────────────────────────────────────────────────
     const ctreeMatch = p.match(/^\/api\/tabs\/([^/]+)\/component-tree$/);
     if (method === "GET" && ctreeMatch) {
-      return json(res, await this.tabs.captureComponentTree(ctreeMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+      return json(res, await this.tabs.captureComponentTree(ctreeMatch[1] as TabId));
+    }
+
+    // ── Design tokens ─────────────────────────────────────────────────────────
+    const designTokensMatch = p.match(/^\/api\/tabs\/([^/]+)\/design-tokens$/);
+    if (method === "GET" && designTokensMatch) {
+      return json(res, await this.tabs.extractDesignTokens(designTokensMatch[1] as TabId));
+    }
+
+    // ── Element → source mapping (click-to-component) ──────────────────────────
+    const componentSourcesMatch = p.match(/^\/api\/tabs\/([^/]+)\/component-sources$/);
+    if (method === "GET" && componentSourcesMatch) {
+      return json(res, await this.tabs.captureComponentSources(componentSourcesMatch[1] as TabId));
+    }
+
+    // ── Layout / responsive issues ────────────────────────────────────────────
+    const layoutIssuesMatch = p.match(/^\/api\/tabs\/([^/]+)\/layout-issues$/);
+    if (method === "GET" && layoutIssuesMatch) {
+      return json(res, await this.tabs.detectLayoutIssues(layoutIssuesMatch[1] as TabId));
+    }
+
+    // ── Media state (currently-matching media queries) ─────────────────────────
+    const mediaStateMatch = p.match(/^\/api\/tabs\/([^/]+)\/media-state$/);
+    if (method === "GET" && mediaStateMatch) {
+      return json(res, await this.tabs.getMediaState(mediaStateMatch[1] as TabId));
+    }
+
+    // ── Mutation / re-render timeline ──────────────────────────────────────────
+    const mutationsMatch = p.match(/^\/api\/tabs\/([^/]+)\/mutations$/);
+    if (method === "GET" && mutationsMatch) {
+      const durationMs = Number(url.searchParams.get("durationMs")) || undefined;
+      return json(res, await this.tabs.captureMutationTimeline(mutationsMatch[1] as TabId, durationMs));
     }
 
     // ── Three.js Scene Inspector ──────────────────────────────────────────────
     const threejsMatch = p.match(/^\/api\/tabs\/([^/]+)\/threejs-scene$/);
     if (method === "GET" && threejsMatch) {
-      return json(res, await this.tabs.captureThreeJsScene(threejsMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+      return json(res, await this.tabs.captureThreeJsScene(threejsMatch[1] as TabId));
     }
 
     // ── Natural Language Assertions ───────────────────────────────────────────
@@ -627,30 +805,50 @@ export class AgentServer {
         return error(res, 400, "assertion string is required");
       }
       const result = await this.tabs.evaluateAssertion(
-        assertMatch[1] as import("../../../../packages/shared/src/index.js").TabId,
+        assertMatch[1] as TabId,
         body.assertion
       );
       return json(res, result);
     }
 
+    // ── Standing assertion watches (emit `assertion_changed` over SSE) ─────────
+    const watchesMatch = p.match(/^\/api\/tabs\/([^/]+)\/watches$/);
+    if (watchesMatch) {
+      const tid = watchesMatch[1] as TabId;
+      if (method === "GET") {
+        return json(res, this.tabs.listAssertionWatches(tid));
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        if (typeof body.assertion !== "string" || !body.assertion.trim()) {
+          return error(res, 400, "assertion string is required");
+        }
+        return json(res, this.tabs.addAssertionWatch(tid, body.assertion));
+      }
+    }
+    const watchDeleteMatch = p.match(/^\/api\/tabs\/[^/]+\/watches\/([^/]+)$/);
+    if (method === "DELETE" && watchDeleteMatch) {
+      return json(res, { removed: this.tabs.removeAssertionWatch(watchDeleteMatch[1]) });
+    }
+
     const recordingMatch = p.match(/^\/api\/tabs\/([^/]+)\/recording$/);
     if (recordingMatch && method === "GET") {
-      return json(res, this.tabs.getRecording(recordingMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+      return json(res, this.tabs.getRecording(recordingMatch[1] as TabId));
     }
 
     const recordingStartMatch = p.match(/^\/api\/tabs\/([^/]+)\/recording\/start$/);
     if (recordingStartMatch && method === "POST") {
-      return json(res, this.tabs.startRecording(recordingStartMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+      return json(res, this.tabs.startRecording(recordingStartMatch[1] as TabId));
     }
 
     const recordingStopMatch = p.match(/^\/api\/tabs\/([^/]+)\/recording\/stop$/);
     if (recordingStopMatch && method === "POST") {
-      return json(res, this.tabs.stopRecording(recordingStopMatch[1] as import("../../../../packages/shared/src/index.js").TabId));
+      return json(res, this.tabs.stopRecording(recordingStopMatch[1] as TabId));
     }
 
     const sitePatternsMatch = p.match(/^\/api\/tabs\/([^/]+)\/site-patterns$/);
     if (sitePatternsMatch) {
-      const tid = sitePatternsMatch[1] as import("../../../../packages/shared/src/index.js").TabId;
+      const tid = sitePatternsMatch[1] as TabId;
       if (method === "GET") {
         return json(res, { patterns: this.tabs.getSitePatterns(tid) });
       }
@@ -675,7 +873,7 @@ export class AgentServer {
       if (typeof body.selector !== "string" || !Array.isArray(body.files)) {
         return error(res, 400, "selector string and files array are required");
       }
-      return json(res, await this.tabs.setFileInputFiles(fileInputMatch[1] as import("../../../../packages/shared/src/index.js").TabId, {
+      return json(res, await this.tabs.setFileInputFiles(fileInputMatch[1] as TabId, {
         selector: body.selector,
         files: body.files.map(String)
       }));
@@ -683,7 +881,7 @@ export class AgentServer {
 
     const downloadsMatch = p.match(/^\/api\/tabs\/([^/]+)\/downloads$/);
     if (downloadsMatch) {
-      const tid = downloadsMatch[1] as import("../../../../packages/shared/src/index.js").TabId;
+      const tid = downloadsMatch[1] as TabId;
       if (method === "GET") {
         return json(res, this.tabs.listDownloads(tid));
       }
@@ -695,13 +893,14 @@ export class AgentServer {
 
     const budgetMatch = p.match(/^\/api\/tabs\/([^/]+)\/budget$/);
     if (budgetMatch) {
-      const tid = budgetMatch[1] as import("../../../../packages/shared/src/index.js").TabId;
+      const tid = budgetMatch[1] as TabId;
       if (method === "GET") {
         return json(res, this.tabs.getResourceBudget(tid));
       }
       if (method === "POST") {
-        const body = await readBody(req);
-        return json(res, await this.tabs.setResourceBudget(tid, body as import("../../../../packages/shared/src/index.js").ResourceBudget));
+        const parsed = parseResourceBudget(await readBody(req));
+        if (!parsed.ok) return error(res, 400, parsed.error);
+        return json(res, await this.tabs.setResourceBudget(tid, parsed.value));
       }
       if (method === "DELETE") {
         await this.tabs.clearResourceBudget(tid);
@@ -711,7 +910,7 @@ export class AgentServer {
 
     const locationMatch = p.match(/^\/api\/tabs\/([^/]+)\/location$/);
     if (locationMatch) {
-      const tid = locationMatch[1] as import("../../../../packages/shared/src/index.js").TabId;
+      const tid = locationMatch[1] as TabId;
       if (method === "GET") {
         return json(res, this.tabs.getLocationOverride(tid));
       }
@@ -720,7 +919,7 @@ export class AgentServer {
         if (typeof body.latitude !== "number" || typeof body.longitude !== "number") {
           return error(res, 400, "latitude and longitude are required numbers");
         }
-        return json(res, await this.tabs.setLocationOverride(tid, body as import("../../../../packages/shared/src/index.js").LocationOverride));
+        return json(res, await this.tabs.setLocationOverride(tid, body as LocationOverride));
       }
       if (method === "DELETE") {
         await this.tabs.clearLocationOverride(tid);
@@ -728,9 +927,26 @@ export class AgentServer {
       }
     }
 
+    // ── Media / appearance emulation ──────────────────────────────────────────
+    const mediaMatch = p.match(/^\/api\/tabs\/([^/]+)\/media$/);
+    if (mediaMatch) {
+      const tid = mediaMatch[1] as TabId;
+      if (method === "GET") {
+        return json(res, this.tabs.getMediaEmulation(tid));
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        return json(res, await this.tabs.setMediaEmulation(tid, body as MediaEmulation));
+      }
+      if (method === "DELETE") {
+        await this.tabs.clearMediaEmulation(tid);
+        return json(res, { ok: true });
+      }
+    }
+
     // ── Storage Inspector ─────────────────────────────────────────────────────
-    type TabIdType = import("../../../../packages/shared/src/index.js").TabId;
-    type StorageAreaType = import("../../../../packages/shared/src/index.js").StorageArea;
+    type TabIdType = TabId;
+    type StorageAreaType = StorageArea;
 
     // Full snapshot
     const storageAllMatch = p.match(/^\/api\/tabs\/([^/]+)\/storage$/);
@@ -774,7 +990,7 @@ export class AgentServer {
       if (method === "POST") {
         const body = await readBody(req);
         if (typeof body.name !== "string" || typeof body.value !== "string") return error(res, 400, "name and value are required");
-        await this.tabs.setCookie(tid, body as import("../../../../packages/shared/src/index.js").CookieEntry & { name: string; value: string });
+        await this.tabs.setCookie(tid, body as CookieEntry & { name: string; value: string });
         return json(res, { ok: true });
       }
       if (method === "DELETE") {
@@ -799,7 +1015,7 @@ export class AgentServer {
     if (method === "POST" && namedPerceptionMatch) {
       const body = await readBody(req);
       if (typeof body.snapshotId !== "string") return error(res, 400, "snapshotId string is required");
-      return json(res, await this.tabs.saveNamedPerception(namedPerceptionMatch[1] as import("../../../../packages/shared/src/index.js").TabId, body.snapshotId));
+      return json(res, await this.tabs.saveNamedPerception(namedPerceptionMatch[1] as TabId, body.snapshotId));
     }
 
     if (method === "POST" && p === "/api/perception/diff") {
@@ -839,6 +1055,11 @@ export class AgentServer {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Normalize a possibly-array HTTP header to a single string value. */
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
 
 function json(res: http.ServerResponse, data: unknown) {
   res.writeHead(200, { "Content-Type": "application/json" });

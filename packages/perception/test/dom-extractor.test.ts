@@ -53,6 +53,59 @@ describe("extractPageObservation", () => {
     expect(observation.forms[0].purpose).toBe("login");
     expect(observation.alerts).toContain("Incorrect email or password");
   });
+
+  it("extracts social feed posts, composers, navigation, and post actions", () => {
+    loadPage(
+      `
+        <nav aria-label="Primary">
+          <a href="/home">Home</a>
+          <a href="/explore">Explore</a>
+          <a href="/notifications">Notifications</a>
+          <a href="/messages">Messages</a>
+          <a href="/ada">Profile</a>
+        </nav>
+        <main>
+          <section aria-label="Composer">
+            <div role="textbox" contenteditable="true" aria-label="What is happening?"></div>
+            <button type="button">Post</button>
+          </section>
+          <article data-testid="tweet">
+            <a href="/ada">
+              <span>Ada Lovelace</span>
+              <span>@ada</span>
+            </a>
+            <time datetime="2026-05-11T08:00:00Z">1h</time>
+            <div data-testid="tweetText">Building programmable perception for messy social feeds.</div>
+            <button aria-label="Reply 3">Reply</button>
+            <button aria-label="Repost 4">Repost</button>
+            <button aria-label="Like 12">Like</button>
+            <button aria-label="Bookmark">Bookmark</button>
+            <button aria-label="Share">Share</button>
+          </article>
+        </main>
+      `,
+      { url: "https://example.com/home", title: "Home / X" }
+    );
+
+    const observation = extractPageObservation("tab-social");
+
+    expect(observation.pageKind).toBe("social-feed");
+    expect(observation.social?.platform).toBe("generic");
+    expect(observation.social?.kind).toBe("feed");
+    expect(observation.social?.posts).toHaveLength(1);
+    expect(observation.social?.posts[0].author).toContain("Ada Lovelace");
+    expect(observation.social?.posts[0].text).toBe("Building programmable perception for messy social feeds.");
+    expect(observation.social?.posts[0].actions.map((action) => action.kind)).toEqual([
+      "reply",
+      "repost",
+      "like",
+      "bookmark",
+      "share"
+    ]);
+    expect(observation.social?.composers[0].purpose).toBe("post");
+    expect(observation.social?.composers[0].submitActions[0].kind).toBe("submit_post");
+    expect(observation.social?.navigation.map((item) => item.destination)).toContain("messages");
+  });
 });
 
 describe("installPageObservationStream", () => {
@@ -117,5 +170,43 @@ describe("installPageObservationStream", () => {
     expect(callCount).toBe(2);
 
     vi.useRealTimers();
+  });
+
+  it("disambiguates non-unique selector hints with :nth-of-type", () => {
+    loadPage(
+      `
+        <main>
+          <a href="/auth/google">Continue with Google</a>
+          <a href="/auth/github">Continue with GitHub</a>
+        </main>
+      `,
+      { url: "https://example.com/login", title: "Login" }
+    );
+
+    const observation = extractPageObservation("tab-disambig");
+    const hints = observation.primaryActions.map((action) => action.selectorHint);
+
+    // Each attribute-less link gets a unique nth-of-type qualifier...
+    expect(hints).toContain("a:nth-of-type(1)");
+    expect(hints).toContain("a:nth-of-type(2)");
+    expect(new Set(hints).size).toBe(hints.length); // all distinct
+
+    // ...and each hint resolves to exactly one element on the page.
+    for (const hint of hints) {
+      expect(document.querySelectorAll(hint)).toHaveLength(1);
+    }
+  });
+
+  it("leaves unique selector hints unqualified", () => {
+    loadPage(`<main><button id="go">Go</button><a href="/x" data-testid="x-link">X</a></main>`, {
+      url: "https://example.com/",
+      title: "Home"
+    });
+
+    const observation = extractPageObservation("tab-unique");
+    const hints = observation.primaryActions.map((action) => action.selectorHint);
+    expect(hints).toContain("button#go");
+    expect(hints).toContain('a[data-testid="x-link"]');
+    expect(hints.some((h) => h.includes(":nth-of-type"))).toBe(false);
   });
 });

@@ -26,6 +26,7 @@ Thumbs.db
 coverage/
 .turbo/
 *.tsbuildinfo
+apps/desktop/release/
 
 # Scratch / debug test scripts
 test-electron-*.cjs

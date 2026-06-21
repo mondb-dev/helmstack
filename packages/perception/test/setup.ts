@@ -1,7 +1,8 @@
 import { afterEach, beforeAll } from "vitest";
 
 beforeAll(() => {
-  const css = ((window as typeof window & { CSS?: { escape?: (value: string) => string } }).CSS ??= {});
+  const view = window as unknown as { CSS?: { escape?: (value: string) => string } };
+  const css = (view.CSS ??= {});
   if (typeof css.escape !== "function") {
     css.escape = (value: string) => value.replace(/"/g, '\\"');
   }

@@ -299,6 +299,30 @@ function renderGraph(graph: PageGraph) {
       })),
       oauthProviders: graph.oauthProviders,
       alerts: graph.alerts,
+      social: graph.social
+        ? {
+            platform: graph.social.platform,
+            kind: graph.social.kind,
+            posts: graph.social.posts.map((post) => ({
+              id: post.id,
+              author: post.author,
+              handle: post.handle,
+              text: post.text,
+              actions: post.actions.map((action) => action.kind)
+            })),
+            composers: graph.social.composers.map((composer) => ({
+              id: composer.id,
+              purpose: composer.purpose,
+              label: composer.label,
+              submitActions: composer.submitActions.map((action) => action.kind)
+            })),
+            navigation: graph.social.navigation.map((item) => ({
+              label: item.label,
+              destination: item.destination
+            })),
+            signals: graph.social.signals
+          }
+        : undefined,
       accessibilitySummary: graph.accessibility,
       signals: graph.signals
     },

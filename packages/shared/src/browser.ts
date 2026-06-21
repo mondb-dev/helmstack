@@ -27,6 +27,39 @@ export type ResourceBudget = {
   maxJsHeapMb?: number;
 };
 
+/**
+ * Emulated CSS media state for a tab — lets agents test dark mode, reduced
+ * motion, forced-colors, and print styles without changing OS settings.
+ * Backed by CDP `Emulation.setEmulatedMedia`.
+ */
+export type MediaEmulation = {
+  /** Emulates `prefers-color-scheme`. */
+  colorScheme?: "light" | "dark" | "no-preference";
+  /** Emulates `prefers-reduced-motion`. */
+  reducedMotion?: "reduce" | "no-preference";
+  /** Emulates `forced-colors` (high-contrast mode). */
+  forcedColors?: "active" | "none";
+  /** CSS media type to emulate, e.g. "screen" or "print". */
+  media?: string;
+};
+
+/**
+ * The page's *current* responsive state: resolved media features (color
+ * scheme, reduced motion, pointer/hover capability, orientation), the viewport
+ * size, and which `@media` rules from the page's stylesheets currently match.
+ * Complements `MediaEmulation` (which sets state) — this reads it back.
+ */
+export type MediaStateReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** Resolved media features, e.g. `prefers-color-scheme` → `"dark"`. */
+  features: Record<string, string>;
+  viewport: { width: number; height: number };
+  /** Distinct `@media` queries found in stylesheets and whether each currently matches. */
+  mediaQueries: Array<{ query: string; matches: boolean }>;
+};
+
 export type LocationOverride = {
   latitude: number;
   longitude: number;
@@ -67,7 +100,14 @@ export type RecordingSession = {
 };
 
 export type RecordingStopResult = RecordingSession & {
+  /** A replayable HelmStack SDK script. */
   script: string;
+  /** The same flow exported as runnable code for common test frameworks. */
+  exports: {
+    playwright: string;
+    cypress: string;
+    testingLibrary: string;
+  };
 };
 
 export type PageScreenshot = {
@@ -80,6 +120,18 @@ export type PageScreenshot = {
   height: number;
 };
 
+/** Options controlling the region a screenshot captures. */
+export type ScreenshotOptions = {
+  /** Capture the entire scrollable page, not just the current viewport. */
+  fullPage?: boolean;
+  /**
+   * Capture only the first element matching this CSS selector (its full
+   * bounding box, even if it is below the fold). Takes precedence over
+   * `fullPage`.
+   */
+  selector?: string;
+};
+
 export type DiffRegion = {
   /** Top-left x offset of the changed bounding box (pixels). */
   x: number;
@@ -87,6 +139,23 @@ export type DiffRegion = {
   y: number;
   width: number;
   height: number;
+};
+
+/** A rendered element's on-screen box, used to map pixel diffs to DOM nodes. */
+export type ElementBound = {
+  selector: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+/** An element that overlaps one or more changed regions in a visual diff. */
+export type ChangedElement = {
+  selector: string;
+  bounds: ElementBound;
+  /** How many distinct changed regions this element covers. */
+  regions: number;
 };
 
 export type ScreenshotDiff = {
@@ -140,6 +209,8 @@ export type ViewportCapture = {
   /** snapshotId used in the screenshot cache: `<tabId>__<presetName>__<runId>` */
   snapshotId: string;
   screenshot: PageScreenshot;
+  /** Layout issues detected at this breakpoint (only when includeLayoutIssues=true). */
+  layoutIssues?: LayoutIssuesReport;
 };
 
 export type ViewportSuiteReport = {
@@ -164,6 +235,34 @@ export type PageSnapshot = {
   accessibilityTree: {
     nodes: unknown[];
   };
+};
+
+// ── Aggregated page health ────────────────────────────────────────────────────
+
+export type HealthCategoryId = "performance" | "accessibility" | "console" | "network" | "layout";
+
+export type HealthCategory = {
+  id: HealthCategoryId;
+  label: string;
+  /** 0–100. */
+  score: number;
+  pass: boolean;
+  details: string;
+};
+
+/**
+ * A Lighthouse-style scorecard fusing Core Web Vitals, the WCAG audit, console
+ * errors, failed network requests, and layout overflow into one report. `pass`
+ * is true only when every category passes — suitable as a CI gate.
+ */
+export type HealthReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  overallScore: number;
+  pass: boolean;
+  categories: HealthCategory[];
+  summary: string;
 };
 
 // ── Performance metrics ───────────────────────────────────────────────────────
@@ -414,6 +513,179 @@ export type ElementStyleAssertionReport = {
   issues: ElementStyleIssue[];
 };
 
+// ── Design tokens ─────────────────────────────────────────────────────────
+
+/** A single observed design value and how many elements use it. */
+export type DesignTokenSample = {
+  value: string;
+  count: number;
+};
+
+/**
+ * The de-facto design system in use on a page: the actual colors, type scale,
+ * spacing, radii, shadows, and z-index layers harvested from computed styles,
+ * plus any declared CSS custom properties. Each category is ranked by usage
+ * frequency so the dominant tokens surface first.
+ */
+export type DesignTokensReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** CSS custom properties declared on :root / html, name → value. */
+  cssVariables: Record<string, string>;
+  colors: DesignTokenSample[];
+  fontFamilies: DesignTokenSample[];
+  fontSizes: DesignTokenSample[];
+  fontWeights: DesignTokenSample[];
+  spacing: DesignTokenSample[];
+  radii: DesignTokenSample[];
+  shadows: DesignTokenSample[];
+  zIndices: DesignTokenSample[];
+  /** Number of elements sampled (capped for performance). */
+  sampledElements: number;
+};
+
+// ── Layout / responsive issues ────────────────────────────────────────────
+
+export type LayoutIssueKind =
+  /** The document scrolls horizontally inside the viewport. */
+  | "page_overflow"
+  /** An element extends past the right edge of the viewport (a likely overflow culprit). */
+  | "viewport_overflow"
+  /** A child visibly escapes the horizontal bounds of its constrained parent. */
+  | "container_escape"
+  /** An element with hidden/clip overflow is cutting off its own content. */
+  | "clipped_content";
+
+export type LayoutIssue = {
+  kind: LayoutIssueKind;
+  selector: string;
+  detail: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  /** How far (px) the element overflows, when applicable. */
+  overflowPx?: number;
+};
+
+/**
+ * Per-viewport layout health: whether the page scrolls horizontally and which
+ * elements overflow the viewport, escape their container, or clip their own
+ * content. Run at each breakpoint to find *why* a responsive layout broke.
+ */
+export type LayoutIssuesReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  viewport: { width: number; height: number };
+  hasHorizontalOverflow: boolean;
+  documentScrollWidth: number;
+  issues: LayoutIssue[];
+};
+
+// ── Mutation / re-render timeline ─────────────────────────────────────────
+
+export type MutationKindCounts = {
+  childList: number;
+  attributes: number;
+  characterData: number;
+};
+
+/** A DOM subtree that mutated frequently during the sample window. */
+export type MutationHotspot = {
+  selector: string;
+  mutations: number;
+  kinds: MutationKindCounts;
+};
+
+/**
+ * A sample of DOM mutations over a time window — surfaces layout thrash and
+ * runaway re-renders by ranking the elements that mutated most.
+ */
+export type MutationTimelineReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  durationMs: number;
+  totalMutations: number;
+  byKind: MutationKindCounts;
+  addedNodes: number;
+  removedNodes: number;
+  /** Mutating subtrees ranked by mutation count. */
+  hotspots: MutationHotspot[];
+};
+
+// ── Keyboard / focus-order audit ───────────────────────────────────────────
+
+export type FocusableElement = {
+  selector: string;
+  /** Resolved tabindex (0 if unset). */
+  tabindex: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  name?: string;
+};
+
+export type FocusOrderIssueKind = "positive_tabindex" | "reading_order_jump";
+
+export type FocusOrderIssue = {
+  kind: FocusOrderIssueKind;
+  selector: string;
+  detail: string;
+};
+
+/**
+ * Audits keyboard tab order against the page's visual reading order. Flags
+ * positive `tabindex` (which hijacks order) and points where tab order jumps
+ * backwards relative to top-to-bottom / left-to-right reading.
+ */
+export type FocusOrderReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  focusableCount: number;
+  positiveTabindexCount: number;
+  issues: FocusOrderIssue[];
+  /** Selectors in computed keyboard tab order. */
+  order: string[];
+};
+
+// ── Element → source mapping (click-to-component) ──────────────────────────
+
+/** A DOM element mapped back to the component + source location that rendered it. */
+export type ComponentSource = {
+  selector: string;
+  component: string;
+  framework: "react" | "svelte" | "vue" | "unknown";
+  file?: string;
+  line?: number;
+  column?: number;
+};
+
+/** Per-component rollup: where it's defined and how many instances are on the page. */
+export type ComponentSourceSummary = {
+  component: string;
+  file?: string;
+  line?: number;
+  instances: number;
+};
+
+/**
+ * Maps rendered DOM nodes back to their authoring component + source `file:line`
+ * (React `_debugSource`, Svelte `__svelte_meta`, Vue `__file`). Lets an agent
+ * say "the misaligned button is `<PrimaryButton>` at src/ui/Button.tsx:42".
+ */
+export type ComponentSourceReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  framework: "react" | "svelte" | "vue" | "mixed" | "unknown";
+  sampledElements: number;
+  mappedElements: number;
+  components: ComponentSourceSummary[];
+  elements: ComponentSource[];
+};
+
 // ── Component Tree ────────────────────────────────────────────────────────
 
 export type ComponentFramework = "react" | "vue" | "svelte" | "angular" | "unknown";
@@ -422,6 +694,8 @@ export type ComponentNode = {
   name: string;
   /** Stringified props (shallow, truncated to avoid huge payloads). */
   props: Record<string, string>;
+  /** Authoring source `file:line` when dev-build metadata is available. */
+  source?: string;
   children: ComponentNode[];
 };
 
@@ -621,6 +895,27 @@ export type AssertionEvidence = {
     fields: number;
     mediaItems: number;
   };
+};
+
+/** A standing natural-language assertion re-checked on every page observation. */
+export type AssertionWatch = {
+  id: string;
+  tabId: TabId;
+  assertion: string;
+  /** Latest evaluation result, or null until first evaluated. */
+  lastPass: boolean | null;
+  createdAt: number;
+};
+
+/** Emitted when a watched assertion's pass/fail state changes. */
+export type AssertionTransition = {
+  watchId: string;
+  tabId: TabId;
+  assertion: string;
+  pass: boolean;
+  previousPass: boolean | null;
+  explanation: string;
+  at: number;
 };
 
 export type AssertionResult = {
