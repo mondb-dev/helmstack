@@ -4,11 +4,11 @@ import type {
   BrowserAction,
   LiteralValue,
   ObservedAction,
-  ObservedField,
   ObservedForm,
   SecretRef,
   ProposedEffect
 } from "../../../../packages/shared/src/index.js";
+import { isStealthEnabled } from "./runtime-config.js";
 
 type DomActuationEffects = {
   effects?: ProposedEffect[];
@@ -202,7 +202,7 @@ function serializeTextValue(value: unknown, source: LiteralValue | SecretRef) {
   return value;
 }
 
-function collectFormFillEffects(form: ObservedForm): ProposedEffect[] | undefined {
+export function collectFormFillEffects(form: ObservedForm): ProposedEffect[] | undefined {
   const fields = form.fields
     .filter((field) => ["email", "tel", "address-line1", "password"].includes(field.fieldType))
     .map((field) => field.label);
@@ -210,7 +210,7 @@ function collectFormFillEffects(form: ObservedForm): ProposedEffect[] | undefine
   return fields.length > 0 ? [{ type: "share_personal_data", fields } satisfies ProposedEffect] : undefined;
 }
 
-function collectSubmitEffects(form: ObservedForm): ProposedEffect[] | undefined {
+export function collectSubmitEffects(form: ObservedForm): ProposedEffect[] | undefined {
   if (form.purpose === "signup") {
     return [{ type: "create_account", label: form.name || form.purpose } satisfies ProposedEffect];
   }
@@ -294,7 +294,7 @@ function submitFunctionSource() {
   }`;
 }
 
-function buildDomTraversalScript() {
+export function buildDomTraversalScript() {
   return `function (payload) {
     const normalizeText = (value) => (value || "").replace(/\\s+/g, " ").trim();
 
@@ -478,7 +478,14 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-/** Randomised pause that mimics human reaction time between actions. */
+/**
+ * Randomised pause that mimics human reaction time between actions.
+ * No-op unless stealth mode is enabled, so default actuation is deterministic
+ * and fast (zero added latency).
+ */
 function humanJitter(minMs = 60, maxMs = 220) {
+  if (!isStealthEnabled()) {
+    return Promise.resolve();
+  }
   return delay(Math.floor(Math.random() * (maxMs - minMs) + minMs));
 }

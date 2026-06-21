@@ -64,7 +64,8 @@ describe("normalizePerception", () => {
           disabled: false
         }
       ],
-      alerts: []
+      alerts: [],
+      media: []
     };
 
     const snapshot: PageSnapshot = {
@@ -94,5 +95,53 @@ describe("normalizePerception", () => {
     expect(result.graph.signals.documentCount).toBe(1);
     expect(result.graph.signals.accessibilityNodeCount).toBe(4);
     expect(result.graph.accessibility.headingTrail).toContain("Create account");
+  });
+
+  it("passes social surface semantics into the page graph", () => {
+    const observation: PageObservation = {
+      tabId: "tab-social",
+      url: "https://example.com/home",
+      title: "Social Home",
+      timestamp: 1710000000000,
+      pageKind: "social-feed",
+      headings: [],
+      forms: [],
+      primaryActions: [],
+      alerts: [],
+      media: [],
+      social: {
+        platform: "generic",
+        kind: "feed",
+        posts: [],
+        composers: [],
+        navigation: [],
+        actions: [],
+        signals: {
+          postCount: 0,
+          composerCount: 0,
+          navigationItemCount: 0,
+          actionCount: 0
+        }
+      }
+    };
+
+    const snapshot: PageSnapshot = {
+      tabId: "tab-social",
+      title: "Social Home",
+      url: "https://example.com/home",
+      capturedAt: 1710000000100,
+      dom: {
+        documents: []
+      },
+      accessibilityTree: {
+        nodes: []
+      }
+    };
+
+    const result = normalizePerception(snapshot, observation);
+
+    expect(result.graph.kind).toBe("social-feed");
+    expect(result.graph.social?.kind).toBe("feed");
+    expect(result.graph.social?.platform).toBe("generic");
   });
 });

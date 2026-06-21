@@ -28,6 +28,29 @@
  */
 
 import * as http from "node:http";
+import { readFileSync } from "node:fs";
+
+/**
+ * Resolve the REST auth token from the environment when one is not passed
+ * explicitly. The desktop app prints its token (and a token-file path) on
+ * launch; set `HELMSTACK_AUTH_TOKEN`, or point `HELMSTACK_TOKEN_FILE` at the
+ * persisted token file, to authenticate local agents with zero config.
+ */
+function readDefaultAuthToken(): string | undefined {
+  if (typeof process === "undefined") return undefined;
+  const fromEnv = process.env?.HELMSTACK_AUTH_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  const file = process.env?.HELMSTACK_TOKEN_FILE?.trim();
+  if (file) {
+    try {
+      const value = readFileSync(file, "utf8").trim();
+      if (value) return value;
+    } catch {
+      // ignore — fall through to undefined
+    }
+  }
+  return undefined;
+}
 
 // ── Re-export shared types agents need ────────────────────────────────────────
 export type {
@@ -101,25 +124,38 @@ export type {
 
 import type {
   A11yAuditReport,
+  FocusOrderReport,
   AccountInput,
   AccountSummary,
   AccountUpdate,
   AssertionResult,
+  AssertionTransition,
+  AssertionWatch,
   BrowserCommandResult,
   BrowserOutputCommand,
   BrowserPerceptionPacket,
+  ComponentSourceReport,
   ComponentTreeReport,
+  ChangedElement,
+  DesignTokensReport,
+  DiffRegion,
+  LayoutIssuesReport,
   CookieEntry,
   DownloadEntry,
   ElementStyleAssertionReport,
   ElementStyleInspectionReport,
   HumanHandoffRecord,
   LocationOverride,
+  MediaEmulation,
+  MediaStateReport,
+  MutationTimelineReport,
   NetworkInterceptRule,
   PerceptionDiff,
   PerceptionSnapshotEntry,
   PerformanceReport,
+  HealthReport,
   PageScreenshot,
+  ScreenshotOptions,
   RecordingSession,
   RecordingStopResult,
   ResourceBudget,
@@ -130,6 +166,7 @@ import type {
   FileUploadTarget,
   StorageEntry,
   StorageReport,
+  HarArchive,
   TabId,
   TabLogSnapshot,
   TabSummary,
@@ -170,6 +207,7 @@ export type StreamHandlers = {
   onHandoffResolved?: (data: { requestId: string; cancelled?: boolean }) => void;
   onIntentChanged?: (data: { intent: string }) => void;
   onAgentLog?: (data: { level: string; message: string; timestamp: number }) => void;
+  onAssertionChanged?: (transition: AssertionTransition) => void;
   onError?: (err: Error) => void;
 };
 
@@ -190,7 +228,7 @@ export class BrowserClient {
     this.host    = opts.host    ?? "127.0.0.1";
     this.port    = opts.port    ?? 7070;
     this.timeout = opts.timeout ?? 30_000;
-    this.authToken = opts.authToken;
+    this.authToken = opts.authToken ?? readDefaultAuthToken();
     this.agentId = opts.agentId;
   }
 
@@ -228,14 +266,18 @@ export class BrowserClient {
     return this.get(`/api/tabs/${tabId}/manifests`);
   }
 
-  /** Returns a PageScreenshot with a base64 PNG in `.data`. */
-  async getScreenshot(tabId: TabId): Promise<PageScreenshot> {
-    return this.get(`/api/tabs/${tabId}/screenshot`);
+  /**
+   * Returns a PageScreenshot with a base64 PNG in `.data`.
+   * Pass `{ fullPage: true }` for the whole scrollable page, or
+   * `{ selector }` to capture just one element's bounding box.
+   */
+  async getScreenshot(tabId: TabId, options: ScreenshotOptions = {}): Promise<PageScreenshot> {
+    return this.get(`/api/tabs/${tabId}/screenshot${screenshotQuery(options)}`);
   }
 
   /** Returns the raw PNG as a Buffer — ready for fs.writeFile or vision API. */
-  async getScreenshotBuffer(tabId: TabId): Promise<Buffer> {
-    const shot = await this.getScreenshot(tabId);
+  async getScreenshotBuffer(tabId: TabId, options: ScreenshotOptions = {}): Promise<Buffer> {
+    const shot = await this.getScreenshot(tabId, options);
     return Buffer.from(shot.data, "base64");
   }
 
@@ -355,6 +397,14 @@ export class BrowserClient {
     return this.request("DELETE", `/api/tabs/${tabId}/logs`);
   }
 
+  /**
+   * Export the tab's buffered network requests as a HAR 1.2 archive —
+   * importable into Chrome DevTools, Charles, Insomnia, etc.
+   */
+  async getHar(tabId: TabId): Promise<HarArchive> {
+    return this.get(`/api/tabs/${tabId}/har`);
+  }
+
   async getRecording(tabId: TabId): Promise<RecordingSession | null> {
     return this.get(`/api/tabs/${tabId}/recording`);
   }
@@ -419,6 +469,23 @@ export class BrowserClient {
     await this.delete(`/api/tabs/${tabId}/location`);
   }
 
+  /** Read the tab's current CSS media emulation, or null if none is set. */
+  async getMediaEmulation(tabId: TabId): Promise<MediaEmulation | null> {
+    return this.get(`/api/tabs/${tabId}/media`);
+  }
+
+  /**
+   * Emulate CSS media state (dark mode, reduced motion, forced-colors, print)
+   * for the tab — survives navigations until cleared.
+   */
+  async setMediaEmulation(tabId: TabId, emulation: MediaEmulation): Promise<MediaEmulation> {
+    return this.post(`/api/tabs/${tabId}/media`, emulation);
+  }
+
+  async clearMediaEmulation(tabId: TabId): Promise<void> {
+    await this.delete(`/api/tabs/${tabId}/media`);
+  }
+
   /**
    * Enable network request interception for the tab.
    * Requests matching a rule are fulfilled with the mocked response.
@@ -442,16 +509,34 @@ export class BrowserClient {
    * Capture a screenshot and store it in the server-side cache under `snapshotId`.
    * Use `diffScreenshots` to compare two named captures.
    */
-  async captureNamedScreenshot(tabId: TabId, snapshotId: string): Promise<PageScreenshot> {
-    return this.post(`/api/tabs/${tabId}/screenshot/named`, { snapshotId });
+  async captureNamedScreenshot(tabId: TabId, snapshotId: string, options: ScreenshotOptions = {}): Promise<PageScreenshot> {
+    return this.post(`/api/tabs/${tabId}/screenshot/named`, { snapshotId, ...options });
   }
 
   /**
    * Compare two previously captured named screenshots pixel-by-pixel.
    * Returns a diff percentage and a base64 PNG with changed pixels highlighted in red.
    */
-  async diffScreenshots(beforeId: string, afterId: string): Promise<ScreenshotDiff> {
-    return this.post("/api/screenshots/diff", { beforeId, afterId });
+  /**
+   * Compare two named screenshots. `ignoreRegions` excludes dynamic areas
+   * (timestamps, ads). `perceptual: true` uses a YIQ color metric that ignores
+   * anti-aliasing / sub-pixel rendering noise (tune with `threshold`, 0–1).
+   */
+  async diffScreenshots(
+    beforeId: string,
+    afterId: string,
+    opts: { ignoreRegions?: DiffRegion[]; perceptual?: boolean; threshold?: number } = {}
+  ): Promise<ScreenshotDiff> {
+    return this.post("/api/screenshots/diff", { beforeId, afterId, ...opts });
+  }
+
+  /**
+   * Map changed pixel regions (from a `diffScreenshots` result's `diffRegions`)
+   * to the DOM elements that occupy them — a structural "which elements changed".
+   * Captures live element bounds, so call it while the page is in the after-state.
+   */
+  async mapRegionsToElements(tabId: TabId, regions: DiffRegion[]): Promise<ChangedElement[]> {
+    return this.post(`/api/tabs/${tabId}/changed-elements`, { regions });
   }
 
   /**
@@ -498,9 +583,38 @@ export class BrowserClient {
   async captureViewportSuite(
     tabId: TabId,
     presets?: ViewportPresetName[],
-    includeDiffs = false
+    includeDiffs = false,
+    includeLayoutIssues = false
   ): Promise<ViewportSuiteReport> {
-    return this.post(`/api/tabs/${tabId}/viewport-suite`, { presets, includeDiffs });
+    return this.post(`/api/tabs/${tabId}/viewport-suite`, { presets, includeDiffs, includeLayoutIssues });
+  }
+
+  /**
+   * Detect layout problems at the current viewport: horizontal page overflow,
+   * elements escaping the viewport or their container, and clipped content.
+   * Run after `setViewport`/`setEmulatedViewport` to find why a breakpoint broke.
+   */
+  async detectLayoutIssues(tabId: TabId): Promise<LayoutIssuesReport> {
+    return this.get(`/api/tabs/${tabId}/layout-issues`);
+  }
+
+  /**
+   * Read the page's current responsive state — resolved media features
+   * (`prefers-color-scheme`, `prefers-reduced-motion`, pointer/hover,
+   * orientation) and which `@media` queries currently match.
+   */
+  async getMediaState(tabId: TabId): Promise<MediaStateReport> {
+    return this.get(`/api/tabs/${tabId}/media-state`);
+  }
+
+  /**
+   * Sample DOM mutations for `durationMs` (default 1000) and return the busiest
+   * subtrees — a re-render/layout-thrash detector. Trigger an interaction during
+   * the window to attribute mutations to it.
+   */
+  async captureMutationTimeline(tabId: TabId, durationMs?: number): Promise<MutationTimelineReport> {
+    const query = durationMs ? `?durationMs=${durationMs}` : "";
+    return this.get(`/api/tabs/${tabId}/mutations${query}`);
   }
 
   /**
@@ -515,6 +629,14 @@ export class BrowserClient {
    */
   async getPerformanceMetrics(tabId: TabId): Promise<PerformanceReport> {
     return this.get(`/api/tabs/${tabId}/performance`);
+  }
+
+  /**
+   * Aggregated page-health scorecard: Core Web Vitals + WCAG audit + console
+   * errors + failed requests + layout overflow, with a pass/fail CI gate.
+   */
+  async getHealthReport(tabId: TabId): Promise<HealthReport> {
+    return this.get(`/api/tabs/${tabId}/health`);
   }
 
   /**
@@ -550,6 +672,15 @@ export class BrowserClient {
    */
   async auditAccessibility(tabId: TabId): Promise<A11yAuditReport> {
     return this.get(`/api/tabs/${tabId}/a11y`);
+  }
+
+  /**
+   * Audit keyboard tab order against visual reading order: flags positive
+   * `tabindex` and points where focus jumps backwards (to an element above or
+   * left of the previous one). Complements the WCAG audit's static checks.
+   */
+  async auditFocusOrder(tabId: TabId): Promise<FocusOrderReport> {
+    return this.get(`/api/tabs/${tabId}/focus-order`);
   }
 
   /**
@@ -613,6 +744,24 @@ export class BrowserClient {
    */
   async captureComponentTree(tabId: TabId): Promise<ComponentTreeReport> {
     return this.get(`/api/tabs/${tabId}/component-tree`);
+  }
+
+  /**
+   * Harvest the de-facto design system on the page — colors, font families,
+   * type scale, spacing, radii, shadows, z-index layers (each ranked by usage),
+   * plus declared CSS custom properties.
+   */
+  async extractDesignTokens(tabId: TabId): Promise<DesignTokensReport> {
+    return this.get(`/api/tabs/${tabId}/design-tokens`);
+  }
+
+  /**
+   * Map rendered DOM nodes back to their authoring component + source `file:line`
+   * (React `_debugSource`, Svelte `__svelte_meta`, Vue `__file`). Requires a dev
+   * build with source metadata. Lets an agent reference components, not selectors.
+   */
+  async captureComponentSources(tabId: TabId): Promise<ComponentSourceReport> {
+    return this.get(`/api/tabs/${tabId}/component-sources`);
   }
 
   // ── Three.js Scene Inspector ──────────────────────────────────────────────
@@ -684,6 +833,23 @@ export class BrowserClient {
       throw err;
     }
     return result;
+  }
+
+  /**
+   * Register a standing natural-language assertion that the browser re-checks on
+   * every page observation, emitting an `assertion_changed` SSE event whenever
+   * its pass/fail state flips. Subscribe via `stream({ onAssertionChanged })`.
+   */
+  async watchAssertion(tabId: TabId, assertion: string): Promise<AssertionWatch> {
+    return this.post(`/api/tabs/${tabId}/watches`, { assertion });
+  }
+
+  async listAssertionWatches(tabId: TabId): Promise<AssertionWatch[]> {
+    return this.get(`/api/tabs/${tabId}/watches`);
+  }
+
+  async removeAssertionWatch(tabId: TabId, watchId: string): Promise<{ removed: boolean }> {
+    return this.delete(`/api/tabs/${tabId}/watches/${encodeURIComponent(watchId)}`);
   }
 
   // ── Storage Inspector ─────────────────────────────────────────────────────
@@ -995,7 +1161,21 @@ function dispatch(eventType: string, data: unknown, handlers: StreamHandlers) {
     case "agent_log":
       handlers.onAgentLog?.(data as { level: string; message: string; timestamp: number });
       break;
+    case "assertion_changed":
+      handlers.onAssertionChanged?.(data as AssertionTransition);
+      break;
   }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Build the `?fullPage=&selector=` query string for screenshot requests. */
+function screenshotQuery(options: ScreenshotOptions): string {
+  const params = new URLSearchParams();
+  if (options.fullPage) params.set("fullPage", "true");
+  if (options.selector) params.set("selector", options.selector);
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────

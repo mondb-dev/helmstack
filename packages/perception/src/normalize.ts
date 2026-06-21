@@ -25,6 +25,7 @@ export function normalizePerception(snapshot: PageSnapshot, observation: PageObs
     actions: observation?.primaryActions || projectActions(accessibility),
     alerts: observation?.alerts || [],
     media: observation?.media || [],
+    ...(observation?.social ? { social: observation.social } : {}),
     oauthProviders: collectOAuthProviders(observation?.primaryActions || []),
     accessibility,
     signals: {
@@ -127,4 +128,3 @@ function buildAxSelectorHint(role: string, name?: string): string {
 function collectOAuthProviders(actions: ObservedAction[]): string[] {
   return [...new Set(actions.map((action) => action.provider).filter(Boolean))] as string[];
 }
-

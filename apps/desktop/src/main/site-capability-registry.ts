@@ -713,7 +713,7 @@ function validateWebMcpManifest(manifest: { version?: string; tools: unknown[] }
       continue;
     }
     if (seenNames.has(tool.name)) {
-      issues.push({ path: `tools[${index}].name`, message: `Duplicate tool name \"${tool.name}\".`, severity: "error" });
+      issues.push({ path: `tools[${index}].name`, message: `Duplicate tool name "${tool.name}".`, severity: "error" });
     }
     seenNames.add(tool.name);
 

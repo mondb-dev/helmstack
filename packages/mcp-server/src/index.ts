@@ -163,10 +163,17 @@ server.tool(
 
 server.tool(
   "browser_screenshot",
-  "Take a screenshot of a tab and return it as a base64 PNG image.",
-  { tabId: z.string().describe("Tab ID") },
-  async ({ tabId }) => {
-    const shot = await browser.getScreenshot(tabId);
+  "Take a screenshot of a tab and return it as a base64 PNG image. By default captures the viewport; pass fullPage for the whole scrollable page, or selector to capture just one element.",
+  {
+    tabId: z.string().describe("Tab ID"),
+    fullPage: z.boolean().optional().describe("Capture the entire scrollable page instead of just the viewport"),
+    selector: z.string().optional().describe("Capture only the first element matching this CSS selector"),
+  },
+  async ({ tabId, fullPage, selector }) => {
+    const shot = await browser.getScreenshot(tabId, {
+      ...(fullPage ? { fullPage } : {}),
+      ...(selector ? { selector } : {}),
+    });
     return {
       content: [
         {
@@ -205,7 +212,7 @@ Common command types:
       .describe("Browser command to execute"),
   },
   async ({ tabId, command }) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const result = await browser.execute(tabId, command as any);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   }
@@ -352,6 +359,13 @@ server.tool(
 );
 
 server.tool(
+  "browser_export_har",
+  "Export the tab's buffered network requests as a HAR 1.2 archive (importable into Chrome DevTools, Charles, Insomnia, etc.).",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.getHar(tabId))
+);
+
+server.tool(
   "browser_network_audit",
   `Produce a focused network/security audit for a tab. Returns per-request data useful for auditing:
 - Response headers (Cache-Control, Content-Security-Policy, Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, etc.)
@@ -456,12 +470,30 @@ server.tool(
 
 server.tool(
   "browser_diff_screenshots",
-  "Compare two named screenshots pixel-by-pixel and return changed regions plus a base64 diff image.",
+  "Compare two named screenshots pixel-by-pixel and return changed regions plus a base64 diff image. Pass ignoreRegions to exclude dynamic areas (timestamps, ads) and cut false positives.",
   {
     beforeId: z.string().describe("Earlier screenshot ID"),
     afterId: z.string().describe("Later screenshot ID"),
+    ignoreRegions: z
+      .array(z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }))
+      .optional()
+      .describe("Rectangles (px) to exclude from the diff"),
+    perceptual: z.boolean().optional().describe("Use a YIQ perceptual metric that ignores anti-aliasing / sub-pixel noise"),
+    threshold: z.number().optional().describe("Perceptual sensitivity 0–1 (default 0.1; higher tolerates more)"),
   },
-  async ({ beforeId, afterId }) => jsonResult(await browser.diffScreenshots(beforeId, afterId))
+  async ({ beforeId, afterId, ignoreRegions, perceptual, threshold }) =>
+    jsonResult(await browser.diffScreenshots(beforeId, afterId, { ignoreRegions, perceptual, threshold }))
+);
+
+server.tool(
+  "browser_changed_elements",
+  "Map changed pixel regions (a diffScreenshots result's diffRegions) to the DOM elements that occupy them — a structural 'which elements changed'. Captures live element bounds, so call it while the page is in the after-state.",
+  {
+    tabId: z.string().describe("Tab ID"),
+    regions: z.array(z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }))
+      .describe("Changed regions from a diff result"),
+  },
+  async ({ tabId, regions }) => jsonResult(await browser.mapRegionsToElements(tabId, regions))
 );
 
 server.tool(
@@ -497,6 +529,20 @@ server.tool(
   "Capture Core Web Vitals, navigation timing, slow resources, and raw CDP performance metrics for a tab.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getPerformanceMetrics(tabId))
+);
+
+server.tool(
+  "browser_health_report",
+  "Aggregated page-health scorecard fusing Core Web Vitals, the WCAG audit, console/JS errors, failed network requests, and layout overflow into per-category scores plus an overall score and a pass/fail gate (suitable for CI).",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.getHealthReport(tabId))
+);
+
+server.tool(
+  "browser_focus_order",
+  "Audit keyboard tab order vs. the page's visual reading order: flags positive tabindex (which hijacks order) and points where focus jumps backwards (to an element above or left of the previous one). Complements the WCAG audit.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.auditFocusOrder(tabId))
 );
 
 server.tool(
@@ -569,6 +615,44 @@ server.tool(
   "Capture a React, Vue, or Svelte component tree when framework dev hooks are exposed on the page.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.captureComponentTree(tabId))
+);
+
+server.tool(
+  "browser_design_tokens",
+  "Harvest the de-facto design system in use on the page: colors, font families, type scale, font weights, spacing, border-radii, shadows, and z-index layers (each ranked by usage frequency), plus declared CSS custom properties. Useful for design-system audits and 'does this match the tokens' checks.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.extractDesignTokens(tabId))
+);
+
+server.tool(
+  "browser_component_sources",
+  "Map rendered DOM nodes back to the component + source file:line that produced them (React _debugSource, Svelte __svelte_meta, Vue __file). Requires a dev build with source metadata. Lets you reference '<PrimaryButton> at src/ui/Button.tsx:42' instead of a brittle CSS selector.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.captureComponentSources(tabId))
+);
+
+server.tool(
+  "browser_layout_issues",
+  "Detect layout problems at the current viewport: horizontal page overflow and the elements responsible, children escaping their constrained container, and elements clipping their own content. Set the viewport first (browser_set_viewport) to diagnose why a responsive breakpoint broke.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.detectLayoutIssues(tabId))
+);
+
+server.tool(
+  "browser_media_state",
+  "Read the page's current responsive state: resolved media features (prefers-color-scheme, prefers-reduced-motion, prefers-contrast, forced-colors, pointer, hover, orientation), the viewport size, and which @media queries from the page's stylesheets currently match. Pairs with browser_set_media_emulation to verify emulated states take effect.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.getMediaState(tabId))
+);
+
+server.tool(
+  "browser_mutation_timeline",
+  "Sample DOM mutations over a time window (durationMs, default 1000) and rank the busiest subtrees — a re-render/layout-thrash detector. Trigger an interaction during the window to attribute mutations to it.",
+  {
+    tabId: z.string().describe("Tab ID"),
+    durationMs: z.number().optional().describe("Sample window in ms (100–10000, default 1000)"),
+  },
+  async ({ tabId, durationMs }) => jsonResult(await browser.captureMutationTimeline(tabId, durationMs))
 );
 
 server.tool(
@@ -736,6 +820,42 @@ server.tool(
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => {
     await browser.clearLocationOverride(tabId);
+    return okResult();
+  }
+);
+
+server.tool(
+  "browser_get_media_emulation",
+  "Return the current CSS media emulation (dark mode, reduced motion, forced-colors, print) for a tab.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.getMediaEmulation(tabId))
+);
+
+server.tool(
+  "browser_set_media_emulation",
+  "Emulate CSS media state for a tab to test dark mode, reduced motion, forced-colors (high-contrast), and print styles. Persists across navigations until cleared.",
+  {
+    tabId: z.string().describe("Tab ID"),
+    colorScheme: z.enum(["light", "dark", "no-preference"]).optional().describe("Emulate prefers-color-scheme"),
+    reducedMotion: z.enum(["reduce", "no-preference"]).optional().describe("Emulate prefers-reduced-motion"),
+    forcedColors: z.enum(["active", "none"]).optional().describe("Emulate forced-colors (high-contrast)"),
+    media: z.string().optional().describe('CSS media type, e.g. "screen" or "print"'),
+  },
+  async ({ tabId, colorScheme, reducedMotion, forcedColors, media }) =>
+    jsonResult(await browser.setMediaEmulation(tabId, {
+      ...(colorScheme ? { colorScheme } : {}),
+      ...(reducedMotion ? { reducedMotion } : {}),
+      ...(forcedColors ? { forcedColors } : {}),
+      ...(media ? { media } : {}),
+    }))
+);
+
+server.tool(
+  "browser_clear_media_emulation",
+  "Clear all CSS media emulation for a tab (return to the real OS/browser media state).",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => {
+    await browser.clearMediaEmulation(tabId);
     return okResult();
   }
 );

@@ -47,6 +47,14 @@ jobs:
 
       - run: npm ci
 
+      - name: Typecheck
+        # Covers every workspace (incl. tests) on all OSes — catches type
+        # regressions on Linux, where the Electron desktop build is skipped.
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
       - name: Build packages
         run: npm run build:packages
 

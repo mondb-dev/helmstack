@@ -13,7 +13,7 @@
       "id": "action-1",
       "label": "Continue with Google",
       "kind": "oauth",
-      "selectorHint": "a",
+      "selectorHint": "a:nth-of-type(1)",
       "href": "https://example.com/auth/google",
       "provider": "google",
       "disabled": false
@@ -22,7 +22,7 @@
       "id": "action-2",
       "label": "Continue with GitHub",
       "kind": "oauth",
-      "selectorHint": "a",
+      "selectorHint": "a:nth-of-type(2)",
       "href": "https://example.com/auth/github",
       "provider": "github",
       "disabled": false

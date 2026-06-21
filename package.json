@@ -12,7 +12,10 @@
     "build": "npm run build -w @helmstack/desktop",
     "build:packages": "npm run build -w packages/shared -w packages/perception -w packages/agent-sdk -w packages/mcp-server",
     "dev": "npm run dev -w @helmstack/desktop",
+    "package:mac": "npm run package:mac -w @helmstack/desktop",
     "serve:test-pages": "node apps/desktop/scripts/serve-test-pages.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:perception": "vitest run",
     "prepare": "husky"
@@ -20,13 +23,16 @@
   "devDependencies": {
     "@commitlint/cli": "^19.6.1",
     "@commitlint/config-conventional": "^19.6.0",
+    "@eslint/js": "^10.0.1",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
+    "eslint": "^10.5.0",
     "husky": "^9.1.7",
     "jsdom": "^26.1.0",
     "multi-semantic-release": "^3.0.2",
     "semantic-release": "^24.2.3",
     "tsup": "^8.4.0",
+    "typescript-eslint": "^8.61.1",
     "vitest": "^3.2.4"
   }
 }

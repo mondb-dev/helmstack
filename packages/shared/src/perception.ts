@@ -1,6 +1,19 @@
 import type { TabId } from "./browser.js";
 
-export type PageKind = "landing" | "signup" | "login" | "checkout" | "form" | "dashboard";
+export type PageKind =
+  | "landing"
+  | "signup"
+  | "login"
+  | "checkout"
+  | "form"
+  | "dashboard"
+  | "social-feed"
+  | "social-profile"
+  | "social-thread"
+  | "social-compose"
+  | "social-search"
+  | "social-messages"
+  | "social-notifications";
 
 // ── Dev-tool observation types ────────────────────────────────────────────────
 
@@ -83,6 +96,58 @@ export type TabLogSnapshot = {
   capturedAt: number;
 };
 
+// ── HAR export (HTTP Archive 1.2) ──────────────────────────────────────────────
+
+export type HarNameValue = { name: string; value: string };
+
+export type HarEntry = {
+  startedDateTime: string;
+  /** Total elapsed time in ms, or -1 when unknown. */
+  time: number;
+  request: {
+    method: string;
+    url: string;
+    httpVersion: string;
+    headers: HarNameValue[];
+    queryString: HarNameValue[];
+    cookies: HarNameValue[];
+    headersSize: number;
+    bodySize: number;
+  };
+  response: {
+    status: number;
+    statusText: string;
+    httpVersion: string;
+    headers: HarNameValue[];
+    cookies: HarNameValue[];
+    content: { size: number; mimeType: string };
+    redirectURL: string;
+    headersSize: number;
+    bodySize: number;
+    /** Non-standard: populated when the request failed. */
+    _error?: string;
+  };
+  cache: Record<string, never>;
+  timings: { send: number; wait: number; receive: number };
+  _fromDiskCache?: boolean;
+  _fromServiceWorker?: boolean;
+};
+
+/** A HAR 1.2 archive — importable into Chrome DevTools, Charles, Insomnia, etc. */
+export type HarArchive = {
+  log: {
+    version: "1.2";
+    creator: { name: string; version: string };
+    pages: Array<{
+      startedDateTime: string;
+      id: string;
+      title: string;
+      pageTimings: { onContentLoad: number; onLoad: number };
+    }>;
+    entries: HarEntry[];
+  };
+};
+
 export type MediaKind = "video" | "audio";
 
 export type MediaReadyState =
@@ -105,6 +170,101 @@ export type ObservedMedia = {
   loop: boolean;
   readyState: MediaReadyState;
   selectorHint: string;
+};
+
+export type SocialPlatformKind =
+  | "x"
+  | "facebook"
+  | "instagram"
+  | "linkedin"
+  | "tiktok"
+  | "reddit"
+  | "youtube"
+  | "threads"
+  | "bluesky"
+  | "mastodon"
+  | "generic";
+
+export type SocialSurfaceKind =
+  | "feed"
+  | "profile"
+  | "thread"
+  | "composer"
+  | "search"
+  | "messages"
+  | "notifications"
+  | "unknown";
+
+export type SocialActionKind =
+  | "like"
+  | "react"
+  | "comment"
+  | "reply"
+  | "share"
+  | "repost"
+  | "bookmark"
+  | "follow"
+  | "message"
+  | "open_profile"
+  | "navigate"
+  | "search"
+  | "submit_post";
+
+export type ObservedSocialAction = {
+  id: string;
+  label: string;
+  kind: SocialActionKind;
+  selectorHint: string;
+  href?: string;
+  disabled: boolean;
+  count?: number;
+  targetPostId?: string;
+};
+
+export type ObservedSocialPost = {
+  id: string;
+  author?: string;
+  handle?: string;
+  text: string;
+  timestamp?: string;
+  href?: string;
+  selectorHint: string;
+  media: ObservedMedia[];
+  actions: ObservedSocialAction[];
+};
+
+export type ObservedSocialComposer = {
+  id: string;
+  purpose: "post" | "reply" | "comment" | "message";
+  label?: string;
+  placeholder?: string;
+  selectorHint: string;
+  textEntrySelectorHint: string;
+  submitActions: ObservedSocialAction[];
+  hasAttachedMedia: boolean;
+};
+
+export type ObservedSocialNavigationItem = {
+  id: string;
+  label: string;
+  destination: "home" | "search" | "notifications" | "messages" | "profile" | "bookmarks" | "settings" | "create" | "unknown";
+  selectorHint: string;
+  href?: string;
+};
+
+export type SocialSurface = {
+  platform: SocialPlatformKind;
+  kind: SocialSurfaceKind;
+  posts: ObservedSocialPost[];
+  composers: ObservedSocialComposer[];
+  navigation: ObservedSocialNavigationItem[];
+  actions: ObservedSocialAction[];
+  signals: {
+    postCount: number;
+    composerCount: number;
+    navigationItemCount: number;
+    actionCount: number;
+  };
 };
 
 export type FieldType =
@@ -165,6 +325,7 @@ export type PageObservation = {
   primaryActions: ObservedAction[];
   alerts: string[];
   media: ObservedMedia[];
+  social?: SocialSurface;
 };
 
 export type AccessibilitySummary = {
@@ -188,6 +349,7 @@ export type PageGraph = {
   actions: ObservedAction[];
   alerts: string[];
   media: ObservedMedia[];
+  social?: SocialSurface;
   oauthProviders: string[];
   accessibility: AccessibilitySummary;
   signals: {

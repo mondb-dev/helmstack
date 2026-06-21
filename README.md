@@ -97,6 +97,7 @@ Today:
 - `packages/shared`: shared browser, perception, substrate, and WebMCP contracts
 - `docs/webmcp-ready.md`: architecture notes for pluggable cognition and WebMCP alignment
 - `docs/agent-sdk.md`: complete Agent SDK reference with examples
+- `docs/social-perception.md`: social feed/post/composer/navigation semantics exposed through `PageGraph.social`
 
 ## Implemented
 
@@ -128,6 +129,7 @@ Today:
 - anti-detection hardening (navigator.webdriver, window.chrome, WebGL, canvas fingerprinting)
 - Chrome extension loading (DevTools, ad-blockers, etc.)
 - media perception — video/audio state capture (`ObservedMedia` in `PageGraph`)
+- social-platform perception — optional `social` graph for feeds, posts, composers, navigation, and reaction/share/follow/message affordances
 - action retry/recovery — `withDomRetry()` with exponential backoff (3 attempts)
 
 **Dev tooling (exposed via REST, SDK, and MCP)**
@@ -495,7 +497,12 @@ Extensions are indexed in `userData/extensions/extensions-index.json` and auto-l
 
 ## Anti-Detection
 
-The browser hardens each tab against bot-detection fingerprinting using CDP `Page.addScriptToEvaluateOnNewDocument`.
+> **Opt-in.** Anti-detection is **off by default** — the default is a clean,
+> deterministic browser suited to front-end development and CI. Set
+> `HELMSTACK_STEALTH=1` to enable fingerprint hardening **and** human-like input
+> timing for autonomous automation. See [docs/security-model.md](docs/security-model.md).
+
+When enabled, the browser hardens each tab against bot-detection fingerprinting using CDP `Page.addScriptToEvaluateOnNewDocument`.
 
 **Patches applied before any site code runs:**
 - `navigator.webdriver` → `undefined`
@@ -507,6 +514,50 @@ The browser hardens each tab against bot-detection fingerprinting using CDP `Pag
 - `navigator.platform` → matched to user-agent OS
 
 These patches run in the page's main JavaScript world and persist across navigations. See `apps/desktop/src/main/anti-detection.ts` for implementation details.
+
+## Front-End Development Quickstart
+
+HelmStack isn't only an autonomous-agent substrate — it's a perception +
+execution layer you can point at your own app while you build it. Start the
+desktop app, then drive it from a script or your agent via the SDK (set
+`HELMSTACK_AUTH_TOKEN` to the token printed on launch, or point
+`HELMSTACK_TOKEN_FILE` at `<userData>/helmstack-agent-token`).
+
+```typescript
+import { createBrowserClient } from "@helmstack/agent-sdk";
+
+const browser = createBrowserClient();           // reads HELMSTACK_AUTH_TOKEN from env
+const tabs = await browser.openTab("http://localhost:3000");
+const tab = tabs.find((t) => t.isActive)!;
+
+// 1. Capture baselines before a change
+await browser.captureNamedScreenshot(tab.id, "before", { fullPage: true });
+await browser.savePerceptionSnapshot(tab.id, "before");
+
+// 2. …edit your code, let the dev server hot-reload, then re-capture…
+await browser.captureNamedScreenshot(tab.id, "after", { fullPage: true });
+await browser.savePerceptionSnapshot(tab.id, "after");
+
+// 3. Diff visually AND structurally
+const pixels = await browser.diffScreenshots("before", "after");
+const structure = await browser.diffPerception("before", "after");
+console.log(`${pixels.diffPercentage}% pixels changed; ${structure.summary}`);
+
+// 4. Audit the result — a11y, design tokens, layout, dark mode
+const a11y   = await browser.auditAccessibility(tab.id);
+const tokens = await browser.extractDesignTokens(tab.id);          // colors/type/spacing in use
+await browser.setMediaEmulation(tab.id, { colorScheme: "dark" });  // test dark mode
+await browser.setViewport(tab.id, 390, 844, true);
+const layout = await browser.detectLayoutIssues(tab.id);           // why did mobile break?
+
+if (a11y.score < 90 || layout.hasHorizontalOverflow) process.exit(1); // gate CI
+```
+
+Baselines (screenshots + perception snapshots) persist to disk under
+`<userData>`, so "compare against yesterday" works across restarts and CI runs.
+Every capability below is also available as an MCP tool (e.g. `browser_design_tokens`,
+`browser_layout_issues`, `browser_media_state`, `browser_export_har`) for use
+directly from an AI client.
 
 ## Dev Tooling for Web Teams
 
@@ -807,12 +858,22 @@ Build the app:
 npm run build
 ```
 
+Create a release-ready macOS app bundle:
+
+```bash
+npm run package:mac
+```
+
+Output:
+- `apps/desktop/release/HelmStack.app`
+- `apps/desktop/release/HelmStack-<version>-mac-<arch>.zip`
+
 ## Immediate Next Steps
 
 1. **Origin allowlisting UI** — optional browser-managed allowlist for REST clients outside the stdio MCP bridge
 2. **MCP resources/prompts** — expose large cached artifacts as MCP resources and add reusable prompts for audits/regressions
 3. **LLM agent examples** — OpenAI, Anthropic, LangGraph integration demos beyond the basic intent agent
-4. **Packaged installers** — macOS .dmg, Windows .exe, Linux .AppImage/.deb
+4. **Installers and notarization** — macOS .dmg/notarization, Windows .exe, Linux .AppImage/.deb
 5. **Multi-account session isolation** — separate cookie jars per account/profile
 
 ## Contributing

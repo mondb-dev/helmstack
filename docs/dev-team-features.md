@@ -121,7 +121,12 @@ interface DiffRegion {
 
 ---
 
-## 🟡 High Value — Not Yet Implemented
+## ✅ Implemented (continued)
+
+> These were originally tracked as "not yet implemented" but have since shipped
+> (each is marked ✅ below). Newer additions — full-page/element screenshots,
+> CSS media emulation, HAR export, and on-disk visual/perception baselines —
+> are documented in the agent-server route list and the Agent SDK reference.
 
 ### 4. Performance Metrics ✅
 Surface Core Web Vitals (LCP, FCP, CLS, INP, TTFB) from CDP `Performance` domain + `window.performance` APIs alongside each perception packet.
@@ -722,7 +727,7 @@ CDP domains used:
 
 ---
 
-## 12. Three.js Scene Inspector 
+## 19. Three.js Scene Inspector
 
 **Endpoint:** `GET /api/tabs/:id/threejs-scene`
 
@@ -733,7 +738,7 @@ CDP domains used:
 Probes a live Three.js scene without any custom instrumentation on the app side.
 Detects common renderer/scene exposure patterns (`window.renderer`, `window.scene`,
 `window.__threeRenderer__`, `window.experience.renderer`, React Three Fiber canvas hooks)
-then walks the scene graph ( 8), reads renderer draw-call stats, and estimates FPSdepth 
+then walks the scene graph (depth 8), reads renderer draw-call stats, and estimates FPS
 via a 300 ms `requestAnimationFrame` sample.
 
 ### What the AI gets
@@ -741,7 +746,7 @@ via a 300 ms `requestAnimationFrame` sample.
 | Field | Description |
 |---|---|
 | `detected` | Whether a Three.js renderer was found on the page |
-| `scene` | Full object tree (meshes, lights, cameras, ) |groups 
+| `scene` | Full object tree (meshes, lights, cameras, groups) |
 | `renderer` | `drawCalls`, `triangles`, `geometries`, `textures`, `programs` |
 | `fps` | Estimated FPS + frames sampled |
 | `materials` | All unique `ThreeMaterialInfo` objects in the scene (deduplicated) |
@@ -787,8 +792,8 @@ feedback. Reference exact object names, material UUIDs, and field values.`
 });
 
 console.log(feedback.choices[0].message.content);
- "Your scene has 847 draw calls. The 14 Mesh objects named 'wall_*'
-//    share identical  merge them into a singleMeshStandardMaterial 
+// "Your scene has 847 draw calls. The 14 Mesh objects named 'wall_*'
+//    share identical MeshStandardMaterial — merge them into a single
 //    InstancedMesh to reduce draw calls to ~12..."
 ```
 
@@ -796,9 +801,9 @@ console.log(feedback.choices[0].message.content);
 
 | Observation | Example feedback |
 |---|---|
-| High draw calls | "Merge the 23 static Mesh  they all use the same material" |objects 
+| High draw calls | "Merge the 23 static Mesh objects — they all use the same material" |
 | Unused shadow casting | "6 meshes have `castShadow: true` but no `DirectionalLight` has shadows enabled" |
-| Low-intensity light | "`PointLight 'lamp' intensity: 0. likely a unit mistake; try 1.5.0" |0001` 
-| Duplicate materials | "14 unique MeshStandardMaterial instances are  share one reference" |identical 
-| Infinite light range | "`PointLight distance: 0` means infinite  set an explicit range" |falloff 
+| Low-intensity light | "`PointLight 'lamp' intensity: 0.0001` likely a unit mistake; try 1.5" |
+| Duplicate materials | "14 unique MeshStandardMaterial instances are identical — share one reference" |
+| Infinite light range | "`PointLight distance: 0` means infinite falloff — set an explicit range" |
 | Camera clipping | "`PerspectiveCamera far: 100` may clip geometry at world-scale scenes" |

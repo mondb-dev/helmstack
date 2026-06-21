@@ -7,6 +7,20 @@ import { BrowserWindow, nativeImage, WebContentsView } from "electron";
 import { normalizePerception } from "../../../../packages/perception/src/normalize.js";
 import { AccountStore } from "./account-store.js";
 import { installAntiDetection } from "./anti-detection.js";
+import { isStealthEnabled } from "./runtime-config.js";
+import { PerceptionBaselineStore, ScreenshotBaselineStore, type PerceptionBaselineEntry } from "./baseline-store.js";
+import { buildHar } from "./har.js";
+import { buildDesignTokensReport, designTokenCollectorScript, type RawDesignTokens } from "./design-tokens.js";
+import { buildLayoutIssuesReport, layoutIssueDetectorScript, type LayoutIssuesRaw } from "./layout-issues.js";
+import { buildMediaStateReport, mediaStateCollectorScript, type MediaStateRaw } from "./media-state.js";
+import { exportRecordingAll } from "./recording-export.js";
+import { buildHealthReport } from "./health-report.js";
+import { AssertionWatchStore } from "./assertion-watch.js";
+import { buildMutationReport, mutationTimelineScript, type RawMutationTimeline } from "./mutation-timeline.js";
+import { buildComponentSourceReport, componentSourceCollectorScript, type RawComponentSources } from "./component-source.js";
+import { comparePixels } from "./pixel-compare.js";
+import { correlateRegionsToElements, elementBoundsScript } from "./element-bounds.js";
+import { analyzeFocusOrder, focusableElementsScript, type RawFocusOrder } from "./focus-order.js";
 import { waitForPageSettled } from "./dom-actuator.js";
 import { ApprovalPolicyStore } from "./approval-policy-store.js";
 import { ApprovalStore } from "./approval-store.js";
@@ -36,10 +50,12 @@ import {
   type HumanHandoffRecord,
   type IndexedDbDatabase,
   type LocationOverride,
+  type MediaEmulation,
   type NetworkInterceptRule,
   type NetworkRequestEntry,
   type PageGraph,
   type PageScreenshot,
+  type ScreenshotOptions,
   type PageSnapshot,
   type PageObservation,
   type PerceptionDiff,
@@ -59,6 +75,18 @@ import {
   type StorageReport,
   type TabId,
   type TabLogSnapshot,
+  type HarArchive,
+  type DesignTokensReport,
+  type LayoutIssuesReport,
+  type MediaStateReport,
+  type HealthReport,
+  type AssertionWatch,
+  type AssertionTransition,
+  type MutationTimelineReport,
+  type ComponentSourceReport,
+  type ChangedElement,
+  type ElementBound,
+  type FocusOrderReport,
   type TabSummary,
   type ThreeSceneReport,
   type TotpResult,
@@ -97,6 +125,7 @@ type TabRecord = {
   recording: RecordingSession | null;
   resourceBudget: ResourceBudget | null;
   locationOverride: LocationOverride | null;
+  mediaEmulation: MediaEmulation | null;
   // Network mock intercept rules (null = disabled)
   networkMockRules: NetworkInterceptRule[] | null;
 };
@@ -131,7 +160,11 @@ export class TabManager {
   private attachedTabId: TabId | null = null;
   private viewport: ViewportRect = DEFAULT_VIEWPORT;
   private readonly screenshotCache = new Map<string, PageScreenshot>();
-  private readonly perceptionCache = new Map<string, { graph: PageGraph; tabId: TabId; url: string; title: string; capturedAt: number }>();
+  private readonly perceptionCache = new Map<string, PerceptionBaselineEntry>();
+  private readonly screenshotStore: ScreenshotBaselineStore;
+  private readonly perceptionStore: PerceptionBaselineStore;
+  private readonly assertionWatches = new AssertionWatchStore();
+  private readonly assertionTransitionListeners = new Set<(transition: AssertionTransition) => void>();
   private readonly downloadTrackingSessions = new WeakSet<Electron.Session>();
 
   constructor(window: BrowserWindow, appDir: string, userDataPath: string, pagePreloadPath: string) {
@@ -142,6 +175,17 @@ export class TabManager {
     this.accounts = new AccountStore(userDataPath);
     this.policies = new ApprovalPolicyStore(userDataPath);
     this.sitePatterns = new SitePatternStore(userDataPath);
+
+    // Disk-backed baselines: rehydrate so visual/perception regression
+    // references survive an app restart.
+    this.screenshotStore = new ScreenshotBaselineStore(userDataPath);
+    this.perceptionStore = new PerceptionBaselineStore(userDataPath);
+    for (const { id, shot } of this.screenshotStore.all()) {
+      this.screenshotCache.set(id, shot);
+    }
+    for (const { id, entry } of this.perceptionStore.all()) {
+      this.perceptionCache.set(id, entry);
+    }
     this.capabilityRegistry = new SiteCapabilityRegistry(
       this.vault,
       this.accounts,
@@ -194,6 +238,7 @@ export class TabManager {
       recording: null,
       resourceBudget: null,
       locationOverride: null,
+      mediaEmulation: null,
       networkMockRules: null
     };
 
@@ -203,11 +248,15 @@ export class TabManager {
 
     // Install anti-detection after the first document loads so the WebContents
     // target is fully initialised and the CDP debugger can attach cleanly.
-    view.webContents.once("did-finish-load", () => {
-      installAntiDetection(view.webContents).catch((err: unknown) => {
-        console.warn("[AntiDetection] Failed to install on tab:", err);
+    // Stealth is opt-in (HELMSTACK_STEALTH=1); the default is a clean,
+    // unhardened browser suited to front-end development and CI.
+    if (isStealthEnabled()) {
+      view.webContents.once("did-finish-load", () => {
+        installAntiDetection(view.webContents).catch((err: unknown) => {
+          console.warn("[AntiDetection] Failed to install on tab:", err);
+        });
       });
-    });
+    }
 
     try {
       await this.focusTab(id);
@@ -281,6 +330,7 @@ export class TabManager {
     }
     tab.view.webContents.close();
     this.tabs.delete(tabId);
+    this.assertionWatches.clearTab(tabId);
 
     if (this.activeTabId === tabId) {
       const next = this.tabs.values().next().value as TabRecord | undefined;
@@ -303,9 +353,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     // Enable log/network CDP domains once per tab lifetime (idempotent after first call).
     await this.enableCdpLogging(tab);
@@ -331,13 +379,11 @@ export class TabManager {
     };
   }
 
-  async captureScreenshot(tabId: TabId): Promise<PageScreenshot> {
+  async captureScreenshot(tabId: TabId, options: ScreenshotOptions = {}): Promise<PageScreenshot> {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     const emu = tab.emulatedViewport;
     const w = (emu?.width  ?? this.viewport.width)  || 1280;
@@ -350,36 +396,99 @@ export class TabManager {
       width: w, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile
     });
 
-    const result = await webContents.debugger.sendCommand("Page.captureScreenshot", {
-      format: "png",
-      captureBeyondViewport: false
-    }) as { data: string };
+    // Resolve an optional capture region: a selector's bounding box, or the
+    // full scrollable content. Both need captureBeyondViewport so content
+    // below the fold renders.
+    let clip: { x: number; y: number; width: number; height: number; scale: number } | undefined;
+    let captureBeyondViewport = false;
 
-    await webContents.debugger.sendCommand("Emulation.clearDeviceMetricsOverride");
+    try {
+      if (options.selector) {
+        const bounds = await this.resolveElementBounds(webContents, options.selector);
+        if (!bounds) {
+          throw new Error(`No visible element matches selector: ${options.selector}`);
+        }
+        clip = { ...bounds, scale: 1 };
+        captureBeyondViewport = true;
+      } else if (options.fullPage) {
+        const layout = await webContents.debugger.sendCommand("Page.getLayoutMetrics") as {
+          cssContentSize?: { width: number; height: number };
+          contentSize?: { width: number; height: number };
+        };
+        const content = layout.cssContentSize ?? layout.contentSize;
+        if (content && content.width > 0 && content.height > 0) {
+          clip = { x: 0, y: 0, width: content.width, height: content.height, scale: 1 };
+          captureBeyondViewport = true;
+        }
+      }
 
-    const metrics = await webContents.debugger.sendCommand("Page.getLayoutMetrics") as {
-      cssLayoutViewport: { clientWidth: number; clientHeight: number };
-    };
+      const result = await webContents.debugger.sendCommand("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport,
+        ...(clip ? { clip } : {})
+      }) as { data: string };
 
-    return {
-      tabId,
-      capturedAt: Date.now(),
-      data: result.data,
-      mimeType: "image/png",
-      width: metrics.cssLayoutViewport.clientWidth,
-      height: metrics.cssLayoutViewport.clientHeight
-    };
+      const metrics = await webContents.debugger.sendCommand("Page.getLayoutMetrics") as {
+        cssLayoutViewport: { clientWidth: number; clientHeight: number };
+      };
+
+      return {
+        tabId,
+        capturedAt: Date.now(),
+        data: result.data,
+        mimeType: "image/png",
+        width: clip ? Math.round(clip.width) : metrics.cssLayoutViewport.clientWidth,
+        height: clip ? Math.round(clip.height) : metrics.cssLayoutViewport.clientHeight
+      };
+    } finally {
+      await webContents.debugger.sendCommand("Emulation.clearDeviceMetricsOverride").catch(() => {});
+    }
   }
 
-  /** Capture a screenshot and store it in the in-memory cache under `snapshotId`. */
-  async captureNamedScreenshot(tabId: TabId, snapshotId: string): Promise<PageScreenshot> {
-    const shot = await this.captureScreenshot(tabId);
+  /** Resolve a selector's page-coordinate bounding box, or null if not found/visible. */
+  private async resolveElementBounds(
+    webContents: Electron.WebContents,
+    selector: string
+  ): Promise<{ x: number; y: number; width: number; height: number } | null> {
+    const expression = `(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return null;
+      return { x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height };
+    })()`;
+    const res = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression,
+      returnByValue: true
+    }) as { result: { value: { x: number; y: number; width: number; height: number } | null } };
+    return res.result?.value ?? null;
+  }
+
+  /**
+   * Capture a screenshot and store it under `snapshotId`. Persisted to disk by
+   * default so it survives a restart; pass `persist: false` for transient
+   * captures (e.g. viewport-suite frames) that should stay in memory only.
+   */
+  async captureNamedScreenshot(
+    tabId: TabId,
+    snapshotId: string,
+    options: ScreenshotOptions = {},
+    persist = true
+  ): Promise<PageScreenshot> {
+    const shot = await this.captureScreenshot(tabId, options);
     this.screenshotCache.set(snapshotId, shot);
+    if (persist) {
+      this.screenshotStore.put(snapshotId, shot);
+    }
     return shot;
   }
 
   /** Compare two previously captured named screenshots pixel-by-pixel. */
-  diffScreenshots(beforeId: string, afterId: string): ScreenshotDiff {
+  diffScreenshots(
+    beforeId: string,
+    afterId: string,
+    options: { ignoreRegions?: DiffRegion[]; perceptual?: boolean; threshold?: number } = {}
+  ): ScreenshotDiff {
     const before = this.screenshotCache.get(beforeId);
     const after  = this.screenshotCache.get(afterId);
     if (!before) throw new Error(`Screenshot "${beforeId}" not found in cache`);
@@ -407,22 +516,38 @@ export class TabManager {
     const diffBuf = Buffer.from(rawA);
     // Track which pixels changed as a flat boolean array for region detection.
     const changed = new Uint8Array(totalPixels);
+    // Optional mask of pixels to ignore (e.g. dynamic timestamps/ads).
+    const ignoreMask = options.ignoreRegions?.length ? buildIgnoreMask(options.ignoreRegions, wA, hA) : null;
     let diffCount = 0;
 
-    for (let i = 0; i < rawA.length; i += 4) {
-      const db = Math.abs(rawA[i]   - rawB[i]);
-      const dg = Math.abs(rawA[i + 1] - rawB[i + 1]);
-      const dr = Math.abs(rawA[i + 2] - rawB[i + 2]);
-      if (dr > 10 || dg > 10 || db > 10) {
-        diffCount++;
+    if (options.perceptual) {
+      // Perceptual (YIQ) comparison: ignores anti-aliasing / sub-pixel noise.
+      const cmp = comparePixels(rawA, rawB, wA, hA, { threshold: options.threshold, ignoreMask });
+      changed.set(cmp.changed);
+      diffCount = cmp.diffCount;
+    } else {
+      // Default: raw per-channel ±10 comparison (unchanged behavior).
+      for (let i = 0; i < rawA.length; i += 4) {
         const px = i >> 2;
-        changed[px] = 1;
-        // Blend: 50% original + 50% solid red → preserves context while marking change.
-        diffBuf[i]     = Math.round(rawA[i]     * 0.4);           // B dimmed
-        diffBuf[i + 1] = Math.round(rawA[i + 1] * 0.4);           // G dimmed
-        diffBuf[i + 2] = Math.round(rawA[i + 2] * 0.4 + 255 * 0.6); // R boosted
-        diffBuf[i + 3] = 255;
+        if (ignoreMask && ignoreMask[px]) continue;
+        const db = Math.abs(rawA[i]   - rawB[i]);
+        const dg = Math.abs(rawA[i + 1] - rawB[i + 1]);
+        const dr = Math.abs(rawA[i + 2] - rawB[i + 2]);
+        if (dr > 10 || dg > 10 || db > 10) {
+          diffCount++;
+          changed[px] = 1;
+        }
       }
+    }
+
+    // Tint changed pixels red over the dimmed original so context stays legible.
+    for (let px = 0; px < totalPixels; px++) {
+      if (!changed[px]) continue;
+      const i = px * 4;
+      diffBuf[i]     = Math.round(rawA[i]     * 0.4);            // B dimmed
+      diffBuf[i + 1] = Math.round(rawA[i + 1] * 0.4);            // G dimmed
+      diffBuf[i + 2] = Math.round(rawA[i + 2] * 0.4 + 255 * 0.6); // R boosted
+      diffBuf[i + 3] = 255;
     }
 
     const diffImg = nativeImage.createFromBitmap(diffBuf, { width: wA, height: hA });
@@ -439,6 +564,25 @@ export class TabManager {
     };
   }
 
+  /**
+   * Map changed pixel regions (e.g. from `diffScreenshots`) to the DOM elements
+   * that occupy them — turns a pixel diff into "which elements changed". Captures
+   * live element bounds, so call it while the page is in the after-state.
+   */
+  async mapRegionsToElements(tabId: TabId, regions: DiffRegion[]): Promise<ChangedElement[]> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: elementBoundsScript(),
+      returnByValue: true,
+      awaitPromise: false
+    }) as { result: { value?: { elements: ElementBound[] } } };
+
+    return correlateRegionsToElements(regions, result.result.value?.elements ?? []);
+  }
+
   /** List all named screenshots currently held in the server-side cache. */
   listScreenshots(): Array<{ id: string; tabId: string; url: string; width: number; height: number; capturedAt: number }> {
     const out: Array<{ id: string; tabId: string; url: string; width: number; height: number; capturedAt: number }> = [];
@@ -450,9 +594,11 @@ export class TabManager {
     return out;
   }
 
-  /** Remove a named screenshot from the cache. Returns false if it didn't exist. */
+  /** Remove a named screenshot from the cache and disk. Returns false if it didn't exist. */
   deleteScreenshot(id: string): boolean {
-    return this.screenshotCache.delete(id);
+    const existed = this.screenshotCache.delete(id);
+    this.screenshotStore.remove(id);
+    return existed;
   }
 
   /**
@@ -461,11 +607,13 @@ export class TabManager {
    *
    * @param presets  Named presets to capture (defaults to ["mobile","tablet","laptop","desktop"]).
    * @param includeDiffs  When true, also diffs each consecutive pair of breakpoints.
+   * @param includeLayoutIssues  When true, also runs layout-overflow detection at each breakpoint.
    */
   async captureViewportSuite(
     tabId: TabId,
     presets: ViewportPresetName[] = ["mobile", "tablet", "laptop", "desktop"],
-    includeDiffs = false
+    includeDiffs = false,
+    includeLayoutIssues = false
   ): Promise<ViewportSuiteReport> {
     const tab = this.requireTab(tabId);
     const runId = Date.now().toString(36);
@@ -483,9 +631,10 @@ export class TabManager {
       await new Promise<void>((r) => setTimeout(r, 200));
 
       const snapshotId = `${tabId}__${presetName}__${runId}`;
-      const screenshot = await this.captureNamedScreenshot(tabId, snapshotId);
+      const screenshot = await this.captureNamedScreenshot(tabId, snapshotId, {}, false);
+      const layoutIssues = includeLayoutIssues ? await this.detectLayoutIssues(tabId) : undefined;
 
-      captures.push({ preset, snapshotId, screenshot });
+      captures.push({ preset, snapshotId, screenshot, ...(layoutIssues ? { layoutIssues } : {}) });
     }
 
     // Restore original emulated viewport (or clear it if none was set).
@@ -526,6 +675,7 @@ export class TabManager {
       capturedAt: Date.now()
     };
     this.perceptionCache.set(snapshotId, entry);
+    this.perceptionStore.put(snapshotId, entry);
     return { id: snapshotId, tabId, url: entry.url, title: entry.title, capturedAt: entry.capturedAt };
   }
 
@@ -536,9 +686,11 @@ export class TabManager {
     }));
   }
 
-  /** Remove a named perception snapshot from the cache. Returns false if not found. */
+  /** Remove a named perception snapshot from the cache and disk. Returns false if not found. */
   deletePerceptionSnapshot(id: string): boolean {
-    return this.perceptionCache.delete(id);
+    const existed = this.perceptionCache.delete(id);
+    this.perceptionStore.remove(id);
+    return existed;
   }
 
   /**
@@ -557,6 +709,22 @@ export class TabManager {
   // ── Performance metrics ───────────────────────────────────────────────────
 
   /**
+   * Capture an aggregated page-health scorecard: Core Web Vitals + WCAG audit +
+   * console errors + failed network requests + layout overflow, fused into one
+   * report with a pass/fail gate. Gathers each signal then scores in-process.
+   */
+  async captureHealthReport(tabId: TabId): Promise<HealthReport> {
+    const [performance, accessibility, layout] = await Promise.all([
+      this.capturePerformanceMetrics(tabId),
+      this.auditAccessibility(tabId),
+      this.detectLayoutIssues(tabId)
+    ]);
+    const logs = this.getTabLogs(tabId);
+    const url = this.requireTab(tabId).view.webContents.getURL();
+    return buildHealthReport({ performance, accessibility, logs, layout }, tabId, url, Date.now());
+  }
+
+  /**
    * Capture performance metrics for the tab from three sources:
    *  1. CDP `Performance.getMetrics` — V8/Blink internal counters
    *  2. `window.performance.timing` — classic Navigation Timing (level 1)
@@ -566,9 +734,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     // Enable Performance domain (idempotent).
     await webContents.debugger.sendCommand("Performance.enable", { timeDomain: "timeTicks" });
@@ -659,9 +825,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     // ── Rule metadata ───────────────────────────────────────────────────────
 
@@ -746,8 +910,6 @@ export class TabManager {
 
     // 3.1.1 — HTML lang attribute
     if (!pageLang || pageLang.trim() === "") {
-      // Use a synthetic node placeholder for document-level violations
-      const docNode = { nodeId: "document", backendDOMNodeId: undefined, role: undefined, name: undefined, properties: [], childIds: [] };
       violations.push({
         rule: "3.1.1-page-lang",
         impact: RULES["3.1.1-page-lang"].impact,
@@ -1028,6 +1190,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
     const limit = clampInt(options.limit ?? 20, 1, 100);
+    this.ensureDebugger(webContents);
 
     const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
       expression: `(${buildElementStyleInspectorScript()})(${JSON.stringify({ selector, limit })})`,
@@ -1098,13 +1261,131 @@ export class TabManager {
    * return a lightweight component tree. Returns `tree: null` when no hook
    * is found (e.g. production build without devtools enabled).
    */
+  /** Map rendered DOM nodes back to their authoring component + source file:line (click-to-component). */
+  async captureComponentSources(tabId: TabId): Promise<ComponentSourceReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: componentSourceCollectorScript(),
+      returnByValue: true,
+      awaitPromise: false
+    }) as { result: { value?: RawComponentSources } };
+
+    const raw = result.result.value ?? { url: webContents.getURL(), sampledElements: 0, elements: [] };
+    return buildComponentSourceReport(raw, tabId, Date.now());
+  }
+
+  /** Harvest the de-facto design tokens (colors, type scale, spacing, etc.) in use on the page. */
+  async extractDesignTokens(tabId: TabId): Promise<DesignTokensReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: designTokenCollectorScript(),
+      returnByValue: true,
+      awaitPromise: false
+    }) as { result: { value?: RawDesignTokens } };
+
+    const raw = result.result.value ?? {
+      url: webContents.getURL(),
+      cssVariables: {},
+      counts: { colors: {}, fontFamilies: {}, fontSizes: {}, fontWeights: {}, spacing: {}, radii: {}, shadows: {}, zIndices: {} },
+      sampledElements: 0
+    };
+    return buildDesignTokensReport(raw, tabId, Date.now());
+  }
+
+  /** Sample DOM mutations for `durationMs` and rank the busiest subtrees (re-render/thrash detector). */
+  async captureMutationTimeline(tabId: TabId, durationMs = 1000): Promise<MutationTimelineReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+
+    const clamped = clampInt(durationMs, 100, 10000);
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: mutationTimelineScript(clamped),
+      returnByValue: true,
+      awaitPromise: true
+    }) as { result: { value?: RawMutationTimeline } };
+
+    const raw = result.result.value ?? {
+      url: webContents.getURL(),
+      durationMs: clamped,
+      byKind: { childList: 0, attributes: 0, characterData: 0 },
+      addedNodes: 0,
+      removedNodes: 0,
+      targets: {}
+    };
+    return buildMutationReport(raw, tabId, Date.now());
+  }
+
+  /** Read the page's current responsive state: resolved media features + matching @media queries. */
+  async getMediaState(tabId: TabId): Promise<MediaStateReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: mediaStateCollectorScript(),
+      returnByValue: true,
+      awaitPromise: false
+    }) as { result: { value?: MediaStateRaw } };
+
+    const raw = result.result.value ?? {
+      url: webContents.getURL(),
+      features: {},
+      viewport: { width: 0, height: 0 },
+      mediaQueries: []
+    };
+    return buildMediaStateReport(raw, tabId, Date.now());
+  }
+
+  /** Audit keyboard tab order vs. visual reading order (positive tabindex + focus jumps). */
+  async auditFocusOrder(tabId: TabId): Promise<FocusOrderReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: focusableElementsScript(),
+      returnByValue: true,
+      awaitPromise: false
+    }) as { result: { value?: RawFocusOrder } };
+
+    const raw = result.result.value ?? { url: webContents.getURL(), elements: [] };
+    return analyzeFocusOrder(raw, tabId, Date.now());
+  }
+
+  /** Detect horizontal overflow, container escapes, and clipped content at the current viewport. */
+  async detectLayoutIssues(tabId: TabId): Promise<LayoutIssuesReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: layoutIssueDetectorScript(),
+      returnByValue: true,
+      awaitPromise: false
+    }) as { result: { value?: LayoutIssuesRaw } };
+
+    const raw = result.result.value ?? {
+      url: webContents.getURL(),
+      viewport: { width: 0, height: 0 },
+      hasHorizontalOverflow: false,
+      documentScrollWidth: 0,
+      issues: []
+    };
+    return buildLayoutIssuesReport(raw, tabId, Date.now());
+  }
+
   async captureComponentTree(tabId: TabId): Promise<import("../../../../packages/shared/src/index.js").ComponentTreeReport> {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
       expression: `(function() {
@@ -1138,7 +1419,9 @@ export class TabManager {
           if (!name || name.length === 0) {
             return buildReactTree(fiber.child, depth + 1);
           }
+          var src = fiber._debugSource;
           var node = { name: name, props: safeProps(fiber.memoizedProps), children: [] };
+          if (src && src.fileName) node.source = src.fileName + ':' + src.lineNumber;
           var child = fiber.child;
           while (child) {
             var childNode = buildReactTree(child, depth + 1);
@@ -1154,6 +1437,7 @@ export class TabManager {
           var name = vnode.type && (vnode.type.__name || vnode.type.name || vnode.type) || 'Anonymous';
           if (typeof name !== 'string') name = String(name);
           var node = { name: name, props: safeProps(vnode.props), children: [] };
+          if (vnode.type && vnode.type.__file) node.source = vnode.type.__file;
           var children = vnode.component && vnode.component.subTree
             ? [vnode.component.subTree] : (vnode.children ? [].concat(vnode.children) : []);
           for (var c of children) {
@@ -1251,9 +1535,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
       expression: `(function() {
@@ -1511,9 +1793,7 @@ export class TabManager {
     const { webContents } = tab.view;
     const url = webContents.getURL();
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     // localStorage + sessionStorage via Runtime.evaluate
     const storageResult = await webContents.debugger.sendCommand("Runtime.evaluate", {
@@ -1624,6 +1904,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
     const storeName = area === "local" ? "localStorage" : "sessionStorage";
+    this.ensureDebugger(webContents);
 
     const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
       expression: key
@@ -1645,6 +1926,7 @@ export class TabManager {
     const pairs = Object.entries(entries)
       .map(([k, v]) => `${storeName}.setItem(${JSON.stringify(k)},${JSON.stringify(v)})`)
       .join(";");
+    this.ensureDebugger(webContents);
 
     await webContents.debugger.sendCommand("Runtime.evaluate", {
       expression: `(function(){${pairs}})()`,
@@ -1662,6 +1944,7 @@ export class TabManager {
     const expr = keys && keys.length
       ? `(function(){${keys.map(k => `${storeName}.removeItem(${JSON.stringify(k)})`).join(";")};})()`
       : `${storeName}.clear()`;
+    this.ensureDebugger(webContents);
 
     await webContents.debugger.sendCommand("Runtime.evaluate", {
       expression: expr,
@@ -1675,9 +1958,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     const url = webContents.getURL();
     await webContents.debugger.sendCommand("Network.setCookie", {
@@ -1698,9 +1979,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     await webContents.debugger.sendCommand("Network.deleteCookies", {
       name,
@@ -1713,9 +1992,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     const targetUrl = url ?? webContents.getURL();
     const res = await webContents.debugger.sendCommand("Network.getCookies", { urls: [targetUrl] }) as { cookies: Array<{ name: string }> };
@@ -1738,6 +2015,12 @@ export class TabManager {
       jsErrors: [...tab.jsErrors],
       capturedAt: Date.now()
     };
+  }
+
+  /** Export the tab's buffered network requests as a HAR 1.2 archive. */
+  exportHar(tabId: TabId): HarArchive {
+    const tab = this.requireTab(tabId);
+    return buildHar(tab.view.webContents.getURL(), [...tab.networkRequests.values()]);
   }
 
   /** Clear all buffered logs for the tab. */
@@ -1771,7 +2054,8 @@ export class TabManager {
     tab.recording = null;
     return {
       ...recording,
-      script: renderRecordingScript(recording)
+      script: renderRecordingScript(recording),
+      exports: exportRecordingAll(recording)
     };
   }
 
@@ -1795,9 +2079,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     const { root } = await webContents.debugger.sendCommand("DOM.getDocument", { depth: 1 }) as { root: { nodeId: number } };
     const { nodeId } = await webContents.debugger.sendCommand("DOM.querySelector", {
@@ -1840,9 +2122,7 @@ export class TabManager {
   async clearResourceBudget(tabId: TabId): Promise<void> {
     const tab = this.requireTab(tabId);
     tab.resourceBudget = null;
-    if (!tab.view.webContents.debugger.isAttached()) {
-      tab.view.webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(tab.view.webContents);
     await tab.view.webContents.debugger.sendCommand("Emulation.setCPUThrottlingRate", { rate: 1 }).catch(() => {});
     await tab.view.webContents.debugger.sendCommand("Network.emulateNetworkConditions", {
       offline: false,
@@ -1866,11 +2146,48 @@ export class TabManager {
   async clearLocationOverride(tabId: TabId): Promise<void> {
     const tab = this.requireTab(tabId);
     tab.locationOverride = null;
-    if (!tab.view.webContents.debugger.isAttached()) {
-      tab.view.webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(tab.view.webContents);
     await tab.view.webContents.debugger.sendCommand("Emulation.clearGeolocationOverride").catch(() => {});
     await tab.view.webContents.debugger.sendCommand("Emulation.setTimezoneOverride", { timezoneId: "UTC" }).catch(() => {});
+  }
+
+  // ── Media / appearance emulation ──────────────────────────────────────────
+
+  async setMediaEmulation(tabId: TabId, emulation: MediaEmulation): Promise<MediaEmulation> {
+    const tab = this.requireTab(tabId);
+    tab.mediaEmulation = { ...emulation };
+    await this.applyMediaEmulation(tab);
+    return tab.mediaEmulation;
+  }
+
+  getMediaEmulation(tabId: TabId): MediaEmulation | null {
+    return this.requireTab(tabId).mediaEmulation;
+  }
+
+  async clearMediaEmulation(tabId: TabId): Promise<void> {
+    const tab = this.requireTab(tabId);
+    tab.mediaEmulation = null;
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+    await webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { media: "", features: [] }).catch(() => {});
+  }
+
+  private async applyMediaEmulation(tab: TabRecord): Promise<void> {
+    const emulation = tab.mediaEmulation;
+    if (!emulation) return;
+
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+
+    const features: Array<{ name: string; value: string }> = [];
+    if (emulation.colorScheme) features.push({ name: "prefers-color-scheme", value: emulation.colorScheme });
+    if (emulation.reducedMotion) features.push({ name: "prefers-reduced-motion", value: emulation.reducedMotion });
+    if (emulation.forcedColors) features.push({ name: "forced-colors", value: emulation.forcedColors });
+
+    await webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
+      media: emulation.media ?? "",
+      features
+    }).catch(() => {});
   }
 
   // ── Network mock / intercept ──────────────────────────────────────────────
@@ -1879,9 +2196,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     // Reset Fetch domain if rules were already active.
     if (tab.networkMockRules) {
@@ -1911,9 +2226,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     const { webContents } = tab.view;
 
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     tab.emulatedViewport = { width, height, mobile };
 
@@ -1929,7 +2242,44 @@ export class TabManager {
   async capturePerception(tabId: TabId): Promise<PerceptionResult> {
     const tab = this.requireTab(tabId);
     const snapshot = await this.captureSnapshot(tabId);
-    return normalizePerception(snapshot, tab.lastObservation);
+    const result = normalizePerception(snapshot, tab.lastObservation);
+    this.evaluateAssertionWatches(tabId, result.graph);
+    return result;
+  }
+
+  // ── Standing assertion watches ────────────────────────────────────────────
+
+  addAssertionWatch(tabId: TabId, assertion: string): AssertionWatch {
+    return this.assertionWatches.add(tabId, assertion, Date.now());
+  }
+
+  removeAssertionWatch(id: string): boolean {
+    return this.assertionWatches.remove(id);
+  }
+
+  listAssertionWatches(tabId?: TabId): AssertionWatch[] {
+    return this.assertionWatches.list(tabId);
+  }
+
+  onAssertionTransition(listener: (transition: AssertionTransition) => void): void {
+    this.assertionTransitionListeners.add(listener);
+  }
+
+  /** Re-evaluate this tab's watches against a fresh graph and emit transitions. */
+  private evaluateAssertionWatches(tabId: TabId, graph: PageGraph): void {
+    const transitions = this.assertionWatches.evaluateTab(
+      tabId,
+      (assertion) => {
+        const result = evaluateAssertionAgainstGraph(tabId, assertion, graph);
+        return { pass: result.pass, explanation: result.explanation };
+      },
+      Date.now()
+    );
+    for (const transition of transitions) {
+      for (const listener of this.assertionTransitionListeners) {
+        listener(transition);
+      }
+    }
   }
 
   async getPerceptionPacket(tabId: TabId): Promise<BrowserPerceptionPacket> {
@@ -1974,13 +2324,22 @@ export class TabManager {
   }
 
   async approveCommand(requestId: string): Promise<BrowserCommandResult> {
-    const records = [...this.tabs.values()];
-    for (const tab of records) {
+    // Resolve the owning tab directly from the pending approval instead of
+    // probing every tab (which captured perception per tab).
+    const pending = this.listPendingApprovals().find((approval) => approval.requestId === requestId);
+    if (pending) {
+      const tab = this.tabs.get(pending.tabId);
+      if (!tab) {
+        return {
+          status: "failed",
+          command: { type: "request_perception_refresh", tabId: pending.tabId },
+          reason: `Tab ${pending.tabId} for approval ${requestId} no longer exists.`,
+          retryable: false
+        };
+      }
+
       const result = await this.capturePerception(tab.id);
       const execution = await this.capabilityRegistry.approveCommand(requestId, tab.lastObservation, result, tab.view.webContents);
-      if (execution.status === "failed" && execution.reason.includes("was not found")) {
-        continue;
-      }
 
       if (execution.status === "completed") {
         await waitForPageSettled(tab.view.webContents);
@@ -2145,9 +2504,7 @@ export class TabManager {
     if (!budget) return;
 
     const { webContents } = tab.view;
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     await webContents.debugger.sendCommand("Emulation.setCPUThrottlingRate", {
       rate: Math.max(1, budget.cpuThrottlingRate ?? 1)
@@ -2174,9 +2531,7 @@ export class TabManager {
 
   private async getCurrentJsHeapMb(tab: TabRecord): Promise<number | null> {
     const { webContents } = tab.view;
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
     const metrics = await webContents.debugger.sendCommand("Performance.getMetrics") as { metrics?: Array<{ name: string; value: number }> };
     const heap = metrics.metrics?.find((metric) => metric.name === "JSHeapUsedSize")?.value;
     return typeof heap === "number" ? heap / (1024 * 1024) : null;
@@ -2187,9 +2542,7 @@ export class TabManager {
     if (!location) return;
 
     const { webContents } = tab.view;
-    if (!webContents.debugger.isAttached()) {
-      webContents.debugger.attach("1.3");
-    }
+    this.ensureDebugger(webContents);
 
     await webContents.debugger.sendCommand("Emulation.setGeolocationOverride", {
       latitude: location.latitude,
@@ -2267,6 +2620,7 @@ export class TabManager {
       updateSummary();
       void this.applyLocationOverride(tab);
       void this.applyResourceBudget(tab);
+      void this.applyMediaEmulation(tab);
     });
     webContents.on("did-start-loading", updateSummary);
     webContents.on("did-stop-loading", updateSummary);
@@ -2587,6 +2941,16 @@ export class TabManager {
     return tab;
   }
 
+  /**
+   * Attach the CDP debugger to a WebContents if it isn't already attached, and
+   * return it. Centralizes the guard so no CDP entrypoint throws
+   * "Debugger is not attached".
+   */
+  private ensureDebugger(webContents: Electron.WebContents): Electron.Debugger {
+    this.ensureDebugger(webContents);
+    return webContents.debugger;
+  }
+
   private emitTabsChanged() {
     const tabs = this.listTabs();
     for (const listener of this.listeners) {
@@ -2602,7 +2966,7 @@ function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.floor(value)));
 }
 
-function evaluateStyleAssertion(element: ElementStyleInspection, assertion: StyleAssertion): StyleAssertionCheck {
+export function evaluateStyleAssertion(element: ElementStyleInspection, assertion: StyleAssertion): StyleAssertionCheck {
   const property = toKebabCase(assertion.property);
   const actual = element.computed[property] ?? element.computed[assertion.property];
   const expected = describeStyleExpectation(assertion);
@@ -2658,7 +3022,7 @@ function evaluateStyleAssertion(element: ElementStyleInspection, assertion: Styl
     try {
       pass = new RegExp(assertion.matches).test(actual);
     } catch {
-      pass = false;
+      // invalid regex → pass stays false
     }
     checks.push({
       pass,
@@ -3098,7 +3462,28 @@ function originFromUrl(url: string): string {
  * and image dimensions, returns merged axis-aligned bounding boxes of changed clusters.
  * Pixels within MERGE_GAP pixels of an existing box are absorbed into it.
  */
-function computeDiffRegions(changed: Uint8Array, width: number, height: number): DiffRegion[] {
+/**
+ * Build a boolean pixel mask (1 = ignore) from a set of rectangles. Used to
+ * exclude dynamic regions (timestamps, ads, carousels) from a visual diff.
+ * Pure — unit-testable.
+ */
+export function buildIgnoreMask(regions: DiffRegion[], width: number, height: number): Uint8Array {
+  const mask = new Uint8Array(width * height);
+  for (const r of regions) {
+    const x0 = Math.max(0, Math.floor(r.x));
+    const y0 = Math.max(0, Math.floor(r.y));
+    const x1 = Math.min(width, Math.floor(r.x + r.width));
+    const y1 = Math.min(height, Math.floor(r.y + r.height));
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        mask[y * width + x] = 1;
+      }
+    }
+  }
+  return mask;
+}
+
+export function computeDiffRegions(changed: Uint8Array, width: number, height: number): DiffRegion[] {
   const MERGE_GAP = 8;
   const boxes: { x1: number; y1: number; x2: number; y2: number }[] = [];
 
@@ -3134,7 +3519,7 @@ function computeDiffRegions(changed: Uint8Array, width: number, height: number):
  *   - star wildcard anywhere (e.g. "star/api/products*")
  *   - /regex/flags literal regex (e.g. /\/api\/v\d+\//i)
  */
-function matchesMockRule(url: string, method: string, rule: NetworkInterceptRule): boolean {
+export function matchesMockRule(url: string, method: string, rule: NetworkInterceptRule): boolean {
   if (rule.method && rule.method.toUpperCase() !== method.toUpperCase()) return false;
 
   const pattern = rule.urlPattern;
@@ -3158,7 +3543,7 @@ function matchesMockRule(url: string, method: string, rule: NetworkInterceptRule
  * Pure structural diff of two perception graph snapshots.
  * Operates on PageGraph fields: headings, forms, actions, alerts, title, kind, media.
  */
-function computePerceptionDiff(
+export function computePerceptionDiff(
   beforeId: string,
   afterId: string,
   before: { graph: PageGraph; url: string; title: string; capturedAt: number },
@@ -3285,7 +3670,7 @@ function computePerceptionDiff(
  *  6. Count  "at least N", "more than N", "fewer than N"comparisons 
  *  7.  low-confidence pass/fail based on keyword scanFallback 
  */
-function evaluateAssertionAgainstGraph(
+export function evaluateAssertionAgainstGraph(
   tabId: TabId,
   assertion: string,
   graph: PageGraph
@@ -3415,9 +3800,9 @@ function evaluateAssertionAgainstGraph(
     const n = parseInt(compMatch[2], 10);
     const noun = compMatch[3];
     const count = evidence.counts[noun as keyof typeof evidence.counts] ?? 0;
-    let ok = false;
-    if (op === "at least" || op === "more than") ok = op === "at least" ? count >= n : count > n;
-    else ok = op === "at most" ? count <= n : count < n;
+    const ok = (op === "at least" || op === "more than")
+      ? (op === "at least" ? count >= n : count > n)
+      : (op === "at most" ? count <= n : count < n);
     if (ok) return pass(`There are ${count} ${noun}(s) that satisfy "${op} ${n}".`);
     return fail(`There are ${count} ${noun}(s) that do not satisfy "${op} ${n}".`);
   }

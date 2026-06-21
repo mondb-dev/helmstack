@@ -1,4 +1,6 @@
 import { app, BrowserWindow, ipcMain, session } from "electron";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -63,7 +65,12 @@ async function createMainWindow() {
 
   // ── Agent server ──────────────────────────────────────────────────────────
   // Binds to 127.0.0.1 only.  External agents connect here.
-  agentServer = new AgentServer(tabManager, extensions);
+  // Auth is on by default: use HELMSTACK_AUTH_TOKEN if provided, otherwise
+  // generate a token and persist it so local agents can read it.
+  const authToken = process.env.HELMSTACK_AUTH_TOKEN || readOrCreateAgentToken(userDataPath);
+  agentServer = new AgentServer(tabManager, extensions, 7070, authToken);
+  console.log(`[AgentServer] auth token: ${authToken}`);
+  console.log(`[AgentServer] token file: ${path.join(userDataPath, "helmstack-agent-token")}`);
   await agentServer.start().catch((err: unknown) => {
     console.error("[AgentServer] Failed to start:", err);
   });
@@ -173,6 +180,28 @@ function registerIpcHandlers(manager: TabManager) {
   manager.onHandoffRequested((handoff: HumanHandoffRecord) => {
     mainWindow?.webContents.send(BrowserShellChannel.HandoffRequested, handoff);
   });
+}
+
+/**
+ * Read the persisted agent auth token, or generate and store one (0600) on
+ * first launch. Local agents can read this file to authenticate without the
+ * user having to set HELMSTACK_AUTH_TOKEN by hand.
+ */
+function readOrCreateAgentToken(userDataPath: string): string {
+  const tokenPath = path.join(userDataPath, "helmstack-agent-token");
+  try {
+    if (existsSync(tokenPath)) {
+      const existing = readFileSync(tokenPath, "utf8").trim();
+      if (existing) return existing;
+    }
+  } catch {
+    // fall through to regenerate
+  }
+
+  const token = randomBytes(32).toString("hex");
+  mkdirSync(userDataPath, { recursive: true });
+  writeFileSync(tokenPath, token, { encoding: "utf8", mode: 0o600 });
+  return token;
 }
 
 app.whenReady().then(createMainWindow);
