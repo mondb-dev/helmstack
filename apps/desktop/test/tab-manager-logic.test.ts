@@ -8,9 +8,9 @@ import {
   computeDiffRegions,
   computePerceptionDiff,
   evaluateAssertionAgainstGraph,
-  evaluateStyleAssertion,
   matchesMockRule
 } from "../src/main/tab-manager.js";
+import { evaluateStyleAssertion } from "../src/main/style-inspector.js";
 import type {
   ElementStyleInspection,
   PageGraph,
