@@ -17,7 +17,7 @@ HelmStack today is genuinely two products sharing one runtime:
 
 The **dev-tool half is the stated goal** and is already strong and well-architected. The agent-substrate half is largely orthogonal to front-end development and in places actively *fights* it (see §1 anti-detection jitter). This review treats the dev-tool as the product and the agent layer as the transport.
 
-- [ ] **`P1`** Decide and document the positioning: is anti-detection / social perception / TOTP vault still in scope, or split into an optional plugin so the FE-dev core stays lean? Right now a developer pointing this at `localhost:3000` pays for (and is confused by) `social-feed` page-kind classification and stealth jitter they never asked for.
+- [~] **`P1`** Decide and document the positioning. *Documented; the decision is the maintainer's.* See **[positioning.md](positioning.md)** — a grounded analysis + recommendation. Key findings: stealth/anti-detection is **already opt-in** (`HELMSTACK_STEALTH`, default off — that half of the complaint is solved); the remaining bleed is **always-on social-surface perception** (`collectSocialSurface`/`classifyPageKind` run on every page incl. `localhost`) and tool-list noise from the vault/handoff/approval surfaces. Recommendation: **capability flags within one binary** (gate social perception behind `HELMSTACK_SOCIAL` default-off mirroring the stealth pattern; register agent-substrate MCP tools only under an `agent-substrate` capability; expose `fe-dev`/`agent-substrate`/`full` profiles), deferring a package split until the flags settle the boundary. Concrete acceptance criteria included. **Awaiting the maintainer's A/B/C + default-profile decision before implementing.**
 
 ---
 
