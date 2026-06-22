@@ -7,10 +7,10 @@ vi.mock("electron", () => ({ BrowserWindow: class {}, nativeImage: {}, WebConten
 import {
   computeDiffRegions,
   computePerceptionDiff,
-  evaluateAssertionAgainstGraph,
-  matchesMockRule
+  evaluateAssertionAgainstGraph
 } from "../src/main/tab-manager.js";
 import { evaluateStyleAssertion } from "../src/main/style-inspector.js";
+import { matchesMockRule } from "../src/main/cdp-events.js";
 import type {
   ElementStyleInspection,
   PageGraph,
