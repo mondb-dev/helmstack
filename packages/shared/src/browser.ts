@@ -694,10 +694,16 @@ export type ComponentFramework = "react" | "vue" | "svelte" | "angular" | "unkno
 
 export type ComponentNode = {
   name: string;
-  /** Stringified props (shallow, truncated to avoid huge payloads). */
+  /** Stringified props, truncated; nested objects/arrays are summarised one level deep. */
   props: Record<string, string>;
   /** Authoring source `file:line` when dev-build metadata is available. */
   source?: string;
+  /** React/Vue list key, when present. */
+  key?: string | null;
+  /** Stringified component state — React hooks (`hook0`, `hook1`, …) or class/Vue state. */
+  state?: Record<string, string>;
+  /** Number of React hooks on the component (0 for class components / non-React). */
+  hookCount?: number;
   children: ComponentNode[];
 };
 
