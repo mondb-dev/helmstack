@@ -112,6 +112,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/tabs/:id/design-tokens      → DesignTokensReport
  * GET  /api/tabs/:id/css-coverage       → CssCoverageReport (unused-CSS, reloads tab)
  * GET  /api/tabs/:id/js-coverage        → JsCoverageReport (dead-JS, reloads tab)
+ * GET  /api/tabs/:id/trace              → TraceReport (?durationMs=, long tasks + categories)
  * GET  /api/tabs/:id/component-sources  → ComponentSourceReport (click-to-component)
  * GET  /api/tabs/:id/layout-issues      → LayoutIssuesReport
  * GET  /api/tabs/:id/media-state        → MediaStateReport
@@ -779,6 +780,13 @@ export class AgentServer {
     const jsCoverageMatch = p.match(/^\/api\/tabs\/([^/]+)\/js-coverage$/);
     if (method === "GET" && jsCoverageMatch) {
       return json(res, await this.tabs.captureJsCoverage(jsCoverageMatch[1] as TabId));
+    }
+
+    // ── Performance trace / timeline ────────────────────────────────────────────
+    const traceMatch = p.match(/^\/api\/tabs\/([^/]+)\/trace$/);
+    if (method === "GET" && traceMatch) {
+      const durationMs = Number(url.searchParams.get("durationMs")) || undefined;
+      return json(res, await this.tabs.captureTrace(traceMatch[1] as TabId, durationMs));
     }
 
     // ── Element → source mapping (click-to-component) ──────────────────────────

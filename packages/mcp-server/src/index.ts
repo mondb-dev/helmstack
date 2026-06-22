@@ -644,6 +644,16 @@ server.tool(
 );
 
 server.tool(
+  "browser_trace",
+  "Record a CDP performance trace for a window (default 3000ms) and return a digest for diagnosing jank: long main-thread tasks (>= 50ms, longest first, with start time + duration) and a per-category time breakdown. Avoids dumping the raw multi-megabyte trace — capture while the page is doing the work you want to profile.",
+  {
+    tabId: z.string().describe("Tab ID"),
+    durationMs: z.number().optional().describe("Trace window in ms (200–15000, default 3000)")
+  },
+  async ({ tabId, durationMs }) => jsonResult(await browser.captureTrace(tabId, durationMs))
+);
+
+server.tool(
   "browser_component_sources",
   "Map rendered DOM nodes back to the component + source file:line that produced them (React _debugSource, Svelte __svelte_meta, Vue __file). Requires a dev build with source metadata. Lets you reference '<PrimaryButton> at src/ui/Button.tsx:42' instead of a brittle CSS selector.",
   { tabId: z.string().describe("Tab ID") },

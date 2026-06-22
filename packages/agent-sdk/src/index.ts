@@ -139,6 +139,7 @@ import type {
   ChangedElement,
   CssCoverageReport,
   JsCoverageReport,
+  TraceReport,
   DesignTokensReport,
   DiffRegion,
   LayoutIssuesReport,
@@ -778,6 +779,16 @@ export class BrowserClient {
    */
   async captureJsCoverage(tabId: TabId): Promise<JsCoverageReport> {
     return this.get(`/api/tabs/${tabId}/js-coverage`);
+  }
+
+  /**
+   * Record a performance trace for `durationMs` (default 3000) and return a
+   * digest — long main-thread tasks (≥ 50 ms) and a per-category time breakdown
+   * — for diagnosing jank without parsing the raw trace stream.
+   */
+  async captureTrace(tabId: TabId, durationMs?: number): Promise<TraceReport> {
+    const qs = durationMs ? `?durationMs=${durationMs}` : "";
+    return this.get(`/api/tabs/${tabId}/trace${qs}`);
   }
 
   /**

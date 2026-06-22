@@ -1068,3 +1068,48 @@ export type JsCoverageReport = {
     usedPercent: number;
   };
 };
+
+// ── Performance trace / timeline summary ───────────────────────────────────
+
+/** A main-thread task long enough to risk jank (≥ 50 ms), from a CDP trace. */
+export type TraceLongTask = {
+  name: string;
+  category: string;
+  /** Start time relative to the trace start, in milliseconds. */
+  startMs: number;
+  /** Task duration in milliseconds. */
+  durationMs: number;
+};
+
+/** Total recorded duration of complete events in one trace category. */
+export type TraceCategorySummary = {
+  category: string;
+  /** Summed duration of complete (`ph: "X"`) events in this category, in ms (may overlap due to nesting). */
+  totalMs: number;
+  eventCount: number;
+};
+
+/**
+ * Digestible summary of a CDP `Tracing` capture — long main-thread tasks and a
+ * per-category time breakdown — so an agent can reason about jank without
+ * parsing the raw multi-megabyte trace stream.
+ */
+export type TraceReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** Requested trace window in milliseconds. */
+  requestedMs: number;
+  /** Span from the first to the last event, in milliseconds. */
+  tracedMs: number;
+  /** Total trace events received. */
+  totalEvents: number;
+  /** Complete (`ph: "X"`) events with a duration. */
+  completeEvents: number;
+  /** Tasks ≥ 50 ms, sorted longest-first (capped). */
+  longTasks: TraceLongTask[];
+  longTaskCount: number;
+  longestTaskMs: number;
+  /** Per-category time breakdown, sorted by total time (capped). */
+  byCategory: TraceCategorySummary[];
+};

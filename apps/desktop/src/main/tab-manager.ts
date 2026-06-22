@@ -13,6 +13,7 @@ import { buildHar } from "./har.js";
 import { buildDesignTokensReport, designTokenCollectorScript, type RawDesignTokens } from "./design-tokens.js";
 import { buildCssCoverageReport, type RawRuleRange, type RawStylesheetCoverage } from "./css-coverage.js";
 import { buildJsCoverageReport, type RawScriptCoverage } from "./js-coverage.js";
+import { buildTraceSummary, type RawTraceEvent } from "./trace-summary.js";
 import { buildLayoutIssuesReport, layoutIssueDetectorScript, type LayoutIssuesRaw } from "./layout-issues.js";
 import { buildMediaStateReport, mediaStateCollectorScript, type MediaStateRaw } from "./media-state.js";
 import { exportRecordingAll, renderRecordingScript } from "./recording-export.js";
@@ -85,6 +86,7 @@ import {
   type HarArchive,
   type CssCoverageReport,
   type JsCoverageReport,
+  type TraceReport,
   type DesignTokensReport,
   type LayoutIssuesReport,
   type MediaStateReport,
@@ -946,6 +948,57 @@ export class TabManager {
     } finally {
       await dbg.sendCommand("Profiler.stopPreciseCoverage").catch(() => {});
       await dbg.sendCommand("Profiler.disable").catch(() => {});
+    }
+  }
+
+  /**
+   * Record a CDP performance trace for `durationMs` and summarise it into long
+   * main-thread tasks + a per-category time breakdown (a digest of the raw
+   * multi-megabyte trace stream an agent can reason about for jank).
+   */
+  async captureTrace(tabId: TabId, durationMs = 3000): Promise<TraceReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+    const dbg = webContents.debugger;
+    const clamped = clampInt(durationMs, 200, 15000);
+
+    const events: RawTraceEvent[] = [];
+    const onMessage = (_e: unknown, cdpMethod: string, params: { value?: RawTraceEvent[] }) => {
+      if (cdpMethod === "Tracing.dataCollected" && params.value) {
+        events.push(...params.value);
+      }
+    };
+    dbg.on("message", onMessage);
+
+    try {
+      const complete = new Promise<void>((resolve) => {
+        const onComplete = (_e: unknown, m: string) => {
+          if (m === "Tracing.tracingComplete") { dbg.removeListener("message", onComplete); resolve(); }
+        };
+        dbg.on("message", onComplete);
+      });
+
+      await dbg.sendCommand("Tracing.start", {
+        transferMode: "ReportEvents",
+        traceConfig: {
+          includedCategories: [
+            "toplevel",
+            "devtools.timeline",
+            "disabled-by-default-devtools.timeline",
+            "blink.user_timing",
+            "v8.execute"
+          ]
+        }
+      });
+      await new Promise<void>((r) => setTimeout(r, clamped));
+      await dbg.sendCommand("Tracing.end").catch(() => {});
+      // dataCollected events stream after end; wait for tracingComplete, bounded.
+      await Promise.race([complete, new Promise<void>((r) => setTimeout(r, 5000))]);
+
+      return buildTraceSummary(events, tabId, webContents.getURL(), clamped, Date.now());
+    } finally {
+      dbg.removeListener("message", onMessage);
     }
   }
 
