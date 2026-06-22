@@ -12,6 +12,7 @@ import { PerceptionBaselineStore, ScreenshotBaselineStore, type PerceptionBaseli
 import { buildHar } from "./har.js";
 import { buildDesignTokensReport, designTokenCollectorScript, type RawDesignTokens } from "./design-tokens.js";
 import { buildCssCoverageReport, type RawRuleRange, type RawStylesheetCoverage } from "./css-coverage.js";
+import { buildJsCoverageReport, type RawScriptCoverage } from "./js-coverage.js";
 import { buildLayoutIssuesReport, layoutIssueDetectorScript, type LayoutIssuesRaw } from "./layout-issues.js";
 import { buildMediaStateReport, mediaStateCollectorScript, type MediaStateRaw } from "./media-state.js";
 import { exportRecordingAll, renderRecordingScript } from "./recording-export.js";
@@ -83,6 +84,7 @@ import {
   type TabLogSnapshot,
   type HarArchive,
   type CssCoverageReport,
+  type JsCoverageReport,
   type DesignTokensReport,
   type LayoutIssuesReport,
   type MediaStateReport,
@@ -886,6 +888,64 @@ export class TabManager {
     } finally {
       dbg.removeListener("message", onMessage);
       await dbg.sendCommand("CSS.disable").catch(() => {});
+    }
+  }
+
+  /**
+   * Measure dead JavaScript via CDP precise coverage. Reloads the page (as the
+   * DevTools Coverage panel does) so usage is measured from initial load,
+   * guarded by a hard timeout so it can never hang. Returns per-script
+   * used/unused byte tallies and an aggregate summary.
+   */
+  async captureJsCoverage(tabId: TabId): Promise<JsCoverageReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+    const dbg = webContents.debugger;
+
+    try {
+      await dbg.sendCommand("Profiler.enable").catch(() => {});
+      await dbg.sendCommand("Debugger.enable").catch(() => {});
+      await dbg.sendCommand("Page.enable").catch(() => {});
+      await dbg.sendCommand("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+
+      // Reload so code run during initial load is counted; race a timeout.
+      const loaded = new Promise<void>((resolve) => {
+        const onLoad = (_e: unknown, m: string) => {
+          if (m === "Page.loadEventFired") { dbg.removeListener("message", onLoad); resolve(); }
+        };
+        dbg.on("message", onLoad);
+      });
+      await dbg.sendCommand("Page.reload", { ignoreCache: false }).catch(() => {});
+      await Promise.race([loaded, new Promise<void>((r) => setTimeout(r, 4000))]);
+      await new Promise<void>((r) => setTimeout(r, 250)); // settle late-loaded scripts
+
+      const cov = await dbg.sendCommand("Profiler.takePreciseCoverage") as {
+        result?: Array<{
+          scriptId: string;
+          url: string;
+          functions: Array<{ ranges: Array<{ startOffset: number; endOffset: number; count: number }> }>;
+        }>;
+      };
+      const entries = cov.result ?? [];
+
+      const scripts: RawScriptCoverage[] = [];
+      for (const entry of entries) {
+        const ranges = entry.functions.flatMap((f) => f.ranges);
+        if (!ranges.length) continue;
+        let length = 0;
+        try {
+          const src = await dbg.sendCommand("Debugger.getScriptSource", { scriptId: entry.scriptId }) as { scriptSource?: string };
+          length = src.scriptSource?.length ?? 0;
+        } catch { /* source may be unavailable */ }
+        if (!length) length = ranges.reduce((max, r) => Math.max(max, r.endOffset), 0);
+        scripts.push({ scriptId: entry.scriptId, url: entry.url, length, ranges });
+      }
+
+      return buildJsCoverageReport({ url: webContents.getURL(), scripts }, tabId, Date.now());
+    } finally {
+      await dbg.sendCommand("Profiler.stopPreciseCoverage").catch(() => {});
+      await dbg.sendCommand("Profiler.disable").catch(() => {});
     }
   }
 

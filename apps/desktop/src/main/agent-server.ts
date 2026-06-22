@@ -111,6 +111,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
  * GET  /api/tabs/:id/design-tokens      → DesignTokensReport
  * GET  /api/tabs/:id/css-coverage       → CssCoverageReport (unused-CSS, reloads tab)
+ * GET  /api/tabs/:id/js-coverage        → JsCoverageReport (dead-JS, reloads tab)
  * GET  /api/tabs/:id/component-sources  → ComponentSourceReport (click-to-component)
  * GET  /api/tabs/:id/layout-issues      → LayoutIssuesReport
  * GET  /api/tabs/:id/media-state        → MediaStateReport
@@ -771,6 +772,12 @@ export class AgentServer {
     const cssCoverageMatch = p.match(/^\/api\/tabs\/([^/]+)\/css-coverage$/);
     if (method === "GET" && cssCoverageMatch) {
       return json(res, await this.tabs.captureCssCoverage(cssCoverageMatch[1] as TabId));
+    }
+
+    // ── JS coverage (dead-JS) ───────────────────────────────────────────────────
+    const jsCoverageMatch = p.match(/^\/api\/tabs\/([^/]+)\/js-coverage$/);
+    if (method === "GET" && jsCoverageMatch) {
+      return json(res, await this.tabs.captureJsCoverage(jsCoverageMatch[1] as TabId));
     }
 
     // ── Element → source mapping (click-to-component) ──────────────────────────

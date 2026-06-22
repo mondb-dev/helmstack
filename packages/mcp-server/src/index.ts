@@ -632,6 +632,13 @@ server.tool(
 );
 
 server.tool(
+  "browser_js_coverage",
+  "Report dead JavaScript on the page via V8 precise coverage. NOTE: this reloads the tab (like the DevTools Coverage panel) to measure execution from the initial load. Returns per-script used/unused byte tallies (innermost-range-wins, so dead branches inside executed functions are counted), sorted worst-offender first, plus an aggregate used-percent — useful for finding dead code and trimming bundle size.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.captureJsCoverage(tabId))
+);
+
+server.tool(
   "browser_component_sources",
   "Map rendered DOM nodes back to the component + source file:line that produced them (React _debugSource, Svelte __svelte_meta, Vue __file). Requires a dev build with source metadata. Lets you reference '<PrimaryButton> at src/ui/Button.tsx:42' instead of a brittle CSS selector.",
   { tabId: z.string().describe("Tab ID") },

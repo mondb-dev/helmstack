@@ -1029,3 +1029,40 @@ export type CssCoverageReport = {
     unusedRuleCount: number;
   };
 };
+
+// ── JS coverage / dead-code report ─────────────────────────────────────────
+
+/** Per-script JS execution coverage, derived from CDP precise coverage. */
+export type JsScriptCoverage = {
+  scriptId: string;
+  /** Source URL of the script, or "" for inline/eval scripts. */
+  url: string;
+  /** Script source length, in bytes. */
+  totalBytes: number;
+  /** Bytes covered by V8 coverage ranges (the instrumented region). */
+  instrumentedBytes: number;
+  /** Instrumented bytes whose innermost covering range executed (count > 0). */
+  usedBytes: number;
+  /** `instrumentedBytes - usedBytes` — instrumented code that never ran. */
+  unusedBytes: number;
+  /** `usedBytes / instrumentedBytes * 100`, rounded to 0.1; 0 when uninstrumented. */
+  usedPercent: number;
+};
+
+/** Aggregate dead-JS report across all of a tab's scripts. */
+export type JsCoverageReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** Per-script coverage, sorted by unused bytes (worst offenders first). */
+  scripts: JsScriptCoverage[];
+  summary: {
+    scriptCount: number;
+    totalBytes: number;
+    instrumentedBytes: number;
+    usedBytes: number;
+    unusedBytes: number;
+    /** Overall `usedBytes / instrumentedBytes * 100`, rounded to 0.1. */
+    usedPercent: number;
+  };
+};

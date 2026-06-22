@@ -138,6 +138,7 @@ import type {
   ComponentTreeReport,
   ChangedElement,
   CssCoverageReport,
+  JsCoverageReport,
   DesignTokensReport,
   DiffRegion,
   LayoutIssuesReport,
@@ -763,6 +764,15 @@ export class BrowserClient {
    */
   async captureCssCoverage(tabId: TabId): Promise<CssCoverageReport> {
     return this.get(`/api/tabs/${tabId}/css-coverage`);
+  }
+
+  /**
+   * Measure dead JavaScript on the page via V8 precise coverage. **Reloads the
+   * tab** (as the DevTools Coverage panel does) to measure from initial load,
+   * then reports per-script used/unused bytes and an aggregate summary.
+   */
+  async captureJsCoverage(tabId: TabId): Promise<JsCoverageReport> {
+    return this.get(`/api/tabs/${tabId}/js-coverage`);
   }
 
   /**
