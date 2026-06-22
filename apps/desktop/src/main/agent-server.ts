@@ -113,6 +113,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/tabs/:id/css-coverage       → CssCoverageReport (unused-CSS, reloads tab)
  * GET  /api/tabs/:id/js-coverage        → JsCoverageReport (dead-JS, reloads tab)
  * GET  /api/tabs/:id/trace              → TraceReport (?durationMs=, long tasks + categories)
+ * GET  /api/tabs/:id/framework          → FrameworkReport (framework + dev server + HMR)
  * GET  /api/tabs/:id/component-sources  → ComponentSourceReport (click-to-component)
  * GET  /api/tabs/:id/layout-issues      → LayoutIssuesReport
  * GET  /api/tabs/:id/media-state        → MediaStateReport
@@ -803,6 +804,12 @@ export class AgentServer {
     if (method === "GET" && traceMatch) {
       const durationMs = Number(url.searchParams.get("durationMs")) || undefined;
       return json(res, await this.tabs.captureTrace(traceMatch[1] as TabId, durationMs));
+    }
+
+    // ── Framework / dev-server detection ────────────────────────────────────────
+    const frameworkMatch = p.match(/^\/api\/tabs\/([^/]+)\/framework$/);
+    if (method === "GET" && frameworkMatch) {
+      return json(res, await this.tabs.detectFramework(frameworkMatch[1] as TabId));
     }
 
     // ── Element → source mapping (click-to-component) ──────────────────────────

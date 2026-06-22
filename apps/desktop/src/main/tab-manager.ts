@@ -14,6 +14,7 @@ import { buildDesignTokensReport, designTokenCollectorScript, type RawDesignToke
 import { buildCssCoverageReport, type RawRuleRange, type RawStylesheetCoverage } from "./css-coverage.js";
 import { buildJsCoverageReport, type RawScriptCoverage } from "./js-coverage.js";
 import { buildTraceSummary, type RawTraceEvent } from "./trace-summary.js";
+import { detectFramework as classifyFramework, frameworkSignalsScript, type RawFrameworkSignals } from "./framework-detect.js";
 import { buildLayoutIssuesReport, layoutIssueDetectorScript, type LayoutIssuesRaw } from "./layout-issues.js";
 import { buildMediaStateReport, mediaStateCollectorScript, type MediaStateRaw } from "./media-state.js";
 import { exportRecordingAll, renderRecordingScript } from "./recording-export.js";
@@ -87,6 +88,7 @@ import {
   type CssCoverageReport,
   type JsCoverageReport,
   type TraceReport,
+  type FrameworkReport,
   type DesignTokensReport,
   type LayoutIssuesReport,
   type MediaStateReport,
@@ -1000,6 +1002,28 @@ export class TabManager {
     } finally {
       dbg.removeListener("message", onMessage);
     }
+  }
+
+  /**
+   * Fingerprint the page's framework + dev server (Vite/webpack/Turbopack) and
+   * whether it's a dev build with HMR — lets an agent give framework-specific
+   * guidance and treat HMR reloads differently from full navigations.
+   */
+  async detectFramework(tabId: TabId): Promise<FrameworkReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression: frameworkSignalsScript(),
+      returnByValue: true,
+      awaitPromise: false
+    }) as { result: { value?: RawFrameworkSignals } };
+
+    const raw = result.result.value ?? {
+      url: webContents.getURL(), globals: [], scriptSrcs: [], astroIslands: 0, generator: null
+    };
+    return classifyFramework(raw, tabId, Date.now());
   }
 
   /** Sample DOM mutations for `durationMs` and rank the busiest subtrees (re-render/thrash detector). */

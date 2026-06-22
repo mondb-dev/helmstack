@@ -140,6 +140,7 @@ import type {
   CssCoverageReport,
   JsCoverageReport,
   TraceReport,
+  FrameworkReport,
   DesignTokensReport,
   DiffRegion,
   LayoutIssuesReport,
@@ -789,6 +790,15 @@ export class BrowserClient {
   async captureTrace(tabId: TabId, durationMs?: number): Promise<TraceReport> {
     const qs = durationMs ? `?durationMs=${durationMs}` : "";
     return this.get(`/api/tabs/${tabId}/trace${qs}`);
+  }
+
+  /**
+   * Fingerprint the page's framework (Next/Nuxt/SvelteKit/Remix/Astro/Vite/…),
+   * its dev server (Vite/webpack/Turbopack), and whether it's a dev build with
+   * HMR — so an agent can tailor guidance and treat HMR reloads accordingly.
+   */
+  async detectFramework(tabId: TabId): Promise<FrameworkReport> {
+    return this.get(`/api/tabs/${tabId}/framework`);
   }
 
   /**

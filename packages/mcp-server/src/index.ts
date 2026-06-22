@@ -654,6 +654,13 @@ server.tool(
 );
 
 server.tool(
+  "browser_detect_framework",
+  "Fingerprint the page's frontend framework (Next.js, Nuxt, SvelteKit, Remix, Astro, bare Vite, CRA, Angular), its dev server / bundler (Vite, webpack, Turbopack), and whether it's a local dev build with hot-module-replacement (HMR). Returns the classification plus the evidence signals. Useful for tailoring framework-specific guidance and knowing when a reload is HMR-driven rather than a full navigation.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.detectFramework(tabId))
+);
+
+server.tool(
   "browser_component_sources",
   "Map rendered DOM nodes back to the component + source file:line that produced them (React _debugSource, Svelte __svelte_meta, Vue __file). Requires a dev build with source metadata. Lets you reference '<PrimaryButton> at src/ui/Button.tsx:42' instead of a brittle CSS selector.",
   { tabId: z.string().describe("Tab ID") },

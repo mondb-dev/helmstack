@@ -1113,3 +1113,39 @@ export type TraceReport = {
   /** Per-category time breakdown, sorted by total time (capped). */
   byCategory: TraceCategorySummary[];
 };
+
+// ── Framework / dev-server awareness ───────────────────────────────────────
+
+/** The user-facing app framework detected on the page. */
+export type DetectedFramework =
+  | "next"
+  | "nuxt"
+  | "sveltekit"
+  | "remix"
+  | "astro"
+  | "vite"      // a bare Vite app with no higher-level framework
+  | "create-react-app"
+  | "angular"
+  | "unknown";
+
+/** The bundler / dev server serving the page (the thing that provides HMR). */
+export type DetectedDevServer = "vite" | "webpack" | "turbopack" | "unknown" | "none";
+
+/**
+ * What framework and dev server the page is running, plus whether it's a dev
+ * build with HMR — lets an agent give framework-specific guidance and know a
+ * reload may be HMR-driven rather than a full navigation.
+ */
+export type FrameworkReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  framework: DetectedFramework;
+  devServer: DetectedDevServer;
+  /** True when the page looks like a local dev build (not a production bundle). */
+  isDev: boolean;
+  /** True when a hot-module-replacement client was detected. */
+  hmr: boolean;
+  /** Human-readable signals that drove the classification. */
+  evidence: string[];
+};
