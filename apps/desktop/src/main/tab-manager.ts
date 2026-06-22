@@ -13,7 +13,7 @@ import { buildHar } from "./har.js";
 import { buildDesignTokensReport, designTokenCollectorScript, type RawDesignTokens } from "./design-tokens.js";
 import { buildLayoutIssuesReport, layoutIssueDetectorScript, type LayoutIssuesRaw } from "./layout-issues.js";
 import { buildMediaStateReport, mediaStateCollectorScript, type MediaStateRaw } from "./media-state.js";
-import { exportRecordingAll } from "./recording-export.js";
+import { exportRecordingAll, renderRecordingScript } from "./recording-export.js";
 import { buildHealthReport } from "./health-report.js";
 import { AssertionWatchStore } from "./assertion-watch.js";
 import { buildMutationReport, mutationTimelineScript, type RawMutationTimeline } from "./mutation-timeline.js";
@@ -1751,33 +1751,6 @@ export class TabManager {
 
 
 
-function renderRecordingScript(recording: RecordingSession): string {
-  const lines = [
-    'import { createBrowserClient } from "@helmstack/agent-sdk";',
-    "",
-    "const browser = createBrowserClient();",
-    `const tabId = ${JSON.stringify(recording.tabId)};`,
-    "",
-    "async function run() {"
-  ];
-
-  for (const entry of recording.commands) {
-    if (entry.source === "navigate") {
-      const navigate = entry.command as { url?: string };
-      lines.push(`  await browser.navigate(tabId, ${JSON.stringify(navigate.url ?? "")});`);
-      continue;
-    }
-    lines.push(`  await browser.execute(tabId, ${JSON.stringify(entry.command, null, 2).replace(/\n/g, "\n  ")});`);
-  }
-
-  lines.push("}");
-  lines.push("");
-  lines.push("run().catch((error) => {");
-  lines.push("  console.error(error);");
-  lines.push("  process.exitCode = 1;");
-  lines.push("});");
-  return lines.join("\n");
-}
 
 function originFromUrl(url: string): string {
   try {
