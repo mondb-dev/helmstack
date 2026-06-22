@@ -110,6 +110,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * POST /api/tabs/:id/styles/assert      { selector, assertions, limit? } → ElementStyleAssertionReport
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
  * GET  /api/tabs/:id/design-tokens      → DesignTokensReport
+ * GET  /api/tabs/:id/css-coverage       → CssCoverageReport (unused-CSS, reloads tab)
  * GET  /api/tabs/:id/component-sources  → ComponentSourceReport (click-to-component)
  * GET  /api/tabs/:id/layout-issues      → LayoutIssuesReport
  * GET  /api/tabs/:id/media-state        → MediaStateReport
@@ -764,6 +765,12 @@ export class AgentServer {
     const designTokensMatch = p.match(/^\/api\/tabs\/([^/]+)\/design-tokens$/);
     if (method === "GET" && designTokensMatch) {
       return json(res, await this.tabs.extractDesignTokens(designTokensMatch[1] as TabId));
+    }
+
+    // ── CSS coverage (unused-CSS) ───────────────────────────────────────────────
+    const cssCoverageMatch = p.match(/^\/api\/tabs\/([^/]+)\/css-coverage$/);
+    if (method === "GET" && cssCoverageMatch) {
+      return json(res, await this.tabs.captureCssCoverage(cssCoverageMatch[1] as TabId));
     }
 
     // ── Element → source mapping (click-to-component) ──────────────────────────

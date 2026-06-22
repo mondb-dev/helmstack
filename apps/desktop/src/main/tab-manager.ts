@@ -11,6 +11,7 @@ import { isStealthEnabled } from "./runtime-config.js";
 import { PerceptionBaselineStore, ScreenshotBaselineStore, type PerceptionBaselineEntry } from "./baseline-store.js";
 import { buildHar } from "./har.js";
 import { buildDesignTokensReport, designTokenCollectorScript, type RawDesignTokens } from "./design-tokens.js";
+import { buildCssCoverageReport, type RawRuleRange, type RawStylesheetCoverage } from "./css-coverage.js";
 import { buildLayoutIssuesReport, layoutIssueDetectorScript, type LayoutIssuesRaw } from "./layout-issues.js";
 import { buildMediaStateReport, mediaStateCollectorScript, type MediaStateRaw } from "./media-state.js";
 import { exportRecordingAll, renderRecordingScript } from "./recording-export.js";
@@ -81,6 +82,7 @@ import {
   type TabId,
   type TabLogSnapshot,
   type HarArchive,
+  type CssCoverageReport,
   type DesignTokensReport,
   type LayoutIssuesReport,
   type MediaStateReport,
@@ -817,6 +819,74 @@ export class TabManager {
       sampledElements: 0
     };
     return buildDesignTokensReport(raw, tabId, Date.now());
+  }
+
+  /**
+   * Measure unused CSS via CDP rule-usage tracking. Reloads the page (as the
+   * DevTools Coverage panel does) so usage is measured from the initial render,
+   * guarded by a hard timeout so it can never hang. Returns per-stylesheet
+   * used/unused byte tallies and an aggregate summary.
+   */
+  async captureCssCoverage(tabId: TabId): Promise<CssCoverageReport> {
+    const tab = this.requireTab(tabId);
+    const { webContents } = tab.view;
+    this.ensureDebugger(webContents);
+    const dbg = webContents.debugger;
+
+    // Capture stylesheet headers (id → sourceURL) emitted after CSS.enable.
+    const headers = new Map<string, string>();
+    const onMessage = (_event: unknown, cdpMethod: string, params: { header?: { styleSheetId: string; sourceURL?: string } }) => {
+      if (cdpMethod === "CSS.styleSheetAdded" && params.header) {
+        headers.set(params.header.styleSheetId, params.header.sourceURL ?? "");
+      }
+    };
+    dbg.on("message", onMessage);
+
+    try {
+      await dbg.sendCommand("DOM.enable").catch(() => {});
+      await dbg.sendCommand("CSS.enable").catch(() => {});
+      await dbg.sendCommand("Page.enable").catch(() => {});
+      await dbg.sendCommand("CSS.startRuleUsageTracking");
+
+      // Reload so rules used during initial render are counted; race against a
+      // timeout so a stalled load never hangs the capture.
+      const loaded = new Promise<void>((resolve) => {
+        const onLoad = (_e: unknown, m: string) => {
+          if (m === "Page.loadEventFired") { dbg.removeListener("message", onLoad); resolve(); }
+        };
+        dbg.on("message", onLoad);
+      });
+      await dbg.sendCommand("Page.reload", { ignoreCache: false }).catch(() => {});
+      await Promise.race([loaded, new Promise<void>((r) => setTimeout(r, 4000))]);
+      await new Promise<void>((r) => setTimeout(r, 250)); // settle late-applied styles
+
+      const stop = await dbg.sendCommand("CSS.stopRuleUsageTracking") as {
+        ruleUsage?: Array<{ styleSheetId: string; startOffset: number; endOffset: number; used: boolean }>;
+      };
+      const ruleUsage = stop.ruleUsage ?? [];
+
+      const bySheet = new Map<string, RawRuleRange[]>();
+      for (const r of ruleUsage) {
+        const arr = bySheet.get(r.styleSheetId) ?? [];
+        arr.push({ startOffset: r.startOffset, endOffset: r.endOffset, used: r.used });
+        bySheet.set(r.styleSheetId, arr);
+      }
+
+      const stylesheets: RawStylesheetCoverage[] = [];
+      for (const [styleSheetId, ranges] of bySheet) {
+        let text = "";
+        try {
+          const t = await dbg.sendCommand("CSS.getStyleSheetText", { styleSheetId }) as { text?: string };
+          text = t.text ?? "";
+        } catch { /* stylesheet may have been replaced by the reload */ }
+        stylesheets.push({ styleSheetId, sourceURL: headers.get(styleSheetId) ?? "", text, ranges });
+      }
+
+      return buildCssCoverageReport({ url: webContents.getURL(), stylesheets }, tabId, Date.now());
+    } finally {
+      dbg.removeListener("message", onMessage);
+      await dbg.sendCommand("CSS.disable").catch(() => {});
+    }
   }
 
   /** Sample DOM mutations for `durationMs` and rank the busiest subtrees (re-render/thrash detector). */

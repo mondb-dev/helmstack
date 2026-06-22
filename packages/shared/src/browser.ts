@@ -986,3 +986,46 @@ export type StorageReport = {
   /** Total estimated bytes across all areas. */
   totalBytes: number;
 };
+
+// ── CSS coverage / unused-rule report ──────────────────────────────────────
+
+/** Per-stylesheet CSS rule-usage coverage, derived from CDP rule-usage tracking. */
+export type CssStylesheetCoverage = {
+  styleSheetId: string;
+  /** Source URL of the stylesheet, or "" for inline / constructed sheets. */
+  sourceURL: string;
+  /** Full stylesheet text length, in bytes. */
+  totalBytes: number;
+  /** Bytes spanned by tracked rule ranges (excludes whitespace/comments between rules). */
+  ruleBytes: number;
+  /** Bytes spanned by rule ranges that were actually used. */
+  usedBytes: number;
+  /** `ruleBytes - usedBytes` — tracked rule bytes that went unused. */
+  unusedBytes: number;
+  ruleCount: number;
+  usedRuleCount: number;
+  unusedRuleCount: number;
+  /** `usedBytes / ruleBytes * 100`, rounded to 0.1; 0 when no rules tracked. */
+  usedPercent: number;
+};
+
+/** Aggregate unused-CSS report across all of a tab's stylesheets. */
+export type CssCoverageReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** Per-stylesheet coverage, sorted by unused bytes (worst offenders first). */
+  stylesheets: CssStylesheetCoverage[];
+  summary: {
+    stylesheetCount: number;
+    totalBytes: number;
+    ruleBytes: number;
+    usedBytes: number;
+    unusedBytes: number;
+    /** Overall `usedBytes / ruleBytes * 100`, rounded to 0.1. */
+    usedPercent: number;
+    ruleCount: number;
+    usedRuleCount: number;
+    unusedRuleCount: number;
+  };
+};

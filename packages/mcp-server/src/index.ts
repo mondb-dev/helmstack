@@ -625,6 +625,13 @@ server.tool(
 );
 
 server.tool(
+  "browser_css_coverage",
+  "Report unused CSS on the page via rule-usage tracking. NOTE: this reloads the tab (like the DevTools Coverage panel) to measure usage from the initial render. Returns per-stylesheet used/unused byte tallies and rule counts, sorted worst-offender first, plus an aggregate used-percent — useful for finding dead CSS and trimming bundle size.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.captureCssCoverage(tabId))
+);
+
+server.tool(
   "browser_component_sources",
   "Map rendered DOM nodes back to the component + source file:line that produced them (React _debugSource, Svelte __svelte_meta, Vue __file). Requires a dev build with source metadata. Lets you reference '<PrimaryButton> at src/ui/Button.tsx:42' instead of a brittle CSS selector.",
   { tabId: z.string().describe("Tab ID") },

@@ -137,6 +137,7 @@ import type {
   ComponentSourceReport,
   ComponentTreeReport,
   ChangedElement,
+  CssCoverageReport,
   DesignTokensReport,
   DiffRegion,
   LayoutIssuesReport,
@@ -753,6 +754,15 @@ export class BrowserClient {
    */
   async extractDesignTokens(tabId: TabId): Promise<DesignTokensReport> {
     return this.get(`/api/tabs/${tabId}/design-tokens`);
+  }
+
+  /**
+   * Measure unused CSS on the page via rule-usage tracking. **Reloads the tab**
+   * (as the DevTools Coverage panel does) to measure from the initial render,
+   * then reports per-stylesheet used/unused bytes and an aggregate summary.
+   */
+  async captureCssCoverage(tabId: TabId): Promise<CssCoverageReport> {
+    return this.get(`/api/tabs/${tabId}/css-coverage`);
   }
 
   /**
