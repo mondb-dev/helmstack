@@ -671,9 +671,14 @@ export class BrowserClient {
    * for (const rec of report.recommendations) {
    *   console.log("→", rec);
    * }
+   *
+   * Pass a `selector` to scope the audit to that element's subtree (page-level
+   * rules like lang/title are skipped) — useful for auditing just the component
+   * you're editing: `await browser.auditAccessibility(tabId, "#checkout-form")`.
    */
-  async auditAccessibility(tabId: TabId): Promise<A11yAuditReport> {
-    return this.get(`/api/tabs/${tabId}/a11y`);
+  async auditAccessibility(tabId: TabId, selector?: string): Promise<A11yAuditReport> {
+    const qs = selector ? `?selector=${encodeURIComponent(selector)}` : "";
+    return this.get(`/api/tabs/${tabId}/a11y${qs}`);
   }
 
   /**

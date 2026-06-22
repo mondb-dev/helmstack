@@ -390,6 +390,8 @@ export type A11yAuditReport = {
   passes: number;
   /** Total AX nodes inspected. */
   nodeCount: number;
+  /** When set, the audit was scoped to this selector's subtree (page-level rules skipped). */
+  selector?: string;
 };
 
 // ── Element Style Inspector ────────────────────────────────────────────────

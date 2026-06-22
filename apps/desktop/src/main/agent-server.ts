@@ -104,7 +104,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * POST /api/tabs/:id/viewport-suite      { presets?, includeDiffs?, includeLayoutIssues? } → ViewportSuiteReport
  * GET  /api/tabs/:id/performance         → PerformanceReport
  * GET  /api/tabs/:id/health               → HealthReport (aggregated scorecard)
- * GET  /api/tabs/:id/a11y               → A11yAuditReport
+ * GET  /api/tabs/:id/a11y               → A11yAuditReport (?selector= scopes to a subtree)
  * GET  /api/tabs/:id/focus-order        → FocusOrderReport
  * POST /api/tabs/:id/styles/inspect     { selector, limit? } → ElementStyleInspectionReport
  * POST /api/tabs/:id/styles/assert      { selector, assertions, limit? } → ElementStyleAssertionReport
@@ -714,7 +714,8 @@ export class AgentServer {
     // ── Accessibility audit ───────────────────────────────────────────────────
     const a11yMatch = p.match(/^\/api\/tabs\/([^/]+)\/a11y$/);
     if (method === "GET" && a11yMatch) {
-      return json(res, await this.tabs.auditAccessibility(a11yMatch[1] as TabId));
+      const selector = url.searchParams.get("selector") ?? undefined;
+      return json(res, await this.tabs.auditAccessibility(a11yMatch[1] as TabId, selector));
     }
 
     // ── Keyboard / focus-order audit ──────────────────────────────────────────

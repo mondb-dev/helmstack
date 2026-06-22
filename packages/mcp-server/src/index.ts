@@ -568,9 +568,14 @@ Rules checked (WCAG level in parentheses):
 - 2.4.6 (AA) Links must have an accessible name
 - 3.1.1 (A)  HTML element must have a lang attribute
 - 4.1.2 (A)  ARIA widget roles must include required state attributes (aria-checked, aria-expanded, etc.)
-- 4.1.3 (AA) Disabled controls must still have an accessible name`,
-  { tabId: z.string().describe("Tab ID") },
-  async ({ tabId }) => jsonResult(await browser.auditAccessibility(tabId))
+- 4.1.3 (AA) Disabled controls must still have an accessible name
+
+Pass an optional 'selector' to scope the audit to that element's subtree (page-level rules like lang/title are skipped) — useful for auditing just the component you're editing.`,
+  {
+    tabId: z.string().describe("Tab ID"),
+    selector: z.string().optional().describe("Optional CSS selector to scope the audit to one element's subtree")
+  },
+  async ({ tabId, selector }) => jsonResult(await browser.auditAccessibility(tabId, selector))
 );
 
 server.tool(

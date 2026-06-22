@@ -751,8 +751,8 @@ export class TabManager {
    * principles, returns per-violation remediation guidance, a 0–100 score,
    * principle breakdown, deduplicated rule summaries, and top recommendations.
    */
-  async auditAccessibility(tabId: TabId): Promise<import("../../../../packages/shared/src/index.js").A11yAuditReport> {
-    return runA11yAudit(this.debuggerFor(tabId), tabId);
+  async auditAccessibility(tabId: TabId, selector?: string): Promise<import("../../../../packages/shared/src/index.js").A11yAuditReport> {
+    return runA11yAudit(this.debuggerFor(tabId), tabId, selector);
   }
 
   // ── Element Style Inspector ───────────────────────────────────────────────
