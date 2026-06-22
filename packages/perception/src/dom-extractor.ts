@@ -17,6 +17,7 @@ import type {
   SocialSurfaceKind,
   TabId
 } from "../../shared/src/index.js";
+import { collectQueryRoots } from "./page-dom-roots.js";
 
 const OAUTH_PROVIDERS = ["google", "github", "apple", "microsoft", "facebook", "x", "twitter"];
 
@@ -1143,7 +1144,7 @@ function collectElementsAcrossRoots(selector: string): Element[] {
   const seen = new Set<Element>();
   const elements: Element[] = [];
 
-  for (const root of collectQueryRoots()) {
+  for (const root of collectQueryRoots(document)) {
     for (const element of root.querySelectorAll(selector)) {
       if (!seen.has(element)) {
         seen.add(element);
@@ -1153,34 +1154,6 @@ function collectElementsAcrossRoots(selector: string): Element[] {
   }
 
   return elements;
-}
-
-function collectQueryRoots(): Array<Document | ShadowRoot> {
-  const roots: Array<Document | ShadowRoot> = [document];
-  const pending: Array<Document | ShadowRoot> = [document];
-  const seen = new Set<Node>([document]);
-
-  while (pending.length > 0) {
-    const current = pending.shift()!;
-    for (const element of current.querySelectorAll("*")) {
-      if (element instanceof Element && element.shadowRoot && !seen.has(element.shadowRoot)) {
-        seen.add(element.shadowRoot);
-        roots.push(element.shadowRoot);
-        pending.push(element.shadowRoot);
-      }
-
-      if (element instanceof HTMLIFrameElement) {
-        const frameDocument = getIframeDocument(element);
-        if (frameDocument && !seen.has(frameDocument)) {
-          seen.add(frameDocument);
-          roots.push(frameDocument);
-          pending.push(frameDocument);
-        }
-      }
-    }
-  }
-
-  return roots;
 }
 
 function resolveLabelledByText(field: Element, labelledBy: string): string {
