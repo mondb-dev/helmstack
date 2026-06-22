@@ -34,11 +34,30 @@ processes that don't hold the token.
 
 ### Known caveat — agent isolation is advisory
 
-Per-agent tab ownership keys off the client-supplied `X-Agent-ID` header. It
-prevents *accidental* cross-agent interference but is **not** a security
-boundary: a client that holds the token can present any `X-Agent-ID`. Treat all
-token-holders as mutually trusting. (Binding agent identity to the token is
-tracked in the agent-substrate backlog.)
+Per-agent tab ownership (`tabOwners`, gated by `isTabAccessible`) keys off the
+client-supplied `X-Agent-ID` header. It prevents *accidental* cross-agent
+interference but is **not** a security boundary:
+
+- There is a **single shared auth token**. Identity is not bound to the caller,
+  so any holder of the token can present **any** `X-Agent-ID` and reach another
+  agent's tabs, approvals, and handoffs. The header is trusted, not authenticated.
+- Therefore: **treat all token-holders as mutually trusting.** The ownership
+  check is a cooperative partition, not a defense against a malicious agent.
+
+**Remediation / safe usage:**
+
+- To run **mutually-distrusting** agents, give each its **own HelmStack instance**
+  (separate process + port + token + `userData`) rather than relying on
+  `X-Agent-ID` within one instance.
+- True in-process isolation would require **per-agent tokens** (a token→agentId
+  binding so the server derives identity from the authenticated token instead of
+  a header). That is tracked in the agent-substrate backlog and is the only way
+  to make this a real boundary.
+
+This caveat is asserted in code (`AgentServer.agentIdOf` / `isTabAccessible`
+carry `SECURITY:` comments) and codified by a test in
+`apps/desktop/test/agent-server.integration.test.ts` so it can't silently be
+mistaken for a security boundary.
 
 ## Credential storage
 

@@ -111,4 +111,23 @@ describe("AgentServer HTTP integration", () => {
     const res = await request("OPTIONS", "/api/health", { Origin: "http://localhost:3000" });
     expect(res.status).toBe(204);
   });
+
+  // Codifies the documented limitation (docs/security-model.md → "agent isolation
+  // is advisory"): X-Agent-ID is a trusted, unauthenticated header. With one
+  // shared token, any token-holder can present any agent id. This is intentional
+  // (cooperative partition, not a security boundary) — these tests exist so that
+  // can't silently change into a false guarantee.
+  describe("agent isolation is advisory, not a security boundary", () => {
+    it("accepts an arbitrary X-Agent-ID with a valid token (identity is not bound)", async () => {
+      const a = await request("GET", "/api/tabs", { ...auth, "X-Agent-ID": "agent-a" });
+      const impersonator = await request("GET", "/api/tabs", { ...auth, "X-Agent-ID": "totally-different-agent" });
+      expect(a.status).toBe(200);
+      expect(impersonator.status).toBe(200); // header trusted, not authenticated
+    });
+
+    it("still requires the shared token regardless of X-Agent-ID", async () => {
+      const res = await request("GET", "/api/tabs", { "X-Agent-ID": "agent-a" });
+      expect(res.status).toBe(401); // the token is the real gate; the agent id is not
+    });
+  });
 });

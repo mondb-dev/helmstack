@@ -281,14 +281,30 @@ export class AgentServer {
     }
   }
 
-  /** Extract the agent ID from the X-Agent-ID request header, or null if absent. */
+  /**
+   * Extract the agent ID from the X-Agent-ID request header, or null if absent.
+   *
+   * SECURITY — this value is **client-supplied and unauthenticated**. There is a
+   * single shared auth token, so identity is not bound to the caller: any holder
+   * of the token can present any X-Agent-ID. Per-agent ownership built on this
+   * (see {@link isTabAccessible}) is a *cooperative partition* to prevent
+   * accidental cross-agent interference — it is **NOT a security boundary**. Run
+   * mutually-distrusting agents in separate HelmStack instances. See
+   * docs/security-model.md → "agent isolation is advisory".
+   */
   private agentIdOf(req: http.IncomingMessage): string | null {
     const h = req.headers["x-agent-id"];
     if (typeof h === "string" && h.trim()) return h.trim();
     return null;
   }
 
-  /** Returns true if the requesting agent may access this tab. */
+  /**
+   * Returns true if the requesting agent may access this tab.
+   *
+   * SECURITY: advisory only — `agentId` comes from a spoofable header (see
+   * {@link agentIdOf}). This stops honest agents from stepping on each other,
+   * not a malicious token-holder.
+   */
   private isTabAccessible(tabId: TabId, agentId: string | null): boolean {
     if (agentId === null) return true; // unauthenticated: full backward compat
     const owner = this.tabOwners.get(tabId);
