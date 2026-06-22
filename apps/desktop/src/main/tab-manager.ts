@@ -28,6 +28,7 @@ import { inspectStyles, assertStyles } from "./style-inspector.js";
 import { runA11yAudit } from "./a11y-audit.js";
 import { runComponentTree } from "./component-tree.js";
 import { handleCdpMessage } from "./cdp-events.js";
+import { applyMediaEmulation, applyResourceBudget, applyLocationOverride } from "./overrides.js";
 import { clampInt } from "./util.js";
 import { waitForPageSettled } from "./dom-actuator.js";
 import { ApprovalPolicyStore } from "./approval-policy-store.js";
@@ -1095,7 +1096,7 @@ export class TabManager {
   async setResourceBudget(tabId: TabId, budget: ResourceBudget): Promise<ResourceBudget> {
     const tab = this.requireTab(tabId);
     tab.resourceBudget = { ...budget };
-    await this.applyResourceBudget(tab);
+    await applyResourceBudget(tab);
     return tab.resourceBudget;
   }
 
@@ -1119,7 +1120,7 @@ export class TabManager {
   async setLocationOverride(tabId: TabId, location: LocationOverride): Promise<LocationOverride> {
     const tab = this.requireTab(tabId);
     tab.locationOverride = { ...location };
-    await this.applyLocationOverride(tab);
+    await applyLocationOverride(tab);
     return tab.locationOverride;
   }
 
@@ -1140,7 +1141,7 @@ export class TabManager {
   async setMediaEmulation(tabId: TabId, emulation: MediaEmulation): Promise<MediaEmulation> {
     const tab = this.requireTab(tabId);
     tab.mediaEmulation = { ...emulation };
-    await this.applyMediaEmulation(tab);
+    await applyMediaEmulation(tab);
     return tab.mediaEmulation;
   }
 
@@ -1156,23 +1157,6 @@ export class TabManager {
     await webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { media: "", features: [] }).catch(() => {});
   }
 
-  private async applyMediaEmulation(tab: TabRecord): Promise<void> {
-    const emulation = tab.mediaEmulation;
-    if (!emulation) return;
-
-    const { webContents } = tab.view;
-    this.ensureDebugger(webContents);
-
-    const features: Array<{ name: string; value: string }> = [];
-    if (emulation.colorScheme) features.push({ name: "prefers-color-scheme", value: emulation.colorScheme });
-    if (emulation.reducedMotion) features.push({ name: "prefers-reduced-motion", value: emulation.reducedMotion });
-    if (emulation.forcedColors) features.push({ name: "forced-colors", value: emulation.forcedColors });
-
-    await webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
-      media: emulation.media ?? "",
-      features
-    }).catch(() => {});
-  }
 
   // ── Network mock / intercept ──────────────────────────────────────────────
 
@@ -1483,24 +1467,6 @@ export class TabManager {
     tab.recording.commands.push({ at: Date.now(), source, command, outcome });
   }
 
-  private async applyResourceBudget(tab: TabRecord): Promise<void> {
-    const budget = tab.resourceBudget;
-    if (!budget) return;
-
-    const { webContents } = tab.view;
-    this.ensureDebugger(webContents);
-
-    await webContents.debugger.sendCommand("Emulation.setCPUThrottlingRate", {
-      rate: Math.max(1, budget.cpuThrottlingRate ?? 1)
-    }).catch(() => {});
-
-    await webContents.debugger.sendCommand("Network.emulateNetworkConditions", {
-      offline: budget.offline ?? false,
-      latency: budget.latencyMs ?? 0,
-      downloadThroughput: budget.downloadThroughputKbps ? budget.downloadThroughputKbps * 1024 / 8 : -1,
-      uploadThroughput: budget.uploadThroughputKbps ? budget.uploadThroughputKbps * 1024 / 8 : -1
-    }).catch(() => {});
-  }
 
   private async checkResourceBudget(tab: TabRecord): Promise<BrowserCommandResult | null> {
     if (!tab.resourceBudget?.maxJsHeapMb) return null;
@@ -1521,27 +1487,6 @@ export class TabManager {
     return typeof heap === "number" ? heap / (1024 * 1024) : null;
   }
 
-  private async applyLocationOverride(tab: TabRecord): Promise<void> {
-    const location = tab.locationOverride;
-    if (!location) return;
-
-    const { webContents } = tab.view;
-    this.ensureDebugger(webContents);
-
-    await webContents.debugger.sendCommand("Emulation.setGeolocationOverride", {
-      latitude: location.latitude,
-      longitude: location.longitude,
-      accuracy: location.accuracy ?? 1
-    }).catch(() => {});
-
-    if (location.timezoneId) {
-      await webContents.debugger.sendCommand("Emulation.setTimezoneOverride", { timezoneId: location.timezoneId }).catch(() => {});
-    }
-
-    if (location.locale) {
-      await webContents.debugger.sendCommand("Emulation.setLocaleOverride", { locale: location.locale }).catch(() => {});
-    }
-  }
 
   private bindLifecycle(tab: TabRecord) {
     const { webContents } = tab.view;
@@ -1602,9 +1547,9 @@ export class TabManager {
     webContents.on("did-navigate-in-page", updateSummary);
     webContents.on("did-finish-load", () => {
       updateSummary();
-      void this.applyLocationOverride(tab);
-      void this.applyResourceBudget(tab);
-      void this.applyMediaEmulation(tab);
+      void applyLocationOverride(tab);
+      void applyResourceBudget(tab);
+      void applyMediaEmulation(tab);
     });
     webContents.on("did-start-loading", updateSummary);
     webContents.on("did-stop-loading", updateSummary);
