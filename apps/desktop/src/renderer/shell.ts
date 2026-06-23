@@ -22,6 +22,7 @@ const addressForm = document.getElementById("address-form") as HTMLFormElement |
 const addressInput = document.getElementById("address-input") as HTMLInputElement | null;
 const newTabButton = document.getElementById("new-tab-button") as HTMLButtonElement | null;
 const snapshotButton = document.getElementById("snapshot-button") as HTMLButtonElement | null;
+const inspectButton = document.getElementById("inspect-button") as HTMLButtonElement | null;
 const fixtureOpenButton = document.getElementById("fixture-open-button") as HTMLButtonElement | null;
 const fixtureRunButton = document.getElementById("fixture-run-button") as HTMLButtonElement | null;
 const snapshotOutput = document.getElementById("snapshot-output") as HTMLPreElement | null;
@@ -635,6 +636,22 @@ async function bootstrap() {
       return;
     }
     renderPerception(await window.browserShell.capturePerception(activeTab.id));
+  });
+
+  inspectButton?.addEventListener("click", async () => {
+    toolsMenuDropdown?.setAttribute("hidden", "");
+    const activeTab = getActiveTab();
+    if (!activeTab) {
+      return;
+    }
+    setFixtureStatus("Inspect: click an element in the page (Esc to cancel)…");
+    const pick = await window.browserShell.pickElement(activeTab.id);
+    if (!pick.picked) {
+      setFixtureStatus("Inspect cancelled.");
+      return;
+    }
+    setFixtureStatus(`Picked ${pick.tagName} → ${pick.selector}`);
+    appendTerminal("system", `Inspect → selector ${pick.selector}${pick.text ? ` ("${pick.text}")` : ""}`);
   });
 
   fixtureOpenButton?.addEventListener("click", async () => {

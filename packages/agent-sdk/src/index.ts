@@ -137,6 +137,11 @@ import type {
   ComponentSourceReport,
   ComponentTreeReport,
   ChangedElement,
+  CssCoverageReport,
+  JsCoverageReport,
+  TraceReport,
+  FrameworkReport,
+  ElementPickResult,
   DesignTokensReport,
   DiffRegion,
   LayoutIssuesReport,
@@ -669,9 +674,14 @@ export class BrowserClient {
    * for (const rec of report.recommendations) {
    *   console.log("→", rec);
    * }
+   *
+   * Pass a `selector` to scope the audit to that element's subtree (page-level
+   * rules like lang/title are skipped) — useful for auditing just the component
+   * you're editing: `await browser.auditAccessibility(tabId, "#checkout-form")`.
    */
-  async auditAccessibility(tabId: TabId): Promise<A11yAuditReport> {
-    return this.get(`/api/tabs/${tabId}/a11y`);
+  async auditAccessibility(tabId: TabId, selector?: string): Promise<A11yAuditReport> {
+    const qs = selector ? `?selector=${encodeURIComponent(selector)}` : "";
+    return this.get(`/api/tabs/${tabId}/a11y${qs}`);
   }
 
   /**
@@ -753,6 +763,53 @@ export class BrowserClient {
    */
   async extractDesignTokens(tabId: TabId): Promise<DesignTokensReport> {
     return this.get(`/api/tabs/${tabId}/design-tokens`);
+  }
+
+  /**
+   * Measure unused CSS on the page via rule-usage tracking. **Reloads the tab**
+   * (as the DevTools Coverage panel does) to measure from the initial render,
+   * then reports per-stylesheet used/unused bytes and an aggregate summary.
+   */
+  async captureCssCoverage(tabId: TabId): Promise<CssCoverageReport> {
+    return this.get(`/api/tabs/${tabId}/css-coverage`);
+  }
+
+  /**
+   * Measure dead JavaScript on the page via V8 precise coverage. **Reloads the
+   * tab** (as the DevTools Coverage panel does) to measure from initial load,
+   * then reports per-script used/unused bytes and an aggregate summary.
+   */
+  async captureJsCoverage(tabId: TabId): Promise<JsCoverageReport> {
+    return this.get(`/api/tabs/${tabId}/js-coverage`);
+  }
+
+  /**
+   * Record a performance trace for `durationMs` (default 3000) and return a
+   * digest — long main-thread tasks (≥ 50 ms) and a per-category time breakdown
+   * — for diagnosing jank without parsing the raw trace stream.
+   */
+  async captureTrace(tabId: TabId, durationMs?: number): Promise<TraceReport> {
+    const qs = durationMs ? `?durationMs=${durationMs}` : "";
+    return this.get(`/api/tabs/${tabId}/trace${qs}`);
+  }
+
+  /**
+   * Fingerprint the page's framework (Next/Nuxt/SvelteKit/Remix/Astro/Vite/…),
+   * its dev server (Vite/webpack/Turbopack), and whether it's a dev build with
+   * HMR — so an agent can tailor guidance and treat HMR reloads accordingly.
+   */
+  async detectFramework(tabId: TabId): Promise<FrameworkReport> {
+    return this.get(`/api/tabs/${tabId}/framework`);
+  }
+
+  /**
+   * Activate the shell's devtools-style inspect overlay and **wait for a human**
+   * to click an element (or cancel with Escape). Resolves with the picked
+   * element's selector + identity so the agent can act on exactly what the
+   * person pointed at. Long-lived — blocks on the human interaction.
+   */
+  async pickElement(tabId: TabId): Promise<ElementPickResult> {
+    return this.get(`/api/tabs/${tabId}/pick`);
   }
 
   /**

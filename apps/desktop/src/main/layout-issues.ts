@@ -1,4 +1,5 @@
 import type { LayoutIssue, LayoutIssuesReport, TabId } from "../../../../packages/shared/src/index.js";
+import { SELECTOR_FOR_SOURCE } from "../../../../packages/perception/src/page-selector.js";
 
 /** Raw layout-issue payload returned by the in-page detector script. */
 export type LayoutIssuesRaw = {
@@ -55,15 +56,7 @@ export function layoutIssueDetectorScript(cap = 4000): string {
     const vh = root.clientHeight;
     const TOL = 2;
 
-    const selectorFor = (el) => {
-      const tag = el.tagName.toLowerCase();
-      if (el.id) return tag + "#" + CSS.escape(el.id);
-      const tid = el.getAttribute("data-testid");
-      if (tid) return tag + "[data-testid=\\"" + tid + "\\"]";
-      const cls = (el.getAttribute("class") || "").trim().split(/\\s+/).filter(Boolean)[0];
-      if (cls) return tag + "." + CSS.escape(cls);
-      return tag;
-    };
+    const selectorFor = ${SELECTOR_FOR_SOURCE};
 
     const isVisible = (el, r) => {
       if (r.width <= 0 || r.height <= 0) return false;

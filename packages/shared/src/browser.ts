@@ -390,6 +390,8 @@ export type A11yAuditReport = {
   passes: number;
   /** Total AX nodes inspected. */
   nodeCount: number;
+  /** When set, the audit was scoped to this selector's subtree (page-level rules skipped). */
+  selector?: string;
 };
 
 // ── Element Style Inspector ────────────────────────────────────────────────
@@ -692,10 +694,16 @@ export type ComponentFramework = "react" | "vue" | "svelte" | "angular" | "unkno
 
 export type ComponentNode = {
   name: string;
-  /** Stringified props (shallow, truncated to avoid huge payloads). */
+  /** Stringified props, truncated; nested objects/arrays are summarised one level deep. */
   props: Record<string, string>;
   /** Authoring source `file:line` when dev-build metadata is available. */
   source?: string;
+  /** React/Vue list key, when present. */
+  key?: string | null;
+  /** Stringified component state — React hooks (`hook0`, `hook1`, …) or class/Vue state. */
+  state?: Record<string, string>;
+  /** Number of React hooks on the component (0 for class components / non-React). */
+  hookCount?: number;
   children: ComponentNode[];
 };
 
@@ -985,4 +993,186 @@ export type StorageReport = {
   indexedDb: IndexedDbDatabase[];
   /** Total estimated bytes across all areas. */
   totalBytes: number;
+};
+
+// ── CSS coverage / unused-rule report ──────────────────────────────────────
+
+/** Per-stylesheet CSS rule-usage coverage, derived from CDP rule-usage tracking. */
+export type CssStylesheetCoverage = {
+  styleSheetId: string;
+  /** Source URL of the stylesheet, or "" for inline / constructed sheets. */
+  sourceURL: string;
+  /** Full stylesheet text length, in bytes. */
+  totalBytes: number;
+  /** Bytes spanned by tracked rule ranges (excludes whitespace/comments between rules). */
+  ruleBytes: number;
+  /** Bytes spanned by rule ranges that were actually used. */
+  usedBytes: number;
+  /** `ruleBytes - usedBytes` — tracked rule bytes that went unused. */
+  unusedBytes: number;
+  ruleCount: number;
+  usedRuleCount: number;
+  unusedRuleCount: number;
+  /** `usedBytes / ruleBytes * 100`, rounded to 0.1; 0 when no rules tracked. */
+  usedPercent: number;
+};
+
+/** Aggregate unused-CSS report across all of a tab's stylesheets. */
+export type CssCoverageReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** Per-stylesheet coverage, sorted by unused bytes (worst offenders first). */
+  stylesheets: CssStylesheetCoverage[];
+  summary: {
+    stylesheetCount: number;
+    totalBytes: number;
+    ruleBytes: number;
+    usedBytes: number;
+    unusedBytes: number;
+    /** Overall `usedBytes / ruleBytes * 100`, rounded to 0.1. */
+    usedPercent: number;
+    ruleCount: number;
+    usedRuleCount: number;
+    unusedRuleCount: number;
+  };
+};
+
+// ── JS coverage / dead-code report ─────────────────────────────────────────
+
+/** Per-script JS execution coverage, derived from CDP precise coverage. */
+export type JsScriptCoverage = {
+  scriptId: string;
+  /** Source URL of the script, or "" for inline/eval scripts. */
+  url: string;
+  /** Script source length, in bytes. */
+  totalBytes: number;
+  /** Bytes covered by V8 coverage ranges (the instrumented region). */
+  instrumentedBytes: number;
+  /** Instrumented bytes whose innermost covering range executed (count > 0). */
+  usedBytes: number;
+  /** `instrumentedBytes - usedBytes` — instrumented code that never ran. */
+  unusedBytes: number;
+  /** `usedBytes / instrumentedBytes * 100`, rounded to 0.1; 0 when uninstrumented. */
+  usedPercent: number;
+};
+
+/** Aggregate dead-JS report across all of a tab's scripts. */
+export type JsCoverageReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** Per-script coverage, sorted by unused bytes (worst offenders first). */
+  scripts: JsScriptCoverage[];
+  summary: {
+    scriptCount: number;
+    totalBytes: number;
+    instrumentedBytes: number;
+    usedBytes: number;
+    unusedBytes: number;
+    /** Overall `usedBytes / instrumentedBytes * 100`, rounded to 0.1. */
+    usedPercent: number;
+  };
+};
+
+// ── Performance trace / timeline summary ───────────────────────────────────
+
+/** A main-thread task long enough to risk jank (≥ 50 ms), from a CDP trace. */
+export type TraceLongTask = {
+  name: string;
+  category: string;
+  /** Start time relative to the trace start, in milliseconds. */
+  startMs: number;
+  /** Task duration in milliseconds. */
+  durationMs: number;
+};
+
+/** Total recorded duration of complete events in one trace category. */
+export type TraceCategorySummary = {
+  category: string;
+  /** Summed duration of complete (`ph: "X"`) events in this category, in ms (may overlap due to nesting). */
+  totalMs: number;
+  eventCount: number;
+};
+
+/**
+ * Digestible summary of a CDP `Tracing` capture — long main-thread tasks and a
+ * per-category time breakdown — so an agent can reason about jank without
+ * parsing the raw multi-megabyte trace stream.
+ */
+export type TraceReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** Requested trace window in milliseconds. */
+  requestedMs: number;
+  /** Span from the first to the last event, in milliseconds. */
+  tracedMs: number;
+  /** Total trace events received. */
+  totalEvents: number;
+  /** Complete (`ph: "X"`) events with a duration. */
+  completeEvents: number;
+  /** Tasks ≥ 50 ms, sorted longest-first (capped). */
+  longTasks: TraceLongTask[];
+  longTaskCount: number;
+  longestTaskMs: number;
+  /** Per-category time breakdown, sorted by total time (capped). */
+  byCategory: TraceCategorySummary[];
+};
+
+// ── Framework / dev-server awareness ───────────────────────────────────────
+
+/** The user-facing app framework detected on the page. */
+export type DetectedFramework =
+  | "next"
+  | "nuxt"
+  | "sveltekit"
+  | "remix"
+  | "astro"
+  | "vite"      // a bare Vite app with no higher-level framework
+  | "create-react-app"
+  | "angular"
+  | "unknown";
+
+/** The bundler / dev server serving the page (the thing that provides HMR). */
+export type DetectedDevServer = "vite" | "webpack" | "turbopack" | "unknown" | "none";
+
+/**
+ * What framework and dev server the page is running, plus whether it's a dev
+ * build with HMR — lets an agent give framework-specific guidance and know a
+ * reload may be HMR-driven rather than a full navigation.
+ */
+export type FrameworkReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  framework: DetectedFramework;
+  devServer: DetectedDevServer;
+  /** True when the page looks like a local dev build (not a production bundle). */
+  isDev: boolean;
+  /** True when a hot-module-replacement client was detected. */
+  hmr: boolean;
+  /** Human-readable signals that drove the classification. */
+  evidence: string[];
+};
+
+// ── Visual element picker (human "inspect" → agent) ────────────────────────
+
+/**
+ * Result of a human picking an element via the shell's inspect overlay — the
+ * selector (and identity) handed to the agent. Enriched server-side with the
+ * element's component source and style inspection when available.
+ */
+export type ElementPickResult = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** True when the human picked an element; false if they cancelled (Escape). */
+  picked: boolean;
+  /** CSS selector for the picked element (empty when cancelled). */
+  selector: string;
+  tagName: string;
+  /** Trimmed text content of the element (truncated). */
+  text: string;
+  id: string | null;
 };

@@ -9,6 +9,7 @@ import type {
   ProposedEffect
 } from "../../../../packages/shared/src/index.js";
 import { isStealthEnabled } from "./runtime-config.js";
+import { COLLECT_QUERY_ROOTS_SOURCE } from "../../../../packages/perception/src/page-dom-roots.js";
 
 type DomActuationEffects = {
   effects?: ProposedEffect[];
@@ -298,41 +299,9 @@ export function buildDomTraversalScript() {
   return `function (payload) {
     const normalizeText = (value) => (value || "").replace(/\\s+/g, " ").trim();
 
-    const getIframeDocument = (frame) => {
-      try {
-        return frame.contentDocument;
-      } catch {
-        return null;
-      }
-    };
-
-    const collectRoots = () => {
-      const roots = [document];
-      const queue = [document];
-      const seen = new Set([document]);
-
-      while (queue.length > 0) {
-        const current = queue.shift();
-        for (const element of current.querySelectorAll("*")) {
-          if (element.shadowRoot && !seen.has(element.shadowRoot)) {
-            seen.add(element.shadowRoot);
-            roots.push(element.shadowRoot);
-            queue.push(element.shadowRoot);
-          }
-
-          if (element instanceof HTMLIFrameElement) {
-            const frameDocument = getIframeDocument(element);
-            if (frameDocument && !seen.has(frameDocument)) {
-              seen.add(frameDocument);
-              roots.push(frameDocument);
-              queue.push(frameDocument);
-            }
-          }
-        }
-      }
-
-      return roots;
-    };
+    // Cross-root traversal — single source of truth shared with observation
+    // (perception/page-dom-roots). Keeps observation and actuation in lock-step.
+    const collectRoots = () => (${COLLECT_QUERY_ROOTS_SOURCE})(document);
 
     const isVisible = (element) => {
       const view = element.ownerDocument.defaultView || window;

@@ -104,12 +104,17 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * POST /api/tabs/:id/viewport-suite      { presets?, includeDiffs?, includeLayoutIssues? } → ViewportSuiteReport
  * GET  /api/tabs/:id/performance         → PerformanceReport
  * GET  /api/tabs/:id/health               → HealthReport (aggregated scorecard)
- * GET  /api/tabs/:id/a11y               → A11yAuditReport
+ * GET  /api/tabs/:id/a11y               → A11yAuditReport (?selector= scopes to a subtree)
  * GET  /api/tabs/:id/focus-order        → FocusOrderReport
  * POST /api/tabs/:id/styles/inspect     { selector, limit? } → ElementStyleInspectionReport
  * POST /api/tabs/:id/styles/assert      { selector, assertions, limit? } → ElementStyleAssertionReport
  * GET  /api/tabs/:id/component-tree     → ComponentTreeReport
  * GET  /api/tabs/:id/design-tokens      → DesignTokensReport
+ * GET  /api/tabs/:id/css-coverage       → CssCoverageReport (unused-CSS, reloads tab)
+ * GET  /api/tabs/:id/js-coverage        → JsCoverageReport (dead-JS, reloads tab)
+ * GET  /api/tabs/:id/trace              → TraceReport (?durationMs=, long tasks + categories)
+ * GET  /api/tabs/:id/framework          → FrameworkReport (framework + dev server + HMR)
+ * GET  /api/tabs/:id/pick                → ElementPickResult (human inspect-and-click; blocks)
  * GET  /api/tabs/:id/component-sources  → ComponentSourceReport (click-to-component)
  * GET  /api/tabs/:id/layout-issues      → LayoutIssuesReport
  * GET  /api/tabs/:id/media-state        → MediaStateReport
@@ -278,14 +283,30 @@ export class AgentServer {
     }
   }
 
-  /** Extract the agent ID from the X-Agent-ID request header, or null if absent. */
+  /**
+   * Extract the agent ID from the X-Agent-ID request header, or null if absent.
+   *
+   * SECURITY — this value is **client-supplied and unauthenticated**. There is a
+   * single shared auth token, so identity is not bound to the caller: any holder
+   * of the token can present any X-Agent-ID. Per-agent ownership built on this
+   * (see {@link isTabAccessible}) is a *cooperative partition* to prevent
+   * accidental cross-agent interference — it is **NOT a security boundary**. Run
+   * mutually-distrusting agents in separate HelmStack instances. See
+   * docs/security-model.md → "agent isolation is advisory".
+   */
   private agentIdOf(req: http.IncomingMessage): string | null {
     const h = req.headers["x-agent-id"];
     if (typeof h === "string" && h.trim()) return h.trim();
     return null;
   }
 
-  /** Returns true if the requesting agent may access this tab. */
+  /**
+   * Returns true if the requesting agent may access this tab.
+   *
+   * SECURITY: advisory only — `agentId` comes from a spoofable header (see
+   * {@link agentIdOf}). This stops honest agents from stepping on each other,
+   * not a malicious token-holder.
+   */
   private isTabAccessible(tabId: TabId, agentId: string | null): boolean {
     if (agentId === null) return true; // unauthenticated: full backward compat
     const owner = this.tabOwners.get(tabId);
@@ -712,7 +733,8 @@ export class AgentServer {
     // ── Accessibility audit ───────────────────────────────────────────────────
     const a11yMatch = p.match(/^\/api\/tabs\/([^/]+)\/a11y$/);
     if (method === "GET" && a11yMatch) {
-      return json(res, await this.tabs.auditAccessibility(a11yMatch[1] as TabId));
+      const selector = url.searchParams.get("selector") ?? undefined;
+      return json(res, await this.tabs.auditAccessibility(a11yMatch[1] as TabId, selector));
     }
 
     // ── Keyboard / focus-order audit ──────────────────────────────────────────
@@ -764,6 +786,37 @@ export class AgentServer {
     const designTokensMatch = p.match(/^\/api\/tabs\/([^/]+)\/design-tokens$/);
     if (method === "GET" && designTokensMatch) {
       return json(res, await this.tabs.extractDesignTokens(designTokensMatch[1] as TabId));
+    }
+
+    // ── CSS coverage (unused-CSS) ───────────────────────────────────────────────
+    const cssCoverageMatch = p.match(/^\/api\/tabs\/([^/]+)\/css-coverage$/);
+    if (method === "GET" && cssCoverageMatch) {
+      return json(res, await this.tabs.captureCssCoverage(cssCoverageMatch[1] as TabId));
+    }
+
+    // ── JS coverage (dead-JS) ───────────────────────────────────────────────────
+    const jsCoverageMatch = p.match(/^\/api\/tabs\/([^/]+)\/js-coverage$/);
+    if (method === "GET" && jsCoverageMatch) {
+      return json(res, await this.tabs.captureJsCoverage(jsCoverageMatch[1] as TabId));
+    }
+
+    // ── Performance trace / timeline ────────────────────────────────────────────
+    const traceMatch = p.match(/^\/api\/tabs\/([^/]+)\/trace$/);
+    if (method === "GET" && traceMatch) {
+      const durationMs = Number(url.searchParams.get("durationMs")) || undefined;
+      return json(res, await this.tabs.captureTrace(traceMatch[1] as TabId, durationMs));
+    }
+
+    // ── Framework / dev-server detection ────────────────────────────────────────
+    const frameworkMatch = p.match(/^\/api\/tabs\/([^/]+)\/framework$/);
+    if (method === "GET" && frameworkMatch) {
+      return json(res, await this.tabs.detectFramework(frameworkMatch[1] as TabId));
+    }
+
+    // ── Visual element picker (human inspect → agent) ───────────────────────────
+    const pickMatch = p.match(/^\/api\/tabs\/([^/]+)\/pick$/);
+    if (method === "GET" && pickMatch) {
+      return json(res, await this.tabs.pickElement(pickMatch[1] as TabId));
     }
 
     // ── Element → source mapping (click-to-component) ──────────────────────────

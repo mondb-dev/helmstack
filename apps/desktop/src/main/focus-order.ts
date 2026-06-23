@@ -1,4 +1,5 @@
 import type { FocusableElement, FocusOrderIssue, FocusOrderReport, TabId } from "../../../../packages/shared/src/index.js";
+import { SELECTOR_FOR_SOURCE } from "../../../../packages/perception/src/page-selector.js";
 
 export type RawFocusOrder = {
   url: string;
@@ -68,15 +69,7 @@ export function analyzeFocusOrder(raw: RawFocusOrder, tabId: TabId, capturedAt: 
 export function focusableElementsScript(cap = 2000): string {
   return `(() => {
     const sel = "a[href], button, input:not([type='hidden']), select, textarea, [tabindex], [contenteditable='true']";
-    const selectorFor = (el) => {
-      const tag = el.tagName.toLowerCase();
-      if (el.id) return tag + "#" + el.id;
-      const tid = el.getAttribute("data-testid");
-      if (tid) return tag + "[data-testid=\\"" + tid + "\\"]";
-      const cls = (el.getAttribute("class") || "").trim().split(/\\s+/).filter(Boolean)[0];
-      if (cls) return tag + "." + cls;
-      return tag;
-    };
+    const selectorFor = ${SELECTOR_FOR_SOURCE};
     const nameOf = (el) => (el.getAttribute("aria-label") || (el.textContent || "").replace(/\\s+/g, " ").trim()).slice(0, 60);
     const elements = [];
     const all = Array.prototype.slice.call(document.querySelectorAll(sel), 0, ${cap});

@@ -1,3 +1,4 @@
+import { SELECTOR_FOR_SOURCE } from "../../../../packages/perception/src/page-selector.js";
 import type { ComponentSource, ComponentSourceReport, ComponentSourceSummary, TabId } from "../../../../packages/shared/src/index.js";
 
 /** Raw element→source pairs returned by the in-page collector. */
@@ -54,13 +55,7 @@ export function buildComponentSourceReport(raw: RawComponentSources, tabId: TabI
 export function componentSourceCollectorScript(cap = 4000): string {
   return `(() => {
     const out = [];
-    const selectorFor = (el) => {
-      const tag = el.tagName.toLowerCase();
-      if (el.id) return tag + "#" + el.id;
-      const cls = (el.getAttribute("class") || "").trim().split(/\\s+/).filter(Boolean)[0];
-      if (cls) return tag + "." + cls;
-      return tag;
-    };
+    const selectorFor = ${SELECTOR_FOR_SOURCE};
     const baseName = (file) => {
       if (!file) return "";
       const f = String(file).split(/[\\\\/]/).pop() || "";

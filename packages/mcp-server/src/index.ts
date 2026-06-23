@@ -568,9 +568,14 @@ Rules checked (WCAG level in parentheses):
 - 2.4.6 (AA) Links must have an accessible name
 - 3.1.1 (A)  HTML element must have a lang attribute
 - 4.1.2 (A)  ARIA widget roles must include required state attributes (aria-checked, aria-expanded, etc.)
-- 4.1.3 (AA) Disabled controls must still have an accessible name`,
-  { tabId: z.string().describe("Tab ID") },
-  async ({ tabId }) => jsonResult(await browser.auditAccessibility(tabId))
+- 4.1.3 (AA) Disabled controls must still have an accessible name
+
+Pass an optional 'selector' to scope the audit to that element's subtree (page-level rules like lang/title are skipped) — useful for auditing just the component you're editing.`,
+  {
+    tabId: z.string().describe("Tab ID"),
+    selector: z.string().optional().describe("Optional CSS selector to scope the audit to one element's subtree")
+  },
+  async ({ tabId, selector }) => jsonResult(await browser.auditAccessibility(tabId, selector))
 );
 
 server.tool(
@@ -622,6 +627,44 @@ server.tool(
   "Harvest the de-facto design system in use on the page: colors, font families, type scale, font weights, spacing, border-radii, shadows, and z-index layers (each ranked by usage frequency), plus declared CSS custom properties. Useful for design-system audits and 'does this match the tokens' checks.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.extractDesignTokens(tabId))
+);
+
+server.tool(
+  "browser_css_coverage",
+  "Report unused CSS on the page via rule-usage tracking. NOTE: this reloads the tab (like the DevTools Coverage panel) to measure usage from the initial render. Returns per-stylesheet used/unused byte tallies and rule counts, sorted worst-offender first, plus an aggregate used-percent — useful for finding dead CSS and trimming bundle size.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.captureCssCoverage(tabId))
+);
+
+server.tool(
+  "browser_js_coverage",
+  "Report dead JavaScript on the page via V8 precise coverage. NOTE: this reloads the tab (like the DevTools Coverage panel) to measure execution from the initial load. Returns per-script used/unused byte tallies (innermost-range-wins, so dead branches inside executed functions are counted), sorted worst-offender first, plus an aggregate used-percent — useful for finding dead code and trimming bundle size.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.captureJsCoverage(tabId))
+);
+
+server.tool(
+  "browser_trace",
+  "Record a CDP performance trace for a window (default 3000ms) and return a digest for diagnosing jank: long main-thread tasks (>= 50ms, longest first, with start time + duration) and a per-category time breakdown. Avoids dumping the raw multi-megabyte trace — capture while the page is doing the work you want to profile.",
+  {
+    tabId: z.string().describe("Tab ID"),
+    durationMs: z.number().optional().describe("Trace window in ms (200–15000, default 3000)")
+  },
+  async ({ tabId, durationMs }) => jsonResult(await browser.captureTrace(tabId, durationMs))
+);
+
+server.tool(
+  "browser_detect_framework",
+  "Fingerprint the page's frontend framework (Next.js, Nuxt, SvelteKit, Remix, Astro, bare Vite, CRA, Angular), its dev server / bundler (Vite, webpack, Turbopack), and whether it's a local dev build with hot-module-replacement (HMR). Returns the classification plus the evidence signals. Useful for tailoring framework-specific guidance and knowing when a reload is HMR-driven rather than a full navigation.",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.detectFramework(tabId))
+);
+
+server.tool(
+  "browser_pick_element",
+  "Activate a devtools-style inspect overlay in the tab and WAIT for the human to click an element (or cancel with Escape). Returns the picked element's CSS selector + identity, so you can act on exactly what the person pointed at instead of guessing a selector. Blocks until the human interacts — use it to bridge a human into the loop ('click the thing you mean').",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.pickElement(tabId))
 );
 
 server.tool(

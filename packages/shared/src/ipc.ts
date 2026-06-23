@@ -1,7 +1,7 @@
 import type { AccountInput, AccountSummary, AccountUpdate, TotpResult } from "./account.js";
 import type { BrowserCommandResult, BrowserOutputCommand, BrowserPerceptionPacket, HumanHandoffRecord, SiteCapabilityManifest } from "./substrate.js";
 import type { PageObservation, PerceptionResult } from "./perception.js";
-import type { PageScreenshot, PageSnapshot, TabId, TabSummary, ViewportRect } from "./browser.js";
+import type { ElementPickResult, PageScreenshot, PageSnapshot, TabId, TabSummary, ViewportRect } from "./browser.js";
 import type { ApprovalPolicyRecord } from "./policy.js";
 import type { FixturePageName, VaultSecretInput, VaultSecretSummary, VaultStatus } from "./vault.js";
 
@@ -28,6 +28,8 @@ export const BrowserShellChannel = {
   GetFixtureUrl: "browser-shell:get-fixture-url",
   // Screenshot
   CaptureScreenshot: "browser-shell:capture-screenshot",
+  // Element picker (human inspect → agent)
+  PickElement: "browser-shell:pick-element",
   // Handoff
   ListHandoffs: "browser-shell:list-handoffs",
   ResolveHandoff: "browser-shell:resolve-handoff",
@@ -72,6 +74,8 @@ export type BrowserShellApi = {
   getFixtureUrl(name: FixturePageName): Promise<string>;
   // Screenshot
   captureScreenshot(tabId: TabId): Promise<PageScreenshot>;
+  // Element picker (human inspect → agent)
+  pickElement(tabId: TabId): Promise<ElementPickResult>;
   // Handoffs
   listHandoffs(): Promise<HumanHandoffRecord[]>;
   resolveHandoff(requestId: string): Promise<BrowserCommandResult>;
