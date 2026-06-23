@@ -10,6 +10,7 @@ type ComponentNodeLike = {
   state: Record<string, string>;
   hookCount: number;
   source?: string;
+  domSelector?: string;
   children: ComponentNodeLike[];
 };
 
@@ -109,5 +110,50 @@ describe("componentTreeCollectorScript", () => {
     expect(r.tree?.state.hook0).toBe("5");
     expect(r.tree?.state.hook1).toBe("open");
     expect(r.tree?.state.hook2).toBeUndefined(); // effect hook carries no value
+  });
+
+  it("emits a domSelector from the component's first host descendant", () => {
+    document.body.innerHTML = `<div id="root"><button class="cta">Buy</button></div>`;
+    const root = document.getElementById("root") as unknown as Record<string, unknown>;
+    const btnEl = document.querySelector("button.cta");
+
+    // A host (DOM) fiber whose stateNode is the real <button>, nested under the component.
+    const hostFiber = {
+      type: "button",
+      stateNode: btnEl,
+      memoizedProps: {},
+      memoizedState: null,
+      key: null,
+      child: null,
+      sibling: null
+    };
+    root["__reactFiber$test"] = {
+      type: { name: "BuyButton" },
+      key: null,
+      memoizedProps: {},
+      memoizedState: null,
+      child: hostFiber,
+      sibling: null
+    };
+
+    const r = run();
+    expect(r.tree?.name).toBe("BuyButton");
+    expect(r.tree?.domSelector).toBe("button.cta"); // resolved via the shared selector generator
+  });
+
+  it("omits domSelector when the component has no host descendant", () => {
+    document.body.innerHTML = `<div id="root"></div>`;
+    const root = document.getElementById("root") as unknown as Record<string, unknown>;
+    root["__reactFiber$test"] = {
+      type: { name: "Empty" },
+      key: null,
+      memoizedProps: {},
+      memoizedState: null,
+      child: null,
+      sibling: null
+    };
+    const r = run();
+    expect(r.tree?.name).toBe("Empty");
+    expect(r.tree?.domSelector).toBeUndefined();
   });
 });

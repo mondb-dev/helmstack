@@ -704,6 +704,12 @@ export type ComponentNode = {
   state?: Record<string, string>;
   /** Number of React hooks on the component (0 for class components / non-React). */
   hookCount?: number;
+  /**
+   * CSS selector for the component's rendered root DOM element (its first host
+   * descendant), when resolvable — composes the tree with the selector-scoped
+   * a11y / style / screenshot tools.
+   */
+  domSelector?: string;
   children: ComponentNode[];
 };
 

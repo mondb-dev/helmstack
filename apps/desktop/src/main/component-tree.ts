@@ -1,6 +1,7 @@
 import type { WebContents } from "electron";
 
 import type { ComponentFramework, ComponentNode, ComponentTreeReport, TabId } from "../../../../packages/shared/src/index.js";
+import { SELECTOR_FOR_SOURCE } from "../../../../packages/perception/src/page-selector.js";
 
 /**
  * In-page collector that probes React / Vue / Svelte devtools hooks and returns
@@ -14,6 +15,19 @@ import type { ComponentFramework, ComponentNode, ComponentTreeReport, TabId } fr
  */
 export function componentTreeCollectorScript(): string {
   return `(function() {
+    var selectorFor = ${SELECTOR_FOR_SOURCE};
+    // The first host (DOM) descendant of a fiber — the component's rendered root.
+    function firstHostNode(fiber, depth) {
+      if (!fiber || depth > 40) return null;
+      if (typeof fiber.type === 'string' && fiber.stateNode && fiber.stateNode.nodeType === 1) return fiber.stateNode;
+      var child = fiber.child;
+      while (child) {
+        var found = firstHostNode(child, depth + 1);
+        if (found) return found;
+        child = child.sibling;
+      }
+      return null;
+    }
     function truncate(v) {
       var s = String(v);
       return s.length > 80 ? s.slice(0, 77) + '...' : s;
@@ -105,6 +119,8 @@ export function componentTreeCollectorScript(): string {
         children: []
       };
       if (src && src.fileName) node.source = src.fileName + ':' + src.lineNumber;
+      var hostNode = firstHostNode(fiber, 0);
+      if (hostNode) node.domSelector = selectorFor(hostNode);
       var child = fiber.child;
       while (child) {
         var childNode = buildReactTree(child, depth + 1);
@@ -128,6 +144,7 @@ export function componentTreeCollectorScript(): string {
         children: []
       };
       if (vnode.type && vnode.type.__file) node.source = vnode.type.__file;
+      if (vnode.el && vnode.el.nodeType === 1) node.domSelector = selectorFor(vnode.el);
       var children = vnode.component && vnode.component.subTree
         ? [vnode.component.subTree] : (vnode.children ? [].concat(vnode.children) : []);
       for (var c of children) {
