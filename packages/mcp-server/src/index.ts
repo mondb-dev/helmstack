@@ -661,6 +661,13 @@ server.tool(
 );
 
 server.tool(
+  "browser_pick_element",
+  "Activate a devtools-style inspect overlay in the tab and WAIT for the human to click an element (or cancel with Escape). Returns the picked element's CSS selector + identity, so you can act on exactly what the person pointed at instead of guessing a selector. Blocks until the human interacts — use it to bridge a human into the loop ('click the thing you mean').",
+  { tabId: z.string().describe("Tab ID") },
+  async ({ tabId }) => jsonResult(await browser.pickElement(tabId))
+);
+
+server.tool(
   "browser_component_sources",
   "Map rendered DOM nodes back to the component + source file:line that produced them (React _debugSource, Svelte __svelte_meta, Vue __file). Requires a dev build with source metadata. Lets you reference '<PrimaryButton> at src/ui/Button.tsx:42' instead of a brittle CSS selector.",
   { tabId: z.string().describe("Tab ID") },

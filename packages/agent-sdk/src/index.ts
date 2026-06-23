@@ -141,6 +141,7 @@ import type {
   JsCoverageReport,
   TraceReport,
   FrameworkReport,
+  ElementPickResult,
   DesignTokensReport,
   DiffRegion,
   LayoutIssuesReport,
@@ -799,6 +800,16 @@ export class BrowserClient {
    */
   async detectFramework(tabId: TabId): Promise<FrameworkReport> {
     return this.get(`/api/tabs/${tabId}/framework`);
+  }
+
+  /**
+   * Activate the shell's devtools-style inspect overlay and **wait for a human**
+   * to click an element (or cancel with Escape). Resolves with the picked
+   * element's selector + identity so the agent can act on exactly what the
+   * person pointed at. Long-lived — blocks on the human interaction.
+   */
+  async pickElement(tabId: TabId): Promise<ElementPickResult> {
+    return this.get(`/api/tabs/${tabId}/pick`);
   }
 
   /**

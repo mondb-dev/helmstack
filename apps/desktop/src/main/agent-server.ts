@@ -114,6 +114,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/tabs/:id/js-coverage        → JsCoverageReport (dead-JS, reloads tab)
  * GET  /api/tabs/:id/trace              → TraceReport (?durationMs=, long tasks + categories)
  * GET  /api/tabs/:id/framework          → FrameworkReport (framework + dev server + HMR)
+ * GET  /api/tabs/:id/pick                → ElementPickResult (human inspect-and-click; blocks)
  * GET  /api/tabs/:id/component-sources  → ComponentSourceReport (click-to-component)
  * GET  /api/tabs/:id/layout-issues      → LayoutIssuesReport
  * GET  /api/tabs/:id/media-state        → MediaStateReport
@@ -810,6 +811,12 @@ export class AgentServer {
     const frameworkMatch = p.match(/^\/api\/tabs\/([^/]+)\/framework$/);
     if (method === "GET" && frameworkMatch) {
       return json(res, await this.tabs.detectFramework(frameworkMatch[1] as TabId));
+    }
+
+    // ── Visual element picker (human inspect → agent) ───────────────────────────
+    const pickMatch = p.match(/^\/api\/tabs\/([^/]+)\/pick$/);
+    if (method === "GET" && pickMatch) {
+      return json(res, await this.tabs.pickElement(pickMatch[1] as TabId));
     }
 
     // ── Element → source mapping (click-to-component) ──────────────────────────

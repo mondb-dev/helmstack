@@ -1155,3 +1155,24 @@ export type FrameworkReport = {
   /** Human-readable signals that drove the classification. */
   evidence: string[];
 };
+
+// ── Visual element picker (human "inspect" → agent) ────────────────────────
+
+/**
+ * Result of a human picking an element via the shell's inspect overlay — the
+ * selector (and identity) handed to the agent. Enriched server-side with the
+ * element's component source and style inspection when available.
+ */
+export type ElementPickResult = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  /** True when the human picked an element; false if they cancelled (Escape). */
+  picked: boolean;
+  /** CSS selector for the picked element (empty when cancelled). */
+  selector: string;
+  tagName: string;
+  /** Trimmed text content of the element (truncated). */
+  text: string;
+  id: string | null;
+};

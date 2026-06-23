@@ -32,6 +32,8 @@ const browserShell: BrowserShellBridge = {
   getFixtureUrl: (name) => ipcRenderer.invoke(BrowserShellChannel.GetFixtureUrl, name),
   // Screenshot
   captureScreenshot: (tabId) => ipcRenderer.invoke(BrowserShellChannel.CaptureScreenshot, tabId),
+  // Element picker (human inspect → agent)
+  pickElement: (tabId: TabId) => ipcRenderer.invoke(BrowserShellChannel.PickElement, tabId),
   // Handoffs
   listHandoffs: () => ipcRenderer.invoke(BrowserShellChannel.ListHandoffs),
   resolveHandoff: (requestId) => ipcRenderer.invoke(BrowserShellChannel.ResolveHandoff, requestId),

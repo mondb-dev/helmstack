@@ -115,6 +115,7 @@ function registerIpcHandlers(manager: TabManager) {
     getFixtureUrl: async (name: FixturePageName) => manager.getFixtureUrl(name),
     // Screenshot
     captureScreenshot: async (tabId: TabId) => manager.captureScreenshot(tabId),
+    pickElement: async (tabId: TabId) => manager.pickElement(tabId),
     // Handoffs
     listHandoffs: async () => manager.listHandoffs(),
     resolveHandoff: async (requestId: string) => manager.resolveHandoff(requestId),
@@ -155,6 +156,7 @@ function registerIpcHandlers(manager: TabManager) {
   ipcMain.handle(BrowserShellChannel.GetFixtureUrl, (_event, name: FixturePageName) => handlers.getFixtureUrl(name));
   // Screenshot
   ipcMain.handle(BrowserShellChannel.CaptureScreenshot, (_event, tabId: TabId) => handlers.captureScreenshot(tabId));
+  ipcMain.handle(BrowserShellChannel.PickElement, (_event, tabId: TabId) => handlers.pickElement(tabId));
   // Handoffs
   ipcMain.handle(BrowserShellChannel.ListHandoffs, () => handlers.listHandoffs());
   ipcMain.handle(BrowserShellChannel.ResolveHandoff, (_event, requestId: string) => handlers.resolveHandoff(requestId));

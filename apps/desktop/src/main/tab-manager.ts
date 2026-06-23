@@ -15,6 +15,7 @@ import { buildCssCoverageReport, type RawRuleRange, type RawStylesheetCoverage }
 import { buildJsCoverageReport, type RawScriptCoverage } from "./js-coverage.js";
 import { buildTraceSummary, type RawTraceEvent } from "./trace-summary.js";
 import { detectFramework as classifyFramework, frameworkSignalsScript, type RawFrameworkSignals } from "./framework-detect.js";
+import { pickElement } from "./element-picker.js";
 import { buildLayoutIssuesReport, layoutIssueDetectorScript, type LayoutIssuesRaw } from "./layout-issues.js";
 import { buildMediaStateReport, mediaStateCollectorScript, type MediaStateRaw } from "./media-state.js";
 import { exportRecordingAll, renderRecordingScript } from "./recording-export.js";
@@ -89,6 +90,7 @@ import {
   type JsCoverageReport,
   type TraceReport,
   type FrameworkReport,
+  type ElementPickResult,
   type DesignTokensReport,
   type LayoutIssuesReport,
   type MediaStateReport,
@@ -1024,6 +1026,17 @@ export class TabManager {
       url: webContents.getURL(), globals: [], scriptSrcs: [], astroIslands: 0, generator: null
     };
     return classifyFramework(raw, tabId, Date.now());
+  }
+
+  /**
+   * Activate the devtools-style inspect overlay in the page and resolve when the
+   * human clicks an element (or cancels with Escape), handing the selector +
+   * identity back so an agent can act on it. Long-lived — resolves on the human
+   * interaction.
+   */
+  async pickElement(tabId: TabId): Promise<ElementPickResult> {
+    const tab = this.requireTab(tabId);
+    return pickElement(tab.view.webContents, tabId);
   }
 
   /** Sample DOM mutations for `durationMs` and rank the busiest subtrees (re-render/thrash detector). */
