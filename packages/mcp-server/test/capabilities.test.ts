@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AGENT_SUBSTRATE_TOOLS, isAgentSubstrateEnabled, isFlagOn } from "../src/capabilities.js";
+import { AGENT_SUBSTRATE_TOOLS, isAgentSubstrateEnabled, isFlagOn } from "../src/index.js";
 
 describe("capabilities helpers", () => {
   it("isFlagOn parses boolean-ish values", () => {
