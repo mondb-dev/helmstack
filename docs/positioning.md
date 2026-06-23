@@ -68,8 +68,15 @@ that same opt-in discipline to the other two surfaces, in priority order:
    can't drift. *(The earlier "82 → ~dozen" framing overstated it: most tools are
    FE-dev; the substrate surface is a focused 10.)*
 3. **Define a `profile`** (`fe-dev` | `agent-substrate` | `full`) that presets the
-   flags above, so neither audience hand-assembles toggles. `fe-dev` =
-   stealth off + social off + substrate tools hidden; `agent-substrate` = all on.
+   flags above. ✅ **DONE.** `HELMSTACK_PROFILE` presets all three opt-in surfaces:
+   `fe-dev` (or unset) = stealth/social/substrate **off**; `agent-substrate` /
+   `full` = all **on**. An explicit per-flag env var always overrides the profile.
+   Implemented in both `runtime-config` (stealth/social, desktop process) and
+   `capabilities` (substrate, MCP-server process) since they run separately;
+   covered by `runtime-config.test.ts` and `capabilities.test.ts` (presets,
+   explicit-override both directions, unknown-profile fallback, and an
+   integration check that `HELMSTACK_PROFILE=full` actually registers the
+   substrate MCP tools).
 4. **Defer the package split (C)** until these flags have settled the boundary in
    practice. Once the `agent-substrate` capability cleanly fences its modules,
    extracting it into a plugin package is mechanical rather than speculative.

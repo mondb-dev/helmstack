@@ -13,22 +13,45 @@ function isFlagOn(raw: string | undefined): boolean {
 }
 
 /**
+ * Convenience profile that presets the opt-in agent flags. `HELMSTACK_PROFILE`:
+ *  - `fe-dev` (or unset) — lean front-end instrument; all agent surfaces off.
+ *  - `agent-substrate` / `full` — autonomous-agent use; all agent surfaces on.
+ *
+ * An explicit per-flag env var (e.g. `HELMSTACK_STEALTH`) always overrides the
+ * profile. Mirrored in `@helmstack/mcp-server`'s `capabilities.ts` (the MCP
+ * server is a separate process). See docs/positioning.md.
+ */
+export type HelmstackProfile = "fe-dev" | "agent-substrate" | "full";
+
+function profileEnablesAgentSurfaces(env: NodeJS.ProcessEnv): boolean {
+  const profile = (env.HELMSTACK_PROFILE ?? "").trim().toLowerCase();
+  return profile === "agent-substrate" || profile === "full";
+}
+
+/** Resolve an opt-in flag: explicit env var wins; otherwise the profile default; otherwise off. */
+function resolveAgentFlag(env: NodeJS.ProcessEnv, explicitName: string): boolean {
+  const explicit = (env[explicitName] ?? "").trim();
+  if (explicit !== "") return isFlagOn(explicit);
+  return profileEnablesAgentSurfaces(env);
+}
+
+/**
  * Stealth (anti-detection) mode — **opt-in**. By default HelmStack runs with no
  * input jitter and no fingerprint-spoofing injection (what front-end devs and CI
- * want). Set `HELMSTACK_STEALTH=1` to re-enable the autonomous-agent stealth
- * behaviours (human-like input timing + anti-detection hardening).
+ * want). Enable with `HELMSTACK_STEALTH=1` or `HELMSTACK_PROFILE=agent-substrate`
+ * (human-like input timing + anti-detection hardening).
  */
 export function isStealthEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isFlagOn(env.HELMSTACK_STEALTH);
+  return resolveAgentFlag(env, "HELMSTACK_STEALTH");
 }
 
 /**
  * Social-surface perception — **opt-in**. By default HelmStack does not run the
  * social-feed/profile/thread classification (`collectSocialSurface`), so a plain
  * web app is never mislabelled `social-feed` and pays nothing for feed-scraping
- * heuristics. Set `HELMSTACK_SOCIAL=1` to enable it for autonomous-agent use on
- * social platforms. See docs/positioning.md.
+ * heuristics. Enable with `HELMSTACK_SOCIAL=1` or
+ * `HELMSTACK_PROFILE=agent-substrate`. See docs/positioning.md.
  */
 export function isSocialPerceptionEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isFlagOn(env.HELMSTACK_SOCIAL);
+  return resolveAgentFlag(env, "HELMSTACK_SOCIAL");
 }

@@ -18,23 +18,40 @@ describe("capabilities helpers", () => {
     expect(isAgentSubstrateEnabled({})).toBe(false);
     expect(isAgentSubstrateEnabled({ HELMSTACK_AGENT_SUBSTRATE: "1" })).toBe(true);
   });
+
+  it("HELMSTACK_PROFILE presets the capability; explicit flag overrides", () => {
+    expect(isAgentSubstrateEnabled({ HELMSTACK_PROFILE: "fe-dev" })).toBe(false);
+    expect(isAgentSubstrateEnabled({ HELMSTACK_PROFILE: "agent-substrate" })).toBe(true);
+    expect(isAgentSubstrateEnabled({ HELMSTACK_PROFILE: "full" })).toBe(true);
+    expect(isAgentSubstrateEnabled({ HELMSTACK_PROFILE: "banana" })).toBe(false);
+    // explicit override, both directions
+    expect(isAgentSubstrateEnabled({ HELMSTACK_PROFILE: "full", HELMSTACK_AGENT_SUBSTRATE: "0" })).toBe(false);
+    expect(isAgentSubstrateEnabled({ HELMSTACK_PROFILE: "fe-dev", HELMSTACK_AGENT_SUBSTRATE: "1" })).toBe(true);
+  });
 });
 
-/** Import the server module under a given env and return its registered tool names. */
-async function registeredTools(flag: string | undefined): Promise<string[]> {
+const GATE_KEYS = ["HELMSTACK_AGENT_SUBSTRATE", "HELMSTACK_PROFILE"] as const;
+
+/** Import the server module under a given env patch and return its registered tool names. */
+async function registeredToolsWith(patch: Partial<Record<(typeof GATE_KEYS)[number], string>>): Promise<string[]> {
   vi.resetModules();
-  const prev = process.env.HELMSTACK_AGENT_SUBSTRATE;
-  if (flag === undefined) delete process.env.HELMSTACK_AGENT_SUBSTRATE;
-  else process.env.HELMSTACK_AGENT_SUBSTRATE = flag;
+  const saved = Object.fromEntries(GATE_KEYS.map((k) => [k, process.env[k]]));
+  for (const k of GATE_KEYS) delete process.env[k];
+  Object.assign(process.env, patch);
   try {
     const mod = await import("../src/index.js");
     const server = mod.server as unknown as { _registeredTools?: Record<string, unknown> };
     return Object.keys(server._registeredTools ?? {});
   } finally {
-    if (prev === undefined) delete process.env.HELMSTACK_AGENT_SUBSTRATE;
-    else process.env.HELMSTACK_AGENT_SUBSTRATE = prev;
+    for (const k of GATE_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k]!;
+    }
   }
 }
+
+const registeredTools = (flag: string | undefined): Promise<string[]> =>
+  registeredToolsWith(flag === undefined ? {} : { HELMSTACK_AGENT_SUBSTRATE: flag });
 
 describe("MCP tool gating", () => {
   it("omits the agent-substrate tools by default (lean FE-dev surface)", async () => {
@@ -60,5 +77,15 @@ describe("MCP tool gating", () => {
     const on = await registeredTools("1");
     const added = on.filter((t) => !off.has(t)).sort();
     expect(added).toEqual([...AGENT_SUBSTRATE_TOOLS].sort());
+  });
+
+  it("HELMSTACK_PROFILE=full registers the substrate tools (no explicit flag)", async () => {
+    const tools = await registeredToolsWith({ HELMSTACK_PROFILE: "full" });
+    for (const name of AGENT_SUBSTRATE_TOOLS) expect(tools).toContain(name);
+  });
+
+  it("HELMSTACK_PROFILE=fe-dev keeps them off", async () => {
+    const tools = await registeredToolsWith({ HELMSTACK_PROFILE: "fe-dev" });
+    for (const name of AGENT_SUBSTRATE_TOOLS) expect(tools).not.toContain(name);
   });
 });

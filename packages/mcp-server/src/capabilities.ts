@@ -13,9 +13,25 @@ export function isFlagOn(raw: string | undefined): boolean {
   return v === "1" || v === "true" || v === "on" || v === "yes";
 }
 
-/** Whether the autonomous-agent tool surface should be registered. Opt-in, default off. */
+/**
+ * `HELMSTACK_PROFILE` presets the opt-in surfaces: `agent-substrate` / `full`
+ * enable them; `fe-dev` (or unset) leave them off. An explicit per-flag env var
+ * always overrides. Mirrors apps/desktop runtime-config (separate process).
+ */
+function profileEnablesAgentSurfaces(env: NodeJS.ProcessEnv): boolean {
+  const profile = (env.HELMSTACK_PROFILE ?? "").trim().toLowerCase();
+  return profile === "agent-substrate" || profile === "full";
+}
+
+/**
+ * Whether the autonomous-agent tool surface should be registered. Opt-in:
+ * enabled by `HELMSTACK_AGENT_SUBSTRATE` or `HELMSTACK_PROFILE=agent-substrate`
+ * (an explicit `HELMSTACK_AGENT_SUBSTRATE` always wins). Default off.
+ */
 export function isAgentSubstrateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isFlagOn(env.HELMSTACK_AGENT_SUBSTRATE);
+  const explicit = (env.HELMSTACK_AGENT_SUBSTRATE ?? "").trim();
+  if (explicit !== "") return isFlagOn(explicit);
+  return profileEnablesAgentSurfaces(env);
 }
 
 /**
