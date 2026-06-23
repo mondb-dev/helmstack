@@ -5,10 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("electron", () => ({ BrowserWindow: class {}, nativeImage: {}, WebContentsView: class {} }));
 
 import {
-  computeDiffRegions,
   computePerceptionDiff,
   evaluateAssertionAgainstGraph
 } from "../src/main/tab-manager.js";
+import { computeDiffRegions } from "../src/main/pixel-compare.js";
 import { evaluateStyleAssertion } from "../src/main/style-inspector.js";
 import { matchesMockRule } from "../src/main/cdp-events.js";
 import type {
