@@ -48,11 +48,14 @@ gated correctly.** The remaining bleed is (a) always-on social classification an
 Stealth already shows the pattern works (`isStealthEnabled`, default off). Extend
 that same opt-in discipline to the other two surfaces, in priority order:
 
-1. **Gate social-surface perception** behind a flag (e.g. `HELMSTACK_SOCIAL=1`,
-   default **off**). In `extractPageObservation`, skip `collectSocialSurface` /
-   `classifyPageKind`'s social branch when off — a `localhost` app then never
-   gets `social-feed`-flavoured perception. *Highest-value, smallest change; has a
-   unit-testable core (the classifier already is pure-ish).* This is the concrete
+1. **Gate social-surface perception** behind a flag (`HELMSTACK_SOCIAL`,
+   default **off**). ✅ **DONE.** `runtime-config.isSocialPerceptionEnabled` mirrors
+   `isStealthEnabled`; `extractPageObservation(tabId, { includeSocial })` skips
+   `collectSocialSurface` (so `classifyPageKind` never returns a `social-*` kind)
+   unless requested; the preload reads the flag once and passes it. A `localhost`
+   app is now never mislabelled `social-feed`. Covered by `runtime-config.test.ts`
+   (default-off + truthy parsing) and `dom-extractor.test.ts` (a feed fixture is
+   **not** social when off, **is** when `includeSocial: true`). This is the concrete
    fix for the exact complaint in the review.
 2. **Group the agent-substrate tools behind a capability.** Register the vault /
    accounts / handoff / approval MCP tools only when an `agent-substrate`

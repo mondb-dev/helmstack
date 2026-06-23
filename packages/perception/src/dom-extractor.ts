@@ -21,13 +21,24 @@ import { collectQueryRoots } from "./page-dom-roots.js";
 
 const OAUTH_PROVIDERS = ["google", "github", "apple", "microsoft", "facebook", "x", "twitter"];
 
-export function extractPageObservation(tabId: TabId): PageObservation {
+/** Options for {@link extractPageObservation}. */
+export type ExtractObservationOptions = {
+  /**
+   * Run social-surface perception (feed/profile/thread classification). Off by
+   * default so a plain web app is never mislabelled `social-feed`; the app
+   * enables it from `HELMSTACK_SOCIAL` (see `runtime-config.isSocialPerceptionEnabled`).
+   */
+  includeSocial?: boolean;
+};
+
+export function extractPageObservation(tabId: TabId, options: ExtractObservationOptions = {}): PageObservation {
+  const includeSocial = options.includeSocial ?? false;
   const headings = collectHeadings();
   const forms = collectForms();
   const primaryActions = collectPrimaryActions();
   const alerts = collectAlerts();
   const media = collectMedia();
-  const social = collectSocialSurface(primaryActions, headings);
+  const social = includeSocial ? collectSocialSurface(primaryActions, headings) : undefined;
 
   const observation: PageObservation = {
     tabId,

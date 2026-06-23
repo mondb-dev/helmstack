@@ -1,6 +1,7 @@
 import { ipcRenderer } from "electron";
 
 import { extractPageObservation, installPageObservationStream } from "../../../../packages/perception/src/dom-extractor.js";
+import { isSocialPerceptionEnabled } from "../main/runtime-config.js";
 import { BrowserShellChannel, type TabId } from "../../../../packages/shared/src/index.js";
 
 // Belt-and-suspenders: remove the webdriver flag from every page context.
@@ -28,6 +29,9 @@ function resolveTabId(): TabId {
 }
 
 const tabId = resolveTabId();
+// Social-surface perception is opt-in (HELMSTACK_SOCIAL); the renderer inherits
+// the main process env, so the flag is read once here.
+const includeSocial = isSocialPerceptionEnabled();
 
 window.__openVisualPageState = {
   observationCounter: 0,
@@ -41,6 +45,6 @@ installPageObservationStream(() => {
     window.__openVisualPageState.lastObservationAt = Date.now();
     window.__openVisualPageState.lastUrl = window.location.href;
   }
-  const observation = extractPageObservation(tabId);
+  const observation = extractPageObservation(tabId, { includeSocial });
   ipcRenderer.send(BrowserShellChannel.PageObserved, observation);
 });

@@ -87,7 +87,13 @@ describe("extractPageObservation", () => {
       { url: "https://example.com/home", title: "Home / X" }
     );
 
-    const observation = extractPageObservation("tab-social");
+    // Social-surface perception is opt-in (HELMSTACK_SOCIAL) — it must be
+    // requested explicitly, otherwise a feed is NOT classified as social.
+    const off = extractPageObservation("tab-social");
+    expect(off.pageKind).not.toBe("social-feed");
+    expect(off.social).toBeUndefined();
+
+    const observation = extractPageObservation("tab-social", { includeSocial: true });
 
     expect(observation.pageKind).toBe("social-feed");
     expect(observation.social?.platform).toBe("generic");
