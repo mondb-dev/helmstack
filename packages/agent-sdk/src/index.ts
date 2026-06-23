@@ -803,6 +803,17 @@ export class BrowserClient {
   }
 
   /**
+   * Evaluate a JavaScript expression in the page and return its JSON-able value
+   * (awaits promises). A raw execution primitive for driving widgets the
+   * structured tools can't reach (CodeMirror/Monaco, canvas apps, custom
+   * elements). Powerful — same trust boundary as the rest of the agent API.
+   */
+  async evaluate<T = unknown>(tabId: TabId, expression: string): Promise<T> {
+    const r = await this.post<{ value: T }>(`/api/tabs/${tabId}/evaluate`, { expression });
+    return r.value;
+  }
+
+  /**
    * Activate the shell's devtools-style inspect overlay and **wait for a human**
    * to click an element (or cancel with Escape). Resolves with the picked
    * element's selector + identity so the agent can act on exactly what the

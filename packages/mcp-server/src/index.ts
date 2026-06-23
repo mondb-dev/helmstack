@@ -723,6 +723,16 @@ server.tool(
 );
 
 server.tool(
+  "browser_evaluate",
+  "Evaluate a JavaScript expression in the page and return its JSON-able value (awaits promises). A raw execution primitive for driving widgets the structured tools can't reach — e.g. setting a CodeMirror/Monaco editor's content (document.querySelector('.CodeMirror').CodeMirror.setValue(...)), poking a canvas app, or reading custom state. Powerful: it runs arbitrary JS in the page with the full trust of the agent session.",
+  {
+    tabId: z.string().describe("Tab ID"),
+    expression: z.string().describe("JavaScript expression to evaluate in the page")
+  },
+  async ({ tabId, expression }) => jsonResult(await browser.evaluate(tabId, expression))
+);
+
+server.tool(
   "browser_pick_element",
   "Activate a devtools-style inspect overlay in the tab and WAIT for the human to click an element (or cancel with Escape). Returns the picked element's CSS selector + identity, so you can act on exactly what the person pointed at instead of guessing a selector. Blocks until the human interacts — use it to bridge a human into the loop ('click the thing you mean').",
   { tabId: z.string().describe("Tab ID") },

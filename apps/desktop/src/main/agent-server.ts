@@ -813,6 +813,14 @@ export class AgentServer {
       return json(res, await this.tabs.detectFramework(frameworkMatch[1] as TabId));
     }
 
+    // ── Evaluate a JS expression in the page ────────────────────────────────────
+    const evalMatch = p.match(/^\/api\/tabs\/([^/]+)\/evaluate$/);
+    if (method === "POST" && evalMatch) {
+      const body = await readBody(req);
+      if (typeof body.expression !== "string") return error(res, 400, "expression string is required");
+      return json(res, await this.tabs.evaluateExpression(evalMatch[1] as TabId, body.expression));
+    }
+
     // ── Visual element picker (human inspect → agent) ───────────────────────────
     const pickMatch = p.match(/^\/api\/tabs\/([^/]+)\/pick$/);
     if (method === "GET" && pickMatch) {

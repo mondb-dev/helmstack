@@ -948,6 +948,27 @@ export class TabManager {
   }
 
   /**
+   * Evaluate a JavaScript expression in the page and return its (JSON-able)
+   * value. A raw execution primitive for agents that need to drive widgets the
+   * structured DOM tools can't (e.g. a CodeMirror/Monaco instance). Awaits
+   * promises. Carries the full power of the page context — same trust boundary
+   * as the rest of the authenticated agent API.
+   */
+  async evaluateExpression(tabId: TabId, expression: string): Promise<{ value: unknown }> {
+    const { webContents } = this.requireTab(tabId).view;
+    this.ensureDebugger(webContents);
+    const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true
+    }) as { result: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } };
+    if (result.exceptionDetails) {
+      throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "Evaluation failed");
+    }
+    return { value: result.result.value ?? null };
+  }
+
+  /**
    * Activate the devtools-style inspect overlay in the page and resolve when the
    * human clicks an element (or cancels with Escape), handing the selector +
    * identity back so an agent can act on it. Long-lived — resolves on the human
