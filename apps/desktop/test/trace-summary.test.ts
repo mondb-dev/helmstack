@@ -41,6 +41,22 @@ describe("buildTraceSummary", () => {
     expect(r.tracedMs).toBe(400);
   });
 
+  it("ignores ts:0 metadata events when computing the span (regression)", () => {
+    // Chrome emits metadata events (ph "M") with ts:0; real events use large
+    // since-boot microsecond timestamps. The span must come from the real ones.
+    const withMeta: RawTraceEvent[] = [
+      { name: "process_name", cat: "__metadata", ph: "M", ts: 0 },
+      { name: "thread_name", cat: "__metadata", ph: "M", ts: 0 },
+      { name: "RunTask", cat: "toplevel", ph: "X", ts: 358_000_000_000, dur: 5_000 },
+      { name: "RunTask", cat: "toplevel", ph: "X", ts: 358_000_500_000, dur: 5_000 }
+    ];
+    const r = buildTraceSummary(withMeta, "t", "https://x", 1000, 1);
+    // span = (358_000_505_000 - 358_000_000_000)µs = 505_000µs = 505ms (NOT ~days)
+    expect(r.tracedMs).toBe(505);
+    // start normalised to the first real event, not ts:0
+    expect(r.completeEvents).toBe(2);
+  });
+
   it("handles an empty trace without dividing by zero", () => {
     const r = buildTraceSummary([], "t", "https://x", 1000, 1);
     expect(r).toMatchObject({ totalEvents: 0, completeEvents: 0, longTaskCount: 0, longestTaskMs: 0, tracedMs: 0 });

@@ -38,7 +38,10 @@ export function buildTraceSummary(events: RawTraceEvent[], tabId: TabId, url: st
   let minTs = Infinity;
   let maxTs = -Infinity;
   for (const e of events) {
-    if (typeof e.ts !== "number") continue;
+    // Skip non-positive timestamps: metadata events (`ph: "M"`) carry `ts: 0`,
+    // which would otherwise collapse `minTs` to 0 against real since-boot
+    // microsecond timestamps and blow up the span to ~days.
+    if (typeof e.ts !== "number" || e.ts <= 0) continue;
     if (e.ts < minTs) minTs = e.ts;
     const end = e.ts + (typeof e.dur === "number" ? e.dur : 0);
     if (end > maxTs) maxTs = end;
