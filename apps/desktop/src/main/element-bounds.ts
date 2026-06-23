@@ -1,4 +1,5 @@
 import type { ChangedElement, DiffRegion, ElementBound } from "../../../../packages/shared/src/index.js";
+import { SELECTOR_FOR_SOURCE } from "../../../../packages/perception/src/page-selector.js";
 
 function intersects(a: DiffRegion, b: ElementBound): boolean {
   return !(a.x + a.width < b.x || a.x > b.x + b.width || a.y + a.height < b.y || a.y > b.y + b.height);
@@ -38,15 +39,7 @@ export function correlateRegionsToElements(regions: DiffRegion[], elements: Elem
  */
 export function elementBoundsScript(cap = 4000): string {
   return `(() => {
-    const selectorFor = (el) => {
-      const tag = el.tagName.toLowerCase();
-      if (el.id) return tag + "#" + el.id;
-      const tid = el.getAttribute("data-testid");
-      if (tid) return tag + "[data-testid=\\"" + tid + "\\"]";
-      const cls = (el.getAttribute("class") || "").trim().split(/\\s+/).filter(Boolean)[0];
-      if (cls) return tag + "." + cls;
-      return tag;
-    };
+    const selectorFor = ${SELECTOR_FOR_SOURCE};
     const elements = [];
     const all = Array.prototype.slice.call(document.querySelectorAll("body *"), 0, ${cap});
     for (const el of all) {

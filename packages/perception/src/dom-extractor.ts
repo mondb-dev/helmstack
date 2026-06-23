@@ -942,6 +942,14 @@ function isVisible(element: Element): boolean {
   return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
 }
 
+/**
+ * Actuation-grade selector hint: semantic attribute priority (id / name /
+ * autocomplete / data-testid / type / role / aria-label) plus `:nth-of-type`
+ * uniqueness qualification, tuned to re-resolve an element across a perceive→act
+ * cycle. Intentionally distinct from `page-selector.selectorForElement` (the
+ * short descriptive hint used by the inspector report scripts) — see that
+ * module's header for why the two are not merged.
+ */
 function buildSelectorHint(element: Element): string {
   return qualifyIfAmbiguous(element, buildBaseSelectorHint(element));
 }

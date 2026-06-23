@@ -1,4 +1,5 @@
 import type { MutationKindCounts, MutationTimelineReport, TabId } from "../../../../packages/shared/src/index.js";
+import { SELECTOR_FOR_SOURCE } from "../../../../packages/perception/src/page-selector.js";
 
 /** Raw mutation tallies returned by the in-page sampler. */
 export type RawMutationTimeline = {
@@ -48,15 +49,7 @@ export function mutationTimelineScript(durationMs = 1000): string {
     let addedNodes = 0;
     let removedNodes = 0;
 
-    const selectorFor = (node) => {
-      const el = node && node.nodeType === 1 ? node : (node && node.parentElement);
-      if (!el) return "(detached)";
-      const tag = el.tagName.toLowerCase();
-      if (el.id) return tag + "#" + el.id;
-      const cls = (el.getAttribute && (el.getAttribute("class") || "").trim().split(/\\s+/).filter(Boolean)[0]);
-      if (cls) return tag + "." + cls;
-      return tag;
-    };
+    const selectorFor = ${SELECTOR_FOR_SOURCE};
 
     const observer = new MutationObserver((records) => {
       for (const r of records) {
