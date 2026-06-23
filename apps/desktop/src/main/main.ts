@@ -27,6 +27,30 @@ let mainWindow: BrowserWindow | null = null;
 let tabManager: TabManager | null = null;
 let agentServer: AgentServer | null = null;
 
+/**
+ * Send an event to the shell renderer, guarding against a destroyed window or
+ * webContents. During tab close / reload / app shutdown a `page_observed` (or
+ * other) event can still arrive after the renderer's webContents is gone;
+ * `mainWindow?.` only guards the window being null, not a live window whose
+ * webContents has been destroyed — which throws "Object has been destroyed".
+ */
+function sendToShell(channel: string, ...args: unknown[]): void {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send(channel, ...args);
+  }
+}
+
+// Resilience: HelmStack drives many tabs whose webContents come and go, so a
+// stray lifecycle-race error (an event firing against a destroyed object during
+// teardown/reload) must be logged, not surfaced as Electron's fatal dialog that
+// bricks the app. We keep running rather than crash on a non-fatal main-process error.
+process.on("uncaughtException", (error) => {
+  console.error("[main] Uncaught exception (kept alive):", error);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[main] Unhandled promise rejection (kept alive):", reason);
+});
+
 async function createMainWindow() {
   const shellPreloadPath = path.join(appDir, "../preload/shell-preload.cjs");
   const pagePreloadPath = path.join(appDir, "../preload/page-preload.cjs");
@@ -84,7 +108,7 @@ async function createMainWindow() {
   });
 
   agentServer.onAgentLog((entry) => {
-    mainWindow?.webContents.send(BrowserShellChannel.AgentLog, entry);
+    sendToShell(BrowserShellChannel.AgentLog, entry);
   });
 
   await mainWindow.loadFile(path.join(appDir, "../renderer/index.html"));
@@ -174,13 +198,13 @@ function registerIpcHandlers(manager: TabManager) {
   });
 
   manager.onTabsChanged((tabs) => {
-    mainWindow?.webContents.send(BrowserShellChannel.TabsChanged, tabs);
+    sendToShell(BrowserShellChannel.TabsChanged, tabs);
   });
   manager.onPageObserved((observation) => {
-    mainWindow?.webContents.send(BrowserShellChannel.PageObserved, observation);
+    sendToShell(BrowserShellChannel.PageObserved, observation);
   });
   manager.onHandoffRequested((handoff: HumanHandoffRecord) => {
-    mainWindow?.webContents.send(BrowserShellChannel.HandoffRequested, handoff);
+    sendToShell(BrowserShellChannel.HandoffRequested, handoff);
   });
 }
 
