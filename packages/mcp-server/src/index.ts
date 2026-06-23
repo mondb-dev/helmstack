@@ -25,6 +25,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { createBrowserClient } from "@helmstack/agent-sdk";
+import { isAgentSubstrateEnabled } from "./capabilities.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,9 @@ const host = process.env.HELMSTACK_HOST ?? "127.0.0.1";
 const authToken = process.env.HELMSTACK_AUTH_TOKEN || process.env.HELMSTACK_TOKEN;
 
 const browser = createBrowserClient({ host, port, authToken });
+
+// Autonomous-agent tool surface (accounts/TOTP, approvals, handoffs, intent) is opt-in.
+const agentSubstrate = isAgentSubstrateEnabled(process.env);
 
 const viewportPresetSchema = z.enum([
   "mobile-sm",
@@ -218,109 +222,117 @@ Common command types:
   }
 );
 
-// Approvals
-server.tool(
-  "browser_list_approvals",
-  "List pending approval requests waiting for human confirmation.",
-  {},
-  async () => {
-    const approvals = await browser.listApprovals();
-    return { content: [{ type: "text", text: JSON.stringify(approvals, null, 2) }] };
-  }
-);
+// ── Agent-substrate tools (opt-in: HELMSTACK_AGENT_SUBSTRATE, default off) ─────
+// Accounts/TOTP, approvals, handoffs, and intent are autonomous-agent surfaces a
+// front-end developer never needs. Registered only when the capability is on, so
+// the default MCP tool surface stays lean (see docs/positioning.md).
+if (agentSubstrate) registerAgentSubstrateTools();
 
-server.tool(
-  "browser_approve",
-  "Approve a pending command that requires human confirmation.",
-  { requestId: z.string().describe("Approval request ID") },
-  async ({ requestId }) => {
-    const result = await browser.approveCommand(requestId);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-  }
-);
+function registerAgentSubstrateTools(): void {
+  // Approvals
+  server.tool(
+    "browser_list_approvals",
+    "List pending approval requests waiting for human confirmation.",
+    {},
+    async () => {
+      const approvals = await browser.listApprovals();
+      return { content: [{ type: "text", text: JSON.stringify(approvals, null, 2) }] };
+    }
+  );
 
-server.tool(
-  "browser_reject",
-  "Reject a pending command that requires human confirmation.",
-  { requestId: z.string().describe("Approval request ID") },
-  async ({ requestId }) => {
-    const result = await browser.rejectCommand(requestId);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-  }
-);
+  server.tool(
+    "browser_approve",
+    "Approve a pending command that requires human confirmation.",
+    { requestId: z.string().describe("Approval request ID") },
+    async ({ requestId }) => {
+      const result = await browser.approveCommand(requestId);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
 
-// Handoffs
-server.tool(
-  "browser_list_handoffs",
-  "List pending human handoff requests (tasks that require a human to take over).",
-  {},
-  async () => {
-    const handoffs = await browser.listHandoffs();
-    return { content: [{ type: "text", text: JSON.stringify(handoffs, null, 2) }] };
-  }
-);
+  server.tool(
+    "browser_reject",
+    "Reject a pending command that requires human confirmation.",
+    { requestId: z.string().describe("Approval request ID") },
+    async ({ requestId }) => {
+      const result = await browser.rejectCommand(requestId);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
 
-server.tool(
-  "browser_resolve_handoff",
-  "Mark a human handoff as resolved, returning control to the agent.",
-  { requestId: z.string().describe("Handoff request ID") },
-  async ({ requestId }) => {
-    const result = await browser.resolveHandoff(requestId);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-  }
-);
+  // Handoffs
+  server.tool(
+    "browser_list_handoffs",
+    "List pending human handoff requests (tasks that require a human to take over).",
+    {},
+    async () => {
+      const handoffs = await browser.listHandoffs();
+      return { content: [{ type: "text", text: JSON.stringify(handoffs, null, 2) }] };
+    }
+  );
 
-// Accounts (credential vault)
-server.tool(
-  "browser_list_accounts",
-  "List saved accounts (credential entries) stored in the vault.",
-  {},
-  async () => {
-    const accounts = await browser.listAccounts();
-    return { content: [{ type: "text", text: JSON.stringify(accounts, null, 2) }] };
-  }
-);
+  server.tool(
+    "browser_resolve_handoff",
+    "Mark a human handoff as resolved, returning control to the agent.",
+    { requestId: z.string().describe("Handoff request ID") },
+    async ({ requestId }) => {
+      const result = await browser.resolveHandoff(requestId);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
 
-server.tool(
-  "browser_lookup_accounts",
-  "Look up saved accounts matching a given origin (e.g. https://github.com).",
-  { origin: z.string().describe("Origin URL to look up credentials for") },
-  async ({ origin }) => {
-    const accounts = await browser.lookupAccounts(origin);
-    return { content: [{ type: "text", text: JSON.stringify(accounts, null, 2) }] };
-  }
-);
+  // Accounts (credential vault)
+  server.tool(
+    "browser_list_accounts",
+    "List saved accounts (credential entries) stored in the vault.",
+    {},
+    async () => {
+      const accounts = await browser.listAccounts();
+      return { content: [{ type: "text", text: JSON.stringify(accounts, null, 2) }] };
+    }
+  );
 
-server.tool(
-  "browser_generate_totp",
-  "Generate a TOTP code for an account that has 2FA configured.",
-  { accountId: z.string().describe("Account ID") },
-  async ({ accountId }) => {
-    const result = await browser.generateTotp(accountId);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-  }
-);
+  server.tool(
+    "browser_lookup_accounts",
+    "Look up saved accounts matching a given origin (e.g. https://github.com).",
+    { origin: z.string().describe("Origin URL to look up credentials for") },
+    async ({ origin }) => {
+      const accounts = await browser.lookupAccounts(origin);
+      return { content: [{ type: "text", text: JSON.stringify(accounts, null, 2) }] };
+    }
+  );
 
-// Intent
-server.tool(
-  "browser_get_intent",
-  "Get the current agent intent/task set in the HelmStack UI.",
-  {},
-  async () => {
-    const result = await browser.getIntent();
-    return { content: [{ type: "text", text: result.intent }] };
-  }
-);
+  server.tool(
+    "browser_generate_totp",
+    "Generate a TOTP code for an account that has 2FA configured.",
+    { accountId: z.string().describe("Account ID") },
+    async ({ accountId }) => {
+      const result = await browser.generateTotp(accountId);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
 
-server.tool(
-  "browser_set_intent",
-  "Set the agent intent/task displayed in the HelmStack UI.",
-  { intent: z.string().describe("Intent or task description") },
-  async ({ intent }) => {
-    const result = await browser.setIntent(intent);
-    return { content: [{ type: "text", text: result.intent }] };
-  }
-);
+  // Intent
+  server.tool(
+    "browser_get_intent",
+    "Get the current agent intent/task set in the HelmStack UI.",
+    {},
+    async () => {
+      const result = await browser.getIntent();
+      return { content: [{ type: "text", text: result.intent }] };
+    }
+  );
+
+  server.tool(
+    "browser_set_intent",
+    "Set the agent intent/task displayed in the HelmStack UI.",
+    { intent: z.string().describe("Intent or task description") },
+    async ({ intent }) => {
+      const result = await browser.setIntent(intent);
+      return { content: [{ type: "text", text: result.intent }] };
+    }
+  );
+}
 
 server.tool(
   "browser_log",
@@ -1039,5 +1051,14 @@ server.tool(
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+// Connect stdio on every real launch (node src, dist, or the published
+// `helmstack-mcp` bin). Suppress ONLY under the test runner, where the module is
+// imported to inspect the gated tool set and must not grab stdio. Guarding on
+// VITEST (rather than a main-module check) can never false-negative in
+// production — the published bin is a symlink whose argv[1] != import.meta.url.
+if (!process.env.VITEST) {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+export { server };

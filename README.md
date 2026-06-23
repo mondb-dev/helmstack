@@ -369,6 +369,13 @@ Environment variables:
 | `HELMSTACK_PORT` | `7070` | Port the HelmStack desktop app is listening on |
 | `HELMSTACK_HOST` | `127.0.0.1` | Host (never change unless you know what you're doing) |
 | `HELMSTACK_AUTH_TOKEN` | unset | Optional shared token. If the desktop app is launched with this set, MCP/SDK clients must send the same value. |
+| `HELMSTACK_AGENT_SUBSTRATE` | unset (off) | Opt-in. Registers the autonomous-agent MCP tools (accounts/TOTP, approvals, handoffs, intent). Off by default so the tool surface stays lean for front-end-dev use. Set on the **MCP server** process. |
+| `HELMSTACK_SOCIAL` | unset (off) | Opt-in. Enables social-feed/profile/thread perception. Off by default so a plain web app is never mislabelled `social-feed`. Set on the **desktop app** process. |
+| `HELMSTACK_STEALTH` | unset (off) | Opt-in. Enables anti-detection hardening + human-like input timing. Off by default for deterministic, fast actuation. Set on the **desktop app** process. |
+
+> **Positioning:** by default HelmStack is a lean front-end-dev instrument. The
+> autonomous-web-agent surfaces (substrate tools, social perception, stealth) are
+> opt-in via the flags above. See [docs/positioning.md](docs/positioning.md).
 
 ---
 

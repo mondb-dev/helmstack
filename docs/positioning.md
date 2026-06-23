@@ -57,10 +57,16 @@ that same opt-in discipline to the other two surfaces, in priority order:
    (default-off + truthy parsing) and `dom-extractor.test.ts` (a feed fixture is
    **not** social when off, **is** when `includeSocial: true`). This is the concrete
    fix for the exact complaint in the review.
-2. **Group the agent-substrate tools behind a capability.** Register the vault /
-   accounts / handoff / approval MCP tools only when an `agent-substrate`
-   capability is enabled (config or env). The FE-dev tool list drops from 82 to
-   the ~dozen perception/execution/audit tools an app developer actually wants.
+2. **Group the agent-substrate tools behind a capability.** ✅ **DONE.** The MCP
+   accounts/TOTP, approvals, handoffs, and intent tools (10 of 83) are now
+   registered only when `HELMSTACK_AGENT_SUBSTRATE` is on (`capabilities.ts` →
+   `isAgentSubstrateEnabled`; `registerAgentSubstrateTools()` gated in
+   `index.ts`). The default surface stays the perception/execution/audit tools an
+   app developer wants. Asserted by `capabilities.test.ts`, which imports the
+   real server and checks the registered tool set toggles **exactly** those 10
+   with the flag — so the gate and the canonical `AGENT_SUBSTRATE_TOOLS` list
+   can't drift. *(The earlier "82 → ~dozen" framing overstated it: most tools are
+   FE-dev; the substrate surface is a focused 10.)*
 3. **Define a `profile`** (`fe-dev` | `agent-substrate` | `full`) that presets the
    flags above, so neither audience hand-assembles toggles. `fe-dev` =
    stealth off + social off + substrate tools hidden; `agent-substrate` = all on.
