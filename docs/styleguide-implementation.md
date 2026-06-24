@@ -58,12 +58,9 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 - **Notes — how each literal resolved:** `.dropdown-item:hover` & `.panel-header:hover` whites (`.06`/`.02`) → `--color-hover`; `.modal-backdrop` `rgba(0,0,0,.6)` → `--color-overlay` (exact); `.approval-effect` amber border `.16` → new **`--color-warning-border`** token; brand-icon gradient end `#60a5fa` → `--blue-400`; the two accent glows (brand icon `0 0 12px /.30`, primary button `0 2px 8px /.20`) → new **`--shadow-accent-glow`** / **`--shadow-accent-sm`** tokens. (The grep "17" in the original scope was an over-count from the gap doc; the renderer actually had 7 raw literals here — recorded for accuracy.)
 - **Decision:** kept raw values as *tokens in tokens.css* (the legitimate home for raw values) instead of `color-mix()`, to avoid taking a dependency on a newer CSS feature mid-migration.
 
-### [ ] 2.2 — Spacing / type / radius pass
-- **Scope:** Replace magic `px` paddings/margins/gaps with `--space-*`, font-sizes with `--text-*`/the role scale, radii with `--radius-*`. Keep layout dims (`--sidebar-w` etc.) as tokens.
-- **Files:** `styles/components.css`, `styles/layout.css`.
-- **Depends on:** 2.1.
-- **Verify:** Grep for stray `padding:.*px`/`font-size:.*px`/`gap:.*px` outside `var()` (allow the dims tokens). Build. Visual: spacing rhythm tightens to the 4px grid (minor, intentional).
-- **Risk:** Medium — visual nudges; eyeball the tab rail + sidebar density.
+### [x] 2.2 — Spacing / type / radius pass
+- **Done.** Tokenized every padding/margin/gap → `--space-*`, every font-size → `--text-*`, and the two remaining raw radii → `--radius-pill`/`--radius-xs` in components+layout. Verified: 0 residual mapped px in spacing props, 0 raw font-size, 0 non-token border-radius, all refs resolve, build + lint + typecheck + 232 tests green.
+- **Decisions/notes:** (a) the styleguide 4px scale omits 10 & 14 — rounded **down** (10→8, 14→12) for the compact dev-tool density; (b) sub-11px text bumped to `--text-xs` (11px) — fixes the "never below 11px" rule on `.tab-meta` and the badge; 16px text → `--text-lg` (15px, nearest); (c) the two **icon glyphs** (new-tab `+` 16→15, expand caret `▸` 10→11) shift ≤1px harmlessly and are replaced by SVG in task 5.2, so they were tokenized uniformly rather than special-cased; (d) **two intentional raw px remain & are documented in-CSS:** the `80px` titlebar left inset (macOS traffic lights) and a `1px` hairline padding nudge — both below/outside the spacing rhythm.
 
 ### [ ] 2.3 — Button system → `btn--*` with all states
 - **Scope:** Migrate `.btn-primary`/`.btn-sm`/`.btn-nav` → `.btn .btn--primary`/`.btn--sm`/(default); add `--ghost`/`--danger`/`--icon`, sizes, and `:disabled`/`[aria-busy]`/`:active` states (styleguide §3.1).

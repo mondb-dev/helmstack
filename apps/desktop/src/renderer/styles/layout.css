@@ -14,8 +14,8 @@
 .titlebar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 16px 0 80px;
+  gap: var(--space-6);
+  padding: 0 var(--space-6) 0 80px; /* 80px left inset clears the macOS traffic lights */
   background: var(--color-surface-sunken);
   border-bottom: 1px solid var(--color-border);
   position: relative;
@@ -31,7 +31,7 @@
 .titlebar-brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   position: relative;
   z-index: 1;
   flex-shrink: 0;
@@ -40,13 +40,13 @@
 .brand-icon {
   width: 14px;
   height: 14px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: linear-gradient(135deg, var(--color-accent), var(--blue-400));
   box-shadow: var(--shadow-accent-glow);
 }
 
 .brand-name {
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -56,7 +56,7 @@
 .tab-rail {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex: 1;
   min-width: 0;
   position: relative;
@@ -66,7 +66,7 @@
 
 .tabs {
   display: flex;
-  gap: 2px;
+  gap: var(--space-1);
   flex: 1;
   min-width: 0;
   overflow-x: auto;
@@ -80,10 +80,10 @@
 .tab-pill {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
   max-width: 200px;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-4);
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -138,7 +138,7 @@
 }
 
 .tab-title {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -146,7 +146,7 @@
 }
 
 .tab-meta {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -161,7 +161,7 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: var(--text-base);
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -190,7 +190,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 16px;
+  font-size: var(--text-lg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -211,8 +211,8 @@
 .navbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
   background: var(--color-surface-sunken);
   border-bottom: 1px solid var(--color-border);
 }
@@ -220,7 +220,7 @@
 .nav-form {
   display: flex;
   flex: 1;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -228,12 +228,12 @@
   flex: 1;
   min-width: 0;
   height: 32px;
-  padding: 0 12px;
+  padding: 0 var(--space-5);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--text-sm);
   outline: none;
   transition: border-color 100ms, background 100ms;
 }
@@ -284,7 +284,7 @@
 
 @media (max-width: 900px) {
   .titlebar {
-    padding-left: 16px;
+    padding-left: var(--space-6);
   }
 
   .workspace {
