@@ -45,12 +45,9 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 - **Done.** `tokens.css` now holds the full decided system: primitive ramps (neutral/green/amber/red/blue), the spacing/type/radius/shadow/motion/z scales, layout+control dims, and the semantic **dark** `--color-*` block — plus a **legacy-alias block** mapping every old token name to the new ones so components render unchanged until 2.1. Verified: all **29** `var(--…)` refs in base/components/layout resolve (0 dangling), decided tokens present, build + lint + typecheck + 232 tests green.
 - **Notes:** (a) intended minor drift is baked in now via the aliases — text contrast AA-fixed (`--text-tertiary` #555d6a→#808997, secondary #848b97→#9aa1ad), borders `.06`→`.08`, accent/warning subtles `.08`→`.10`, app bg `#0c0e12`→`#0a0c10`, shadows md/lg deepened. (b) `color-scheme` + `--focus-ring` are defined here; the `[data-theme="light"]` block lands in task 5.1. (c) The alias block carries a `DELETE in task 2.1` marker.
 
-### [ ] 1.3 — `base.css`: the missing a11y defaults
-- **Scope:** Global `:focus-visible` ring (`--focus-ring`), `:focus:not(:focus-visible){outline:none}`, `@media (prefers-reduced-motion)` kill-switch, unified scrollbars, and a `.skip-link` (with the markup hook in `index.html`).
-- **Files:** `styles/base.css`, `index.html` (add `<a class="skip-link" href="#viewport-frame">`).
-- **Depends on:** 1.1, 1.2.
-- **Verify:** Grep `focus-visible` + `prefers-reduced-motion` present. Build. Manual: Tab through the UI → visible ring on every control; no ring on mouse click.
-- **Risk:** Low. The single highest-value a11y change.
+### [x] 1.3 — `base.css`: the missing a11y defaults
+- **Done.** Added the global `:focus-visible` ring, `:focus:not(:focus-visible){outline:none}`, the `prefers-reduced-motion` kill-switch, unified thin scrollbars, and the `.skip-link`; wired `<a class="skip-link" href="#viewport-frame">` as the first body child + `tabindex="-1"` on `#viewport-frame`. Also moved `html,body` onto the new `--color-*` names. Verified: all four primitives present, all base refs resolve, build + lint + typecheck + 232 tests green.
+- **Notes:** (a) **Chose `outline` over the `--focus-ring` box-shadow** for the global ring — this app has many `overflow:hidden` containers (tab rail, panels) that would clip a box-shadow ring; `outline` is never clipped and follows each element's border-radius in Chromium. The `--focus-ring` token stays defined for opt-in use on non-clipped elements. (b) **Visual-verification limitation discovered:** the chrome can't be smoke-tested in a browser preview — `shell.js` gates all rendering on the Electron `contextBridge`, so a plain browser renders a blank body; the agent API only screenshots *tabs*, not the shell window. So Phase-1 visual rests on: verbatim split (no rules lost) + 0 dangling token refs + valid/brace-balanced CSS + green gate. A true visual pass needs the **Electron app** (deferred to a meaningful visual boundary — Phase 2 buttons or Phase 5 theming/icons — or a user look).
 
 ---
 

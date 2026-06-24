@@ -1,4 +1,6 @@
-/* ── Base: reset + element defaults ─────────────────────────── */
+/* ── Base: reset + element defaults + a11y ──────────────────────
+   See docs/styleguide.md §2 (base layer). Loaded after tokens.css.
+   ──────────────────────────────────────────────────────────────── */
 
 *,
 *::before,
@@ -10,8 +12,8 @@ html,
 body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--color-bg);
+  color: var(--color-text);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -21,4 +23,74 @@ textarea,
 select {
   font: inherit;
   color: inherit;
+}
+
+/* Focus ring — keyboard only. outline (not box-shadow) so it is never clipped
+   by the app's many overflow:hidden containers; it follows each element's
+   border-radius automatically in Chromium. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Honor the OS "reduce motion" setting. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Unified scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+/* Skip link — first focusable element; reveals on keyboard focus. */
+.skip-link {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-tooltip);
+  padding: var(--space-3) var(--space-5);
+  background: var(--color-surface-overlay);
+  color: var(--color-text);
+  font: var(--weight-medium) var(--text-sm) / 1 var(--font-sans);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-200%);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
 }
