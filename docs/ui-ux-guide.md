@@ -1,5 +1,11 @@
 # HelmStack UI/UX Standards & Implementation Guide
 
+> **Looking for the decided values (colors, fonts, icons, type scale, component
+> specs)?** Those live in **[styleguide.md](styleguide.md)** — the canonical
+> source of truth. This document is the *rationale*: the review of the current
+> UI, the gap analysis, and the phased migration plan. Where the two overlap, the
+> style guide's decided tokens win.
+
 How to evolve the desktop shell (`apps/desktop/src/renderer/`) into a consistent,
 accessible, standards-based UI. Reviewed: 2026-06-21 against `index.html`,
 `styles.css`, and `shell.ts`.
