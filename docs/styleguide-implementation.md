@@ -32,7 +32,9 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 
 ## Phase 1 — Foundation (tokens + base). *No visual change; immediate a11y win.*
 
-### [ ] 1.1 — Split `styles.css` into a layered `styles/` dir
+### [x] 1.1 — Split `styles.css` into a layered `styles/` dir
+- **Done.** Verbatim split (722 non-blank lines preserved, +3 section headers) into `renderer/styles/{tokens,base,components,layout}.css`; `index.html` links the 4 in cascade order; `build.mjs` **and** `dev.mjs` now copy the `styles/` dir (the dev watcher recurses + triggers on any `.css`). Build emits all 4, links resolve, every file brace-balanced, gate green (lint/typecheck/232 tests). **Notes:** (a) cascade is `tokens → base → components → layout`; the `Responsive` `@media` block is last in `layout.css`, so its overrides still win as before — verified safe because layout/component sections target disjoint selectors. (b) Removed a stale `dist/renderer/styles.css` artifact (the build doesn't clean `dist`). (c) **Visual "pixel-identical" deferred to the Phase-1 boundary smoke** — a verbatim content move + brace balance + identical cascade semantics makes a per-task repackage unnecessary; I'll launch once after 1.3.
+
 - **Scope:** Move the existing 854-line `styles.css` into `styles/{tokens,base,components,layout}.css` **verbatim** (no value changes), by its existing section markers: tokens→`tokens.css`; reset/`html,body`/scrollbars→`base.css`; App Layout/Titlebar/Tab Rail/Navbar/Workspace/Sidebar/Viewport/Responsive→`layout.css`; Buttons/Dropdown/Panels/Intent/Terminal/Accounts/Developer/Modals→`components.css`.
 - **Files:** new `renderer/styles/*.css`; `scripts/build.mjs` (copy the dir, not the file); `index.html` (link the 4 in cascade order, or a barrel `styles.css` that `@import`s them); delete old `styles.css`.
 - **Depends on:** —

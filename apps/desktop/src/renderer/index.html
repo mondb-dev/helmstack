@@ -8,7 +8,11 @@
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HelmStack</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <!-- Cascade order: tokens → base → components → layout (see docs/styleguide.md §2) -->
+    <link rel="stylesheet" href="./styles/tokens.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/components.css" />
+    <link rel="stylesheet" href="./styles/layout.css" />
   </head>
   <body>
     <div class="app">

@@ -11,7 +11,7 @@ mkdirSync(outDir, { recursive: true });
 mkdirSync(path.join(outDir, "renderer"), { recursive: true });
 
 cpSync(path.join(appRoot, "src/renderer/index.html"), path.join(outDir, "renderer/index.html"));
-cpSync(path.join(appRoot, "src/renderer/styles.css"), path.join(outDir, "renderer/styles.css"));
+cpSync(path.join(appRoot, "src/renderer/styles"), path.join(outDir, "renderer/styles"), { recursive: true });
 
 await Promise.all([
   build({

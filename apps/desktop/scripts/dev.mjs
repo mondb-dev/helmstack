@@ -28,7 +28,7 @@ let contexts = [];
 function copyRendererAssets() {
   mkdirSync(path.join(outDir, "renderer"), { recursive: true });
   cpSync(path.join(appRoot, "src/renderer/index.html"), path.join(outDir, "renderer/index.html"));
-  cpSync(path.join(appRoot, "src/renderer/styles.css"), path.join(outDir, "renderer/styles.css"));
+  cpSync(path.join(appRoot, "src/renderer/styles"), path.join(outDir, "renderer/styles"), { recursive: true });
 }
 
 function launchElectron() {
@@ -172,8 +172,8 @@ contexts = await Promise.all(
 
 await Promise.all(contexts.map((entry) => entry.watch()));
 
-staticWatcher = watch(path.join(appRoot, "src/renderer"), (_eventType, filename) => {
-  if (!filename || (filename !== "index.html" && filename !== "styles.css")) {
+staticWatcher = watch(path.join(appRoot, "src/renderer"), { recursive: true }, (_eventType, filename) => {
+  if (!filename || (filename !== "index.html" && !filename.endsWith(".css"))) {
     return;
   }
 

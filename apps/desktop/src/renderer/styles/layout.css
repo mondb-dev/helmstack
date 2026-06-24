@@ -1,0 +1,313 @@
+/* ── Layout ──────────────────────────────────────────────────── */
+
+/* ── App Layout ──────────────────────────────────────────────── */
+
+.app {
+  display: grid;
+  grid-template-rows: var(--titlebar-height) var(--navbar-height) 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Titlebar ────────────────────────────────────────────────── */
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px 0 80px;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 10;
+}
+
+.titlebar-drag {
+  position: absolute;
+  inset: 0;
+  -webkit-app-region: drag;
+}
+
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+
+.brand-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, var(--accent), #60a5fa);
+  box-shadow: 0 0 12px rgba(62, 207, 142, 0.3);
+}
+
+.brand-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* ── Tab Rail ────────────────────────────────────────────────── */
+
+.tab-rail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+  -webkit-app-region: no-drag;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 200px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 100ms, color 100ms;
+  -webkit-app-region: no-drag;
+}
+
+.tab-pill:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.tab-pill.is-active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.tab-pill.is-loading .tab-status {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-subtle);
+}
+
+.tab-pill.is-error {
+  color: var(--danger);
+}
+
+.tab-pill.is-error .tab-status {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-subtle);
+}
+
+.tab-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.tab-pill.is-active .tab-status {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.tab-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tab-title {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-meta {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-close {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 100ms, background 100ms, color 100ms;
+  -webkit-app-region: no-drag;
+}
+
+.tab-pill:hover .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.tab-new {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 100ms, border-color 100ms, color 100ms;
+  -webkit-app-region: no-drag;
+}
+
+.tab-new:hover {
+  background: var(--surface-2);
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+/* ── Navbar ──────────────────────────────────────────────────── */
+
+.navbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-form {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nav-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 100ms, background 100ms;
+}
+
+.nav-input:focus {
+  border-color: var(--accent-muted);
+  background: var(--surface-2);
+}
+
+.nav-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* ── Workspace ───────────────────────────────────────────────── */
+
+.workspace {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  overflow: hidden;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────── */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--surface-0);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) transparent;
+}
+
+/* ── Viewport ────────────────────────────────────────────────── */
+
+.viewport-stage {
+  position: relative;
+  overflow: hidden;
+}
+
+.viewport-frame {
+  height: 100%;
+  min-height: 400px;
+  background: var(--surface-1);
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .titlebar {
+    padding-left: 16px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+  }
+
+  .sidebar {
+    order: 2;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    max-height: 50vh;
+  }
+
+  .viewport-stage {
+    order: 1;
+  }
+
+  .modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .modal-actions .btn {
+    width: 100%;
+  }
+}
