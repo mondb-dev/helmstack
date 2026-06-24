@@ -37,6 +37,8 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
   --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.34);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.50);
+  --shadow-accent-sm: 0 2px 8px rgba(62, 207, 142, 0.20);
+  --shadow-accent-glow: 0 0 12px rgba(62, 207, 142, 0.30);
 
   /* Motion */
   --ease: cubic-bezier(0.2, 0, 0.2, 1); --ease-out: cubic-bezier(0, 0, 0.2, 1);
@@ -84,36 +86,10 @@
   --color-on-accent: #04130b;
 
   --color-success: var(--green-400); --color-success-subtle: rgba(62, 207, 142, 0.10);
-  --color-warning: var(--amber-400); --color-warning-subtle: rgba(232, 164, 58, 0.10); --color-on-warning: #1a1206;
+  --color-warning: var(--amber-400); --color-warning-subtle: rgba(232, 164, 58, 0.10); --color-warning-border: rgba(232, 164, 58, 0.16); --color-on-warning: #1a1206;
   --color-danger: var(--red-400); --color-danger-subtle: rgba(239, 68, 68, 0.10); --color-on-danger: #ffffff;
   --color-info: var(--blue-400); --color-info-subtle: rgba(96, 165, 250, 0.10);
 
   --color-overlay: rgba(0, 0, 0, 0.6);
   --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px rgba(62, 207, 142, 0.55);
-}
-
-/* ── Legacy aliases — DELETE in task 2.1 once components use --color-* ─ */
-:root {
-  --bg: var(--color-bg);
-  --surface-0: var(--neutral-900);
-  --surface-1: var(--neutral-850);
-  --surface-2: var(--neutral-800);
-  --surface-3: var(--neutral-750);
-  --border: var(--color-border);
-  --border-hover: var(--color-border-strong);
-  --border-active: rgba(255, 255, 255, 0.16);
-  --text: var(--color-text);
-  --text-secondary: var(--color-text-secondary);
-  --text-tertiary: var(--color-text-tertiary);
-  --accent: var(--color-accent);
-  --accent-hover: var(--color-accent-hover);
-  --accent-subtle: var(--color-accent-subtle);
-  --accent-muted: var(--color-accent-muted);
-  --accent-text: var(--color-on-accent);
-  --warning: var(--color-warning);
-  --warning-subtle: var(--color-warning-subtle);
-  --danger: var(--color-danger);
-  --danger-subtle: var(--color-danger-subtle);
-  --info: var(--color-info);
-  --info-subtle: var(--color-info-subtle);
 }

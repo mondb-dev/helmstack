@@ -30,26 +30,26 @@
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
   font-weight: 600;
 }
 
 .btn-primary:hover {
-  background: var(--accent-hover);
-  box-shadow: 0 2px 8px rgba(62, 207, 142, 0.2);
+  background: var(--color-accent-hover);
+  box-shadow: var(--shadow-accent-sm);
 }
 
 .btn-ghost {
   background: transparent;
-  border-color: var(--border);
-  color: var(--text-secondary);
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
 }
 
 .btn-ghost:hover {
-  background: var(--surface-2);
-  border-color: var(--border-hover);
-  color: var(--text);
+  background: var(--color-surface-raised);
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
 }
 
 /* ── Dropdown ────────────────────────────────────────────────── */
@@ -66,9 +66,9 @@
   z-index: 100;
   min-width: 200px;
   padding: 4px;
-  border: 1px solid var(--border-hover);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
-  background: var(--surface-2);
+  background: var(--color-surface-raised);
   box-shadow: var(--shadow-lg);
 }
 
@@ -83,7 +83,7 @@
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--text);
+  color: var(--color-text);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
@@ -91,19 +91,19 @@
 }
 
 .dropdown-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-hover);
 }
 
 .dropdown-divider {
   height: 1px;
   margin: 4px 0;
-  background: var(--border);
+  background: var(--color-border);
 }
 
 /* ── Collapsible Panels ──────────────────────────────────────── */
 
 .panel {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .panel-header {
@@ -115,7 +115,7 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   cursor: pointer;
   user-select: none;
   list-style: none;
@@ -138,8 +138,8 @@
 }
 
 .panel-header:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.02);
+  color: var(--color-text);
+  background: var(--color-hover);
 }
 
 .panel-body {
@@ -159,10 +159,10 @@
   width: 100%;
   min-height: 64px;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--surface-1);
-  color: var(--text);
+  background: var(--color-surface);
+  color: var(--color-text);
   font-size: 12px;
   resize: vertical;
   outline: none;
@@ -170,11 +170,11 @@
 }
 
 .intent-input:focus {
-  border-color: var(--accent-muted);
+  border-color: var(--color-accent-muted);
 }
 
 .intent-input::placeholder {
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
 }
 
 /* ── Terminal ────────────────────────────────────────────────── */
@@ -185,9 +185,9 @@
   min-height: 120px;
   max-height: 300px;
   padding: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--bg);
+  background: var(--color-bg);
   overflow-y: auto;
   font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
   font-size: 11px;
@@ -200,23 +200,23 @@
 }
 
 .terminal-system {
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
 }
 
 .terminal-agent {
-  color: var(--accent);
+  color: var(--color-accent);
 }
 
 .terminal-ai {
-  color: var(--info);
+  color: var(--color-info);
 }
 
 .terminal-error {
-  color: var(--danger);
+  color: var(--color-danger);
 }
 
 .terminal-nav {
-  color: var(--warning);
+  color: var(--color-warning);
 }
 
 /* ── Accounts ────────────────────────────────────────────────── */
@@ -233,9 +233,9 @@
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  background: var(--color-surface);
   font-size: 12px;
 }
 
@@ -255,7 +255,7 @@
 
 .account-chip-meta {
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -268,7 +268,7 @@
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
   font-size: 13px;
   cursor: pointer;
   display: flex;
@@ -278,8 +278,8 @@
 }
 
 .account-chip-delete:hover {
-  color: var(--danger);
-  background: var(--danger-subtle);
+  color: var(--color-danger);
+  background: var(--color-danger-subtle);
 }
 
 .form-stack {
@@ -297,21 +297,21 @@
   width: 100%;
   height: 30px;
   padding: 0 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  color: var(--text);
+  background: var(--color-surface);
+  color: var(--color-text);
   font-size: 12px;
   outline: none;
   transition: border-color 100ms;
 }
 
 .input::placeholder {
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
 }
 
 .input:focus {
-  border-color: var(--accent-muted);
+  border-color: var(--color-accent-muted);
 }
 
 /* ── Developer Panel ─────────────────────────────────────────── */
@@ -319,7 +319,7 @@
 .status-text {
   margin: 0;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   line-height: 1.5;
 }
 
@@ -334,18 +334,18 @@
   justify-content: space-between;
   gap: 8px;
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  background: var(--color-surface);
   font-size: 11px;
 }
 
 .vault-chip strong {
-  color: var(--text);
+  color: var(--color-text);
 }
 
 .vault-chip span {
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .code-block {
@@ -353,10 +353,10 @@
   min-height: 80px;
   max-height: 300px;
   padding: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--bg);
-  color: var(--info);
+  background: var(--color-bg);
+  color: var(--color-info);
   font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
   font-size: 11px;
   line-height: 1.5;
@@ -382,7 +382,7 @@
 .modal-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--color-overlay);
   backdrop-filter: blur(8px);
 }
 
@@ -394,9 +394,9 @@
   flex-direction: column;
   gap: 12px;
   padding: 20px;
-  border: 1px solid var(--border-hover);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-lg);
-  background: var(--surface-1);
+  background: var(--color-surface);
   box-shadow: var(--shadow-lg);
 }
 
@@ -415,13 +415,13 @@
 .modal-text {
   margin: 0;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   line-height: 1.5;
 }
 
 .modal-text-emphasis {
   font-weight: 600;
-  color: var(--text);
+  color: var(--color-text);
 }
 
 .badge {
@@ -438,13 +438,13 @@
 }
 
 .badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
 }
 
 .badge-info {
-  background: var(--info-subtle);
-  color: var(--info);
+  background: var(--color-info-subtle);
+  color: var(--color-info);
 }
 
 .effects-list {
@@ -455,10 +455,10 @@
 
 .approval-effect {
   padding: 10px 12px;
-  border: 1px solid rgba(232, 164, 58, 0.16);
+  border: 1px solid var(--color-warning-border);
   border-radius: var(--radius-sm);
-  background: var(--warning-subtle);
-  color: var(--warning);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
   font-size: 12px;
   line-height: 1.4;
 }

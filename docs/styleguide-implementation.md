@@ -53,12 +53,10 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 
 ## Phase 2 — Tokenize components + fix contrast.
 
-### [ ] 2.1 — Kill raw color literals; apply the contrast fixes
-- **Scope:** Replace the **17 raw `rgba()`** + any hardcoded hex in `components.css`/`layout.css` with semantic tokens. Rename old token refs (`--text`/`--accent`/…) to the new `--color-*` names (or keep aliases). Ensure text uses the AA tokens (the `#555d6a` tertiary is gone).
-- **Files:** `styles/components.css`, `styles/layout.css`, `styles/tokens.css` (drop aliases).
-- **Depends on:** 1.2.
-- **Verify:** **Grep-assert:** `grep -nE '#[0-9a-fA-F]{3,6}|rgba?\(' styles/components.css styles/layout.css` → only inside comments (ideally zero). Build. Visual: unchanged except slightly more legible meta text.
-- **Risk:** Medium — easy to miss a literal; the grep gate catches it.
+### [x] 2.1 — Kill raw color literals; apply the contrast fixes
+- **Done.** Migrated `components.css` + `layout.css` to `--color-*` (all 21 distinct old alias refs renamed via a `)`-anchored substring-safe pass), replaced all **7** raw color literals, and **deleted the legacy-alias block** from `tokens.css`. Verified: **0** raw hex/rgba in components+layout, **0** leftover old refs, **0** dangling refs (alias net removed), build + lint + typecheck + 232 tests green.
+- **Notes — how each literal resolved:** `.dropdown-item:hover` & `.panel-header:hover` whites (`.06`/`.02`) → `--color-hover`; `.modal-backdrop` `rgba(0,0,0,.6)` → `--color-overlay` (exact); `.approval-effect` amber border `.16` → new **`--color-warning-border`** token; brand-icon gradient end `#60a5fa` → `--blue-400`; the two accent glows (brand icon `0 0 12px /.30`, primary button `0 2px 8px /.20`) → new **`--shadow-accent-glow`** / **`--shadow-accent-sm`** tokens. (The grep "17" in the original scope was an over-count from the gap doc; the renderer actually had 7 raw literals here — recorded for accuracy.)
+- **Decision:** kept raw values as *tokens in tokens.css* (the legitimate home for raw values) instead of `color-mix()`, to avoid taking a dependency on a newer CSS feature mid-migration.
 
 ### [ ] 2.2 — Spacing / type / radius pass
 - **Scope:** Replace magic `px` paddings/margins/gaps with `--space-*`, font-sizes with `--text-*`/the role scale, radii with `--radius-*`. Keep layout dims (`--sidebar-w` etc.) as tokens.
