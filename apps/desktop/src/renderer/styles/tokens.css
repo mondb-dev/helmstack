@@ -1,49 +1,119 @@
-/* ── Design Tokens ──────────────────────────────────────────── */
+/* ── Design Tokens ───────────────────────────────────────────────
+   The decided system. See docs/styleguide.md §1–§2. Components reference
+   ONLY semantic --color-* tokens (and the scales). The legacy-alias block at
+   the bottom keeps the current components working until task 2.1 migrates them.
+   ──────────────────────────────────────────────────────────────── */
 
 :root {
   color-scheme: dark;
 
-  --bg: #0c0e12;
-  --surface-0: #111419;
-  --surface-1: #181b22;
-  --surface-2: #1f232b;
-  --surface-3: #272b34;
+  /* Primitives — neutral ramp (cool gray) */
+  --neutral-950: #0a0c10; --neutral-900: #111419; --neutral-850: #181b22;
+  --neutral-800: #1f232b; --neutral-750: #272b34; --neutral-700: #313742;
+  --neutral-600: #454c58; --neutral-500: #6b7280; --neutral-400: #9aa1ad;
+  --neutral-300: #c3c8d0; --neutral-200: #dfe2e7; --neutral-100: #eef0f3; --neutral-50: #f7f8fa;
+  --white: #ffffff; --black: #000000;
 
-  --border: rgba(255, 255, 255, 0.06);
-  --border-hover: rgba(255, 255, 255, 0.10);
-  --border-active: rgba(255, 255, 255, 0.16);
+  /* Primitives — accent (green) & status */
+  --green-300: #6bdba8; --green-400: #3ecf8e; --green-500: #34b87e; --green-600: #2da06d;
+  --amber-400: #e8a43a; --red-400: #ef4444; --blue-400: #60a5fa; --violet-400: #a78bfa;
 
-  --text: #e2e5ea;
-  --text-secondary: #848b97;
-  --text-tertiary: #555d6a;
+  /* Spacing scale (4px base) */
+  --space-0: 0; --space-1: 2px; --space-2: 4px; --space-3: 6px; --space-4: 8px;
+  --space-5: 12px; --space-6: 16px; --space-7: 20px; --space-8: 24px;
+  --space-9: 32px; --space-10: 48px; --space-11: 64px;
 
-  --accent: #3ecf8e;
-  --accent-hover: #34b87e;
-  --accent-subtle: rgba(62, 207, 142, 0.08);
-  --accent-muted: rgba(62, 207, 142, 0.16);
-  --accent-text: #021a0e;
+  /* Typography */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code", ui-monospace, Consolas, monospace;
+  --text-2xl: 24px; --text-xl: 20px; --text-lg: 15px; --text-base: 13px; --text-sm: 12px; --text-xs: 11px;
+  --leading-tight: 1.25; --leading-normal: 1.5;
+  --weight-regular: 400; --weight-medium: 500; --weight-semibold: 600; --weight-bold: 700;
 
-  --warning: #e8a43a;
-  --warning-subtle: rgba(232, 164, 58, 0.08);
-  --danger: #ef4444;
-  --danger-subtle: rgba(239, 68, 68, 0.08);
-  --info: #60a5fa;
-  --info-subtle: rgba(96, 165, 250, 0.08);
+  /* Radius */
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 999px;
 
+  /* Elevation (overlays only) */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.32);
-  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.48);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.50);
 
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0, 0.2, 1); --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --dur-fast: 90ms; --dur-base: 150ms; --dur-slow: 240ms;
 
-  --sidebar-width: 320px;
-  --titlebar-height: 46px;
-  --navbar-height: 44px;
+  /* Z-index scale */
+  --z-base: 1; --z-titlebar: 10; --z-sticky: 50; --z-dropdown: 100;
+  --z-overlay: 900; --z-modal: 1000; --z-toast: 1100; --z-tooltip: 1200;
 
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
-  line-height: 1.5;
+  /* Layout dims */
+  --titlebar-height: 46px; --navbar-height: 44px; --sidebar-width: 320px;
+  --control-sm: 28px; --control-md: 32px; --control-lg: 38px; --tap-min: 44px;
+
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+}
+
+/* ── Semantic tokens: dark (default) ──────────────────────────── */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: var(--neutral-950);
+  --color-surface: var(--neutral-850);
+  --color-surface-sunken: var(--neutral-900);
+  --color-surface-raised: var(--neutral-800);
+  --color-surface-overlay: var(--neutral-700);
+
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-hover: rgba(255, 255, 255, 0.04);
+  --color-active: rgba(255, 255, 255, 0.08);
+
+  --color-text: #e6e9ee;
+  --color-text-secondary: #9aa1ad;
+  --color-text-tertiary: #808997;
+  --color-text-disabled: #565d68;
+
+  --color-accent: var(--green-400);
+  --color-accent-hover: var(--green-500);
+  --color-accent-active: var(--green-600);
+  --color-accent-subtle: rgba(62, 207, 142, 0.10);
+  --color-accent-muted: rgba(62, 207, 142, 0.18);
+  --color-on-accent: #04130b;
+
+  --color-success: var(--green-400); --color-success-subtle: rgba(62, 207, 142, 0.10);
+  --color-warning: var(--amber-400); --color-warning-subtle: rgba(232, 164, 58, 0.10); --color-on-warning: #1a1206;
+  --color-danger: var(--red-400); --color-danger-subtle: rgba(239, 68, 68, 0.10); --color-on-danger: #ffffff;
+  --color-info: var(--blue-400); --color-info-subtle: rgba(96, 165, 250, 0.10);
+
+  --color-overlay: rgba(0, 0, 0, 0.6);
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px rgba(62, 207, 142, 0.55);
+}
+
+/* ── Legacy aliases — DELETE in task 2.1 once components use --color-* ─ */
+:root {
+  --bg: var(--color-bg);
+  --surface-0: var(--neutral-900);
+  --surface-1: var(--neutral-850);
+  --surface-2: var(--neutral-800);
+  --surface-3: var(--neutral-750);
+  --border: var(--color-border);
+  --border-hover: var(--color-border-strong);
+  --border-active: rgba(255, 255, 255, 0.16);
+  --text: var(--color-text);
+  --text-secondary: var(--color-text-secondary);
+  --text-tertiary: var(--color-text-tertiary);
+  --accent: var(--color-accent);
+  --accent-hover: var(--color-accent-hover);
+  --accent-subtle: var(--color-accent-subtle);
+  --accent-muted: var(--color-accent-muted);
+  --accent-text: var(--color-on-accent);
+  --warning: var(--color-warning);
+  --warning-subtle: var(--color-warning-subtle);
+  --danger: var(--color-danger);
+  --danger-subtle: var(--color-danger-subtle);
+  --info: var(--color-info);
+  --info-subtle: var(--color-info-subtle);
 }

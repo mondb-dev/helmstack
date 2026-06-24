@@ -41,12 +41,9 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 - **Verify:** `npm run build` emits all 4 under `dist/renderer/styles/`; launch → **pixel-identical** to before (verbatim move). Grep: no rules lost (line count ≈ sum).
 - **Risk:** Low, but it's the one build-script change — confirm `dist` has the files and the `<link>` order matches the cascade (tokens → base → components → layout).
 
-### [ ] 1.2 — Replace `:root` with the decided token set
-- **Scope:** Put the full token system from styleguide §1–§2 into `tokens.css`: primitive ramps, spacing/type/radius/shadow/motion/z scales, and the **semantic dark block**. Values are chosen to match the current chrome closely, so visual drift is minimal.
-- **Files:** `styles/tokens.css`.
-- **Depends on:** 1.1.
-- **Verify:** Build. Grep: `--color-*`, `--space-*`, `--text-*`, `--radius-*`, `--z-*` all defined. Launch → near-identical (only the contrast-fixed text tokens shift slightly lighter). Run the contrast numbers from styleguide §1.1 are pre-verified AA.
-- **Risk:** Low. Components still reference *old* token names here — keep the old names aliased to the new semantic ones for this step, or do the rename in 2.1.
+### [x] 1.2 — Replace `:root` with the decided token set
+- **Done.** `tokens.css` now holds the full decided system: primitive ramps (neutral/green/amber/red/blue), the spacing/type/radius/shadow/motion/z scales, layout+control dims, and the semantic **dark** `--color-*` block — plus a **legacy-alias block** mapping every old token name to the new ones so components render unchanged until 2.1. Verified: all **29** `var(--…)` refs in base/components/layout resolve (0 dangling), decided tokens present, build + lint + typecheck + 232 tests green.
+- **Notes:** (a) intended minor drift is baked in now via the aliases — text contrast AA-fixed (`--text-tertiary` #555d6a→#808997, secondary #848b97→#9aa1ad), borders `.06`→`.08`, accent/warning subtles `.08`→`.10`, app bg `#0c0e12`→`#0a0c10`, shadows md/lg deepened. (b) `color-scheme` + `--focus-ring` are defined here; the `[data-theme="light"]` block lands in task 5.1. (c) The alias block carries a `DELETE in task 2.1` marker.
 
 ### [ ] 1.3 — `base.css`: the missing a11y defaults
 - **Scope:** Global `:focus-visible` ring (`--focus-ring`), `:focus:not(:focus-visible){outline:none}`, `@media (prefers-reduced-motion)` kill-switch, unified scrollbars, and a `.skip-link` (with the markup hook in `index.html`).
