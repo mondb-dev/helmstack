@@ -122,12 +122,9 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 
 ## Phase 6 — Data components + content/polish.
 
-### [ ] 6.1 — Data-display components
-- **Scope:** Formalize `.table`/`.kv`/`.stat`/`.meter`/`.code`/`.terminal` (§3.8–3.12); apply: terminal levels → semantic colors, perception/metric panels → key-value + mono numerics, any score/% → meter with threshold colors.
-- **Files:** `styles/components.css`, `shell.ts` (render funcs), `index.html`.
-- **Depends on:** 2.1, 2.2.
-- **Verify:** Grep tokens-only. Build. **jsdom:** any extracted render fn (e.g. terminal line → correct level class). Manual: terminal/data panels read cleanly.
-- **Risk:** Medium — most markup-touching; do per-panel, one panel per sub-iteration if large.
+### [x] 6.1 — Data-display components
+- **Done.** Formalized the §3.8–3.12 set in `components.css`: added `.table` (sticky eyebrow header, hairline rows, `.num` mono/tabular/right), `.kv` (caption keys + mono values), `.stat` (mono tabular value + caption label), and `.meter` (`__fill` + `[data-level="warn"|"bad"]` → warning/danger). Tokenized the two raw mono font stacks → `--font-mono` (terminal + `.code-block`) and added `tab-size:2` to the code block. Extracted `renderer/ui/dataview.ts` — `terminalLineClass(level)` (the old inline `LEVEL_CLASS` map, now the testable seam used by `appendTerminal`) and `meterLevel(score, thresholds)` (good/warn/bad → success/warning/danger). Verified: **tokens-only** grep clean (0 raw hex/rgba/mono in components+layout), new `dataview.test.ts` (**5 tests**) green, suite **308 passed** (was 303), typecheck + lint + build green, CSS refs resolve.
+- **Notes:** (a) the **terminal already used semantic level colors** (system→tertiary, agent→accent, ai→info, error→danger, nav→warning) from earlier passes — this task tokenized its font and extracted the level→class mapping into a tested function. (b) **no live score/% surface exists** in the renderer today (`renderObservation`/`renderGraph` are minimal; the snapshot is a JSON `<pre>`), so `.meter`/`.stat`/`.table`/`.kv` and `meterLevel()` are **formalized + unit-tested for when those panels gain metrics** rather than wired to a current site — recorded honestly, not silently skipped. (c) kept `.code-block` `white-space: pre-wrap` (deviates from §3.11's `pre`) because the JSON dump lives in a narrow sidebar where wrapping reads better than horizontal scroll. (d) the styleguide's composite `--type-eyebrow/caption/code` tokens were **expanded inline** with my atom tokens (`--text-*`/`--weight-*`/`--font-*`) to match the rest of the CSS. (e) **path-depth gotcha recorded:** `ui/` modules importing the shared package need **five** `../` (`../../../../../packages/...`), not the four that `shell.ts` (one level shallower) uses.
 
 ### [ ] 6.2 — Content & voice pass
 - **Scope:** Sentence-case all buttons/titles/menu items; action-first labels; error messages say what+how (styleguide §5).

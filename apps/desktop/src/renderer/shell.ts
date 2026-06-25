@@ -18,6 +18,7 @@ import { attachRovingKeys } from "./ui/roving.js";
 import { createMenu } from "./ui/menu.js";
 import { initTheme } from "./ui/theme.js";
 import { icon } from "./ui/icons.js";
+import { terminalLineClass } from "./ui/dataview.js";
 
 // Apply the resolved theme as early as possible to minimise a flash of the
 // default (dark) chrome before the renderer paints.
@@ -636,18 +637,10 @@ async function runContactFixture() {
 
 // ── Terminal output ──────────────────────────────────────────────────────────
 
-const LEVEL_CLASS: Record<AgentLogEntry["level"], string> = {
-  system: "terminal-system",
-  agent: "terminal-agent",
-  ai: "terminal-ai",
-  error: "terminal-error",
-  nav: "terminal-nav"
-};
-
 function appendTerminal(level: AgentLogEntry["level"], message: string) {
   if (!terminalOutput) return;
   const line = document.createElement("div");
-  line.className = `terminal-line ${LEVEL_CLASS[level]}`;
+  line.className = terminalLineClass(level);
   line.textContent = message;
   terminalOutput.appendChild(line);
   terminalOutput.scrollTop = terminalOutput.scrollHeight;
