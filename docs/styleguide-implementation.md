@@ -102,12 +102,9 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 - **Done.** Built `renderer/ui/menu.ts` → `createMenu(trigger, menu)`: sets `aria-haspopup="menu"`/`aria-expanded`/`aria-controls` on the trigger; ↓/Enter/Space opens to the first item, ↑ to the last; ↑/↓/Home/End rove `[role="menuitem"]` (reusing `nextRovingIndex` from 4.1); Esc closes + restores focus to the trigger; Tab and outside-click close; selecting an item closes. Markup got `role="menu"`/`menuitem`/`separator` + `aria-label`. Replaced the old toggle+outside-click block in `shell.ts` and removed the 4 per-item self-hide calls. Verified: new `menu.test.ts` (**8 tests**) green, suite **285 passed** (was 277), typecheck + lint + build green.
 - **Notes:** (a) **reused** `roving.ts`'s `nextRovingIndex` (vertical orientation) rather than duplicating the cycle math. (b) menu items set to `tabindex=-1` (roving) so the menu uses programmatic focus, not Tab order. (c) the per-item handlers **no longer self-hide** — closing is owned by `createMenu` (item-click delegation) so `aria-expanded` never goes stale (the old `setAttribute("hidden")` bypassed it). (d) the four item *actions* (open/run fixture, snapshot, inspect) are untouched. (e) live keyboard open/close needs the running app to fully exercise, but every branch is covered by the jsdom helper test.
 
-### [ ] 4.3 — Landmarks + skip-link wiring
-- **Scope:** Distinct `aria-label`s on the two `<nav>`s and the `<aside>`; ensure the §1.3 skip-link targets the viewport.
-- **Files:** `index.html`.
-- **Depends on:** 1.3.
-- **Verify:** **jsdom/grep:** both navs + aside have unique `aria-label`; skip-link present + targets an existing id. Build.
-- **Risk:** Low.
+### [x] 4.3 — Landmarks + skip-link wiring
+- **Done.** Labelled `<nav class="navbar">` → `aria-label="Address bar and tools"` and `<aside class="sidebar">` → `aria-label="Agent and developer tools"`; confirmed the skip-link (`#viewport-frame`) targets the existing `role="tabpanel"` viewport. Added `landmarks.test.ts` (**5 tests**) parsing the real `index.html`: single header/main, nav+aside distinctly labelled, skip-link resolves to a real id, tablist+tabpanel present, and **all static `aria-label`s unique**. Verified: suite **290 passed** (was 285), typecheck + lint + build green. **Completes Phase 4.**
+- **Notes:** (a) **the scope's "two `<nav>`s" was a miscount** — the markup has exactly **one** `<nav>`; the tab rail is correctly a `role="tablist"` (from 4.1), not a navigation landmark, so promoting it to a second nav would be wrong. Labelled the one nav + the aside instead; the `<header>` (banner) and `<main>` are unique singletons that need no disambiguating label per ARIA. (b) the new test doubles as a **regression guard** for the whole Phase-4 + 1.3 a11y structure (roles, labels, skip target). (c) test gotcha recorded: under the jsdom env `import.meta.url` is the `https://example.com/` jsdom URL, so `fileURLToPath` throws "must be of scheme file" — read fixtures via a **cwd-relative path** (vitest runs from repo root) instead.
 
 ---
 
