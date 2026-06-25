@@ -15,6 +15,7 @@ import { buildEmptyState, buildSkeletonRows } from "./ui/states.js";
 import { openDialog, type DialogHandle } from "./ui/dialog.js";
 import { toast } from "./ui/toast.js";
 import { attachRovingKeys } from "./ui/roving.js";
+import { createMenu } from "./ui/menu.js";
 
 declare global {
   interface Window {
@@ -728,15 +729,11 @@ async function bootstrap() {
 
   const toolsMenuTrigger = document.getElementById("toolbar-menu-trigger");
   const toolsMenuDropdown = document.getElementById("toolbar-menu-dropdown");
-  toolsMenuTrigger?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toolsMenuDropdown?.toggleAttribute("hidden");
-  });
-  document.addEventListener("click", (e) => {
-    if (!toolsMenuTrigger?.contains(e.target as Node) && !toolsMenuDropdown?.contains(e.target as Node)) {
-      toolsMenuDropdown?.setAttribute("hidden", "");
-    }
-  });
+  // ARIA menu: trigger toggles + keyboard opens; ↑/↓ rove items; Esc/Tab/outside
+  // close; selecting an item closes (the per-item handlers no longer self-hide).
+  if (toolsMenuTrigger && toolsMenuDropdown) {
+    createMenu(toolsMenuTrigger, toolsMenuDropdown);
+  }
 
   newTabButton?.addEventListener("click", async () => {
     renderTabs(await window.browserShell.openTab("https://example.com"));
@@ -744,18 +741,14 @@ async function bootstrap() {
     startViewportStabilizer(1200, 120);
   });
 
-  snapshotButton?.addEventListener("click", async () => {
-    toolsMenuDropdown?.setAttribute("hidden", "");
-    const activeTab = getActiveTab();
+  snapshotButton?.addEventListener("click", async () => {    const activeTab = getActiveTab();
     if (!activeTab) {
       return;
     }
     renderPerception(await window.browserShell.capturePerception(activeTab.id));
   });
 
-  inspectButton?.addEventListener("click", async () => {
-    toolsMenuDropdown?.setAttribute("hidden", "");
-    const activeTab = getActiveTab();
+  inspectButton?.addEventListener("click", async () => {    const activeTab = getActiveTab();
     if (!activeTab) {
       return;
     }
@@ -769,16 +762,12 @@ async function bootstrap() {
     appendTerminal("system", `Inspect → selector ${pick.selector}${pick.text ? ` ("${pick.text}")` : ""}`);
   });
 
-  fixtureOpenButton?.addEventListener("click", async () => {
-    toolsMenuDropdown?.setAttribute("hidden", "");
-    const fixtureUrl = await window.browserShell.getFixtureUrl("contact-form");
+  fixtureOpenButton?.addEventListener("click", async () => {    const fixtureUrl = await window.browserShell.getFixtureUrl("contact-form");
     setFixtureStatus(`Opened fixture: ${fixtureUrl}`);
     await navigateActiveTab(fixtureUrl);
   });
 
-  fixtureRunButton?.addEventListener("click", async () => {
-    toolsMenuDropdown?.setAttribute("hidden", "");
-    try {
+  fixtureRunButton?.addEventListener("click", async () => {    try {
       await runContactFixture();
     } catch (error) {
       setFixtureStatus(error instanceof Error ? error.message : "Fixture runner failed.", "error");

@@ -42,12 +42,12 @@
         </form>
         <div class="dropdown" id="toolbar-menu">
           <button class="btn btn--ghost" id="toolbar-menu-trigger" type="button">Demos &#9662;</button>
-          <div class="dropdown-menu" id="toolbar-menu-dropdown" hidden>
-            <button class="dropdown-item" id="fixture-open-button" type="button">Open contact fixture</button>
-            <button class="dropdown-item" id="fixture-run-button" type="button">Run contact fixture</button>
-            <div class="dropdown-divider"></div>
-            <button class="dropdown-item" id="snapshot-button" type="button">Capture page graph</button>
-            <button class="dropdown-item" id="inspect-button" type="button">Inspect element</button>
+          <div class="dropdown-menu" id="toolbar-menu-dropdown" role="menu" aria-label="Demos" hidden>
+            <button class="dropdown-item" id="fixture-open-button" type="button" role="menuitem">Open contact fixture</button>
+            <button class="dropdown-item" id="fixture-run-button" type="button" role="menuitem">Run contact fixture</button>
+            <div class="dropdown-divider" role="separator"></div>
+            <button class="dropdown-item" id="snapshot-button" type="button" role="menuitem">Capture page graph</button>
+            <button class="dropdown-item" id="inspect-button" type="button" role="menuitem">Inspect element</button>
           </div>
         </div>
       </nav>
