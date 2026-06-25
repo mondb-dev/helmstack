@@ -160,7 +160,7 @@ function renderTabs(nextTabs: TabSummary[]) {
 
       const title = document.createElement("span");
       title.className = "tab-title";
-      title.textContent = tab.status === "error" ? "Load failed" : tab.title || "New Tab";
+      title.textContent = tab.status === "error" ? "Load failed" : tab.title || "New tab";
 
       const meta = document.createElement("span");
       meta.className = "tab-meta";
