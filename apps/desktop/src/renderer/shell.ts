@@ -14,6 +14,7 @@ import { validateAccountForm, type AccountFormValues, type FieldError } from "./
 import { buildEmptyState, buildSkeletonRows } from "./ui/states.js";
 import { openDialog, type DialogHandle } from "./ui/dialog.js";
 import { toast } from "./ui/toast.js";
+import { attachRovingKeys } from "./ui/roving.js";
 
 declare global {
   interface Window {
@@ -133,6 +134,11 @@ function renderTabs(nextTabs: TabSummary[]) {
       button.type = "button";
       button.className = `tab-pill${tab.isActive ? " is-active" : ""}${tab.status === "loading" ? " is-loading" : ""}${tab.status === "error" ? " is-error" : ""}`;
       button.title = tab.url;
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-selected", tab.isActive ? "true" : "false");
+      button.setAttribute("aria-controls", "viewport-frame");
+      // Roving tabindex: only the active tab is in the Tab order; ←/→ rove the rest.
+      button.tabIndex = tab.isActive ? 0 : -1;
       button.addEventListener("click", async () => {
         renderTabs(await window.browserShell.focusTab(tab.id));
         await syncActiveObservation();
@@ -159,6 +165,9 @@ function renderTabs(nextTabs: TabSummary[]) {
       closeBtn.className = "tab-close";
       closeBtn.textContent = "×";
       closeBtn.title = "Close tab";
+      closeBtn.setAttribute("aria-label", `Close ${tab.title || "tab"}`);
+      // Out of the Tab order — reachable via the tab's Delete/Backspace key.
+      closeBtn.tabIndex = -1;
       closeBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         renderTabs(await window.browserShell.closeTab(tab.id));
@@ -673,6 +682,25 @@ async function bootstrap() {
   window.addEventListener("resize", () => startViewportStabilizer(1200, 120));
   window.addEventListener("load", () => startViewportStabilizer(1600, 120));
   window.browserShell.onTabsChanged(renderTabs);
+
+  // Tab strip is an ARIA tablist: ←/→ rove focus; Delete/Backspace closes.
+  if (tabsNode) {
+    attachRovingKeys(tabsNode, '[role="tab"]', { orientation: "horizontal", wrap: true });
+    tabsNode.addEventListener("keydown", async (event) => {
+      if (event.key !== "Delete" && event.key !== "Backspace") {
+        return;
+      }
+      const items = Array.from(tabsNode.querySelectorAll<HTMLElement>('[role="tab"]'));
+      const index = items.findIndex((el) => el === document.activeElement);
+      const target = tabs[index];
+      if (index < 0 || !target) {
+        return;
+      }
+      event.preventDefault();
+      renderTabs(await window.browserShell.closeTab(target.id));
+      await syncActiveObservation();
+    });
+  }
 
   addressForm?.addEventListener("submit", async (event) => {
     event.preventDefault();

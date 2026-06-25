@@ -94,12 +94,9 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 
 ## Phase 4 — ARIA widgets + landmarks.
 
-### [ ] 4.1 — Tab strip → ARIA tablist (roving tabindex + arrows)
-- **Scope:** `role="tablist"` + `role="tab"`/`aria-selected`/roving `tabindex`; ←/→ move selection; close button `aria-label` (§3.3). Extract a **pure `rovingTabindex` helper** for testing.
-- **Files:** `index.html`, `shell.ts` (`renderTabs`), new `renderer/ui/roving.ts` + `test`, `styles/components.css`.
-- **Depends on:** 1.3 (focus ring), 2.3.
-- **Verify:** **jsdom test** of the roving helper (arrow keys move focus + selection, wraps). jsdom: rendered tabs carry `role=tab`. Build.
-- **Risk:** Medium — `renderTabs` is core; keep click-to-activate + close working.
+### [x] 4.1 — Tab strip → ARIA tablist (roving tabindex + arrows)
+- **Done.** `#tabs` is now `role="tablist"` (`aria-label="Open tabs"`); each tab gets `role="tab"`, `aria-selected`, `aria-controls="viewport-frame"`, and roving `tabindex` (0 active / -1 rest). The viewport is `role="tabpanel"`. Extracted `renderer/ui/roving.ts` — pure `nextRovingIndex()` + `applyRovingTabindex()` + a live-querying `attachRovingKeys()` — and wired ←/→/Home/End roving onto the strip, plus Delete/Backspace to close the focused tab. Close buttons got `aria-label` + `tabindex=-1`. Verified: new `roving.test.ts` (**11 tests**) green, suite **277 passed** (was 266), typecheck + lint + build green.
+- **Notes:** (a) **manual activation** (arrows move focus only; Enter/Space/click activate) — chosen because automatic activation would switch the real `WebContentsView` on every arrow *and* the resulting `renderTabs` re-render (replaceChildren) would drop focus mid-keystroke. Native `<button>` Enter/Space already activates, so no extra code. (b) the roving handler queries `[role="tab"]` **live** on each keydown, so it survives `renderTabs` re-renders without re-binding. (c) close buttons are out of the Tab order (`tabindex=-1`) to keep the roving order clean; keyboard close is **Delete/Backspace** on the focused tab (APG pattern). (d) click-to-activate + close handlers are **untouched**. (e) pre-existing nuance left as-is: the close `<button>` is nested inside the tab `<button>` (invalid HTML but functional) — un-nesting is a renderTabs structural change deferred to avoid layout risk.
 
 ### [ ] 4.2 — Demos menu → `role="menu"` with keyboard nav
 - **Scope:** Trigger `aria-haspopup/expanded/controls`; `role=menu`/`menuitem`; `↑/↓` cycle, `Enter`/`Space` open+focus-first, `Esc` close+restore (§3.4). Click-outside already exists.
