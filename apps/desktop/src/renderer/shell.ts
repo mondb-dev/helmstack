@@ -13,6 +13,7 @@ import type {
 import { validateAccountForm, type AccountFormValues, type FieldError } from "./ui/validate.js";
 import { buildEmptyState, buildSkeletonRows } from "./ui/states.js";
 import { openDialog, type DialogHandle } from "./ui/dialog.js";
+import { toast } from "./ui/toast.js";
 
 declare global {
   interface Window {
@@ -393,9 +394,17 @@ function renderPerception(result: PerceptionResult) {
   renderGraph(result.graph);
 }
 
-function setFixtureStatus(text: string) {
+/**
+ * Update the inline Developer-panel status line, and for notable outcomes
+ * ("success"/"error") also surface a toast. Plain "info" progress stays inline
+ * only so routine steps don't spam toasts.
+ */
+function setFixtureStatus(text: string, kind: "info" | "success" | "error" = "info") {
   if (fixtureStatus) {
     fixtureStatus.textContent = text;
+  }
+  if (kind !== "info") {
+    toast(text, kind);
   }
 }
 
@@ -528,7 +537,7 @@ async function handleCommandResult(result: BrowserCommandResult) {
     if (result.observation) {
       renderObservation(result.observation);
     }
-    setFixtureStatus("Command completed.");
+    setFixtureStatus("Command completed.", "success");
     return result;
   }
 
@@ -569,7 +578,7 @@ async function handleCommandResult(result: BrowserCommandResult) {
     return result;
   }
 
-  setFixtureStatus(result.reason);
+  setFixtureStatus(result.reason, "error");
   return result;
 }
 
@@ -744,7 +753,7 @@ async function bootstrap() {
     try {
       await runContactFixture();
     } catch (error) {
-      setFixtureStatus(error instanceof Error ? error.message : "Fixture runner failed.");
+      setFixtureStatus(error instanceof Error ? error.message : "Fixture runner failed.", "error");
     }
   });
 
@@ -788,7 +797,7 @@ async function bootstrap() {
 
     const result = await window.browserShell.approveCommand(activeApprovalRequestId);
     hideApprovalModal();
-    setFixtureStatus("Approval granted. Command executed.");
+    setFixtureStatus("Approval granted. Command executed.", "success");
     await handleCommandResult(result);
   });
 
@@ -799,7 +808,8 @@ async function bootstrap() {
 
     const result = await window.browserShell.rejectCommand(activeApprovalRequestId);
     hideApprovalModal();
-    setFixtureStatus(result.status === "blocked" || result.status === "failed" ? result.reason : "Approval request closed.");
+    const rejectFailed = result.status === "blocked" || result.status === "failed";
+    setFixtureStatus(rejectFailed ? result.reason : "Approval request closed.", rejectFailed ? "error" : "info");
   });
 
   // Approval is a required decision — backdrop click is intentionally inert
@@ -810,7 +820,7 @@ async function bootstrap() {
     if (!activeHandoffRequestId) return;
     const result = await window.browserShell.resolveHandoff(activeHandoffRequestId);
     hideHandoffModal();
-    setFixtureStatus("Handoff resolved. Agent resuming.");
+    setFixtureStatus("Handoff resolved. Agent resuming.", "success");
     await handleCommandResult(result);
   });
 
