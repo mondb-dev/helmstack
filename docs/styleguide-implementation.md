@@ -78,12 +78,9 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 
 ## Phase 3 — Dialog + toast (mostly testable JS).
 
-### [ ] 3.1 — `renderer/ui/dialog.ts` focus-trap helper
-- **Scope:** `openDialog(el, {dismissable})` per styleguide §3.5 (store focus → move in → trap Tab → `Esc` if dismissable → restore).
-- **Files:** new `renderer/ui/dialog.ts` + `test`.
-- **Depends on:** —
-- **Verify:** **jsdom unit test:** initial focus lands on `[data-autofocus]`/first focusable; Tab from last → first (and Shift+Tab wrap); `Esc` closes when `dismissable`, **doesn't** when not; focus restored to opener on close.
-- **Risk:** Low — self-contained, fully testable.
+### [x] 3.1 — `renderer/ui/dialog.ts` focus-trap helper
+- **Done.** Built `openDialog(el, { dismissable, initialFocus, onClose })` → `DialogHandle` (§3.5): stores the active element, moves focus in (`initialFocus` → `[data-autofocus]` → first focusable → the dialog itself with `tabindex=-1`), traps Tab/Shift+Tab with wraparound, closes on `Escape` only when `dismissable`, and restores focus to the opener on close. Exposes `getFocusable()` too. Verified: new `dialog.test.ts` (**8 tests**) green covering every verify point, suite **259 passed** (was 251), typecheck + lint + build green.
+- **Notes:** (a) deliberately **layout-free** — no `offsetParent`/`getClientRects`, filters by `disabled`/`aria-hidden`/`[hidden]` only — so it behaves identically in jsdom and the real renderer (a visibility-based filter would falsely hide everything under jsdom). (b) Focus-trap is computed **live** on each Tab (re-queries focusables) so it survives dynamic dialog content. (c) `close()` is **idempotent** (guarded) and `onClose` fires exactly once. (d) The helper owns focus only — **it does not toggle visibility**; the caller shows/hides. Not yet imported anywhere (so not in the esbuild bundle); **task 3.2** wires it into the approval/handoff modals.
 
 ### [ ] 3.2 — Adopt `dialog.ts` for approval/handoff modals; fix inverted backdrop
 - **Scope:** Route `showApprovalModal`/`showHandoffModal` through `openDialog`; mark them `data-dismissable="false"` (required decisions) and delete the dead inverted `if (!activeApprovalRequestId) hide()` backdrop check.
