@@ -17,6 +17,7 @@ import { toast } from "./ui/toast.js";
 import { attachRovingKeys } from "./ui/roving.js";
 import { createMenu } from "./ui/menu.js";
 import { initTheme } from "./ui/theme.js";
+import { icon } from "./ui/icons.js";
 
 // Apply the resolved theme as early as possible to minimise a flash of the
 // default (dark) chrome before the renderer paints.
@@ -169,7 +170,7 @@ function renderTabs(nextTabs: TabSummary[]) {
       const closeBtn = document.createElement("button");
       closeBtn.type = "button";
       closeBtn.className = "tab-close";
-      closeBtn.textContent = "×";
+      closeBtn.replaceChildren(icon("x", { size: 14 }));
       closeBtn.title = "Close tab";
       closeBtn.setAttribute("aria-label", `Close ${tab.title || "tab"}`);
       // Out of the Tab order — reachable via the tab's Delete/Backspace key.
@@ -260,8 +261,9 @@ function renderAccounts(accounts: import("../../../../packages/shared/src/index.
       const deleteBtn = document.createElement("button");
       deleteBtn.className = "account-chip-delete";
       deleteBtn.type = "button";
-      deleteBtn.textContent = "×";
+      deleteBtn.replaceChildren(icon("x", { size: 14 }));
       deleteBtn.title = "Delete account";
+      deleteBtn.setAttribute("aria-label", `Delete account ${account.label}`);
       deleteBtn.addEventListener("click", async () => {
         await window.browserShell.deleteAccount(account.id);
         renderAccounts(await window.browserShell.listAccounts());
@@ -708,9 +710,21 @@ async function bootstrap() {
     });
   }
 
+  // Icons (styleguide §1.7): inject SVGs into the glyph-free static markup.
+  document.getElementById("new-tab-button")?.replaceChildren(icon("plus", { size: 16 }));
+  document.getElementById("toolbar-menu-trigger")?.append(icon("chevron-down", { size: 14 }));
+  document
+    .querySelectorAll(".panel-header")
+    .forEach((header) => header.prepend(icon("chevron-right", { className: "panel-caret" })));
+
   const themeToggle = document.getElementById("theme-toggle");
+  const renderThemeIcon = (): void => {
+    themeToggle?.replaceChildren(icon(themeController.resolved() === "dark" ? "sun" : "moon"));
+  };
+  renderThemeIcon();
   themeToggle?.addEventListener("click", () => {
     themeController.toggle();
+    renderThemeIcon();
   });
 
   addressForm?.addEventListener("submit", async (event) => {

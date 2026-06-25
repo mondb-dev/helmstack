@@ -1,5 +1,11 @@
 /* ── Components ──────────────────────────────────────────────── */
 
+.icon {
+  flex-shrink: 0;
+  display: inline-block;
+  vertical-align: middle;
+}
+
 /* ── Buttons ─────────────────────────────────────────────────── */
 
 .btn {
@@ -190,14 +196,12 @@
   display: none;
 }
 
-.panel-header::before {
-  content: "\25B8";
-  display: inline-block;
-  font-size: var(--text-xs);
-  transition: transform 150ms ease;
+.panel-caret {
+  color: var(--color-text-tertiary);
+  transition: transform var(--dur-base) var(--ease);
 }
 
-.panel[open] > .panel-header::before {
+.panel[open] > .panel-header .panel-caret {
   transform: rotate(90deg);
 }
 

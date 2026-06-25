@@ -7,6 +7,8 @@
  * readers announce them; error nodes additionally carry `role="alert"`.
  */
 
+import { icon } from "./icons.js";
+
 export type ToastKind = "info" | "success" | "error";
 
 const AUTO_DISMISS_MS = 4000;
@@ -65,7 +67,7 @@ export function toast(message: string, kind: ToastKind = "info"): ToastHandle {
     close.type = "button";
     close.className = "toast__close";
     close.setAttribute("aria-label", "Dismiss");
-    close.textContent = "×";
+    close.append(icon("x", { size: 14 }));
     close.addEventListener("click", dismiss);
     node.append(close);
   } else {
