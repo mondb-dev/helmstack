@@ -10,6 +10,7 @@ import type {
   VaultSecretSummary,
   ViewportRect
 } from "../../../../packages/shared/src/index.js";
+import { validateAccountForm, type AccountFormValues, type FieldError } from "./ui/validate.js";
 
 declare global {
   interface Window {
@@ -36,6 +37,48 @@ const accountOriginInput = document.getElementById("account-origin") as HTMLInpu
 const accountUsernameInput = document.getElementById("account-username") as HTMLInputElement | null;
 const accountPasswordInput = document.getElementById("account-password") as HTMLInputElement | null;
 const accountTotpInput = document.getElementById("account-totp") as HTMLInputElement | null;
+
+type AccountFieldKey = keyof AccountFormValues;
+const accountFieldInputs: Partial<Record<AccountFieldKey, HTMLInputElement | null>> = {
+  label: accountLabelInput,
+  origin: accountOriginInput,
+  username: accountUsernameInput,
+  password: accountPasswordInput,
+};
+const accountFieldErrorNodes: Partial<Record<AccountFieldKey, HTMLElement | null>> = {
+  label: document.getElementById("account-label-error"),
+  origin: document.getElementById("account-origin-error"),
+  username: document.getElementById("account-username-error"),
+  password: document.getElementById("account-password-error"),
+};
+
+function clearAccountFieldError(field: AccountFieldKey): void {
+  accountFieldInputs[field]?.removeAttribute("aria-invalid");
+  const node = accountFieldErrorNodes[field];
+  if (node) {
+    node.textContent = "";
+    node.hidden = true;
+  }
+}
+
+/** Paints (or clears) inline errors and focuses the first invalid field. */
+function showAccountFieldErrors(errors: FieldError[]): void {
+  for (const field of Object.keys(accountFieldInputs) as AccountFieldKey[]) {
+    clearAccountFieldError(field);
+  }
+  for (const { field, message } of errors) {
+    accountFieldInputs[field]?.setAttribute("aria-invalid", "true");
+    const node = accountFieldErrorNodes[field];
+    if (node) {
+      node.textContent = message;
+      node.hidden = false;
+    }
+  }
+  if (errors.length > 0) {
+    accountFieldInputs[errors[0].field]?.focus();
+  }
+}
+
 const approvalModal = document.getElementById("approval-modal");
 const approvalCopy = document.getElementById("approval-copy");
 const approvalEffects = document.getElementById("approval-effects");
@@ -670,16 +713,35 @@ async function bootstrap() {
     }
   });
 
+  // Clear a field's inline error as soon as the user edits it.
+  for (const field of Object.keys(accountFieldInputs) as AccountFieldKey[]) {
+    accountFieldInputs[field]?.addEventListener("input", () => clearAccountFieldError(field));
+  }
+
   accountForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const label = accountLabelInput?.value.trim() ?? "";
-    const origin = accountOriginInput?.value.trim() ?? "";
-    const username = accountUsernameInput?.value.trim() ?? "";
-    const password = accountPasswordInput?.value ?? "";
-    const totpSeed = accountTotpInput?.value.trim() || undefined;
-    if (!label || !origin || !username || !password) return;
+    const values: AccountFormValues = {
+      label: accountLabelInput?.value.trim() ?? "",
+      origin: accountOriginInput?.value.trim() ?? "",
+      username: accountUsernameInput?.value.trim() ?? "",
+      password: accountPasswordInput?.value ?? "",
+      totpSeed: accountTotpInput?.value.trim() || undefined,
+    };
 
-    await window.browserShell.saveAccount({ label, origins: [origin], username, password, totpSeed });
+    const errors = validateAccountForm(values);
+    if (errors.length > 0) {
+      showAccountFieldErrors(errors);
+      return;
+    }
+    showAccountFieldErrors([]);
+
+    await window.browserShell.saveAccount({
+      label: values.label,
+      origins: [values.origin],
+      username: values.username,
+      password: values.password,
+      totpSeed: values.totpSeed,
+    });
     accountForm.reset();
     renderAccounts(await window.browserShell.listAccounts());
   });

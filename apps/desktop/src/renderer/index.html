@@ -74,12 +74,31 @@
             <summary class="panel-header">Accounts</summary>
             <div class="panel-body">
               <div class="accounts-list" id="accounts-list"></div>
-              <form class="form-stack" id="account-form">
-                <input class="input" id="account-label" type="text" placeholder="Label (e.g. Amplify dev)" required />
-                <input class="input" id="account-origin" type="text" placeholder="Origin (e.g. https://example.com)" required />
-                <input class="input" id="account-username" type="text" placeholder="Username" required autocomplete="off" />
-                <input class="input" id="account-password" type="password" placeholder="Password" required autocomplete="new-password" />
-                <input class="input" id="account-totp" type="text" placeholder="TOTP seed (optional)" autocomplete="off" />
+              <form class="form-stack" id="account-form" novalidate>
+                <div class="field">
+                  <label class="field__label" for="account-label">Label</label>
+                  <input class="input" id="account-label" type="text" placeholder="e.g. Amplify dev" required aria-describedby="account-label-error" />
+                  <p class="field__error" id="account-label-error" hidden></p>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="account-origin">Origin</label>
+                  <input class="input" id="account-origin" type="text" placeholder="https://example.com" required aria-describedby="account-origin-error" />
+                  <p class="field__error" id="account-origin-error" hidden></p>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="account-username">Username</label>
+                  <input class="input" id="account-username" type="text" placeholder="you@example.com" required autocomplete="off" aria-describedby="account-username-error" />
+                  <p class="field__error" id="account-username-error" hidden></p>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="account-password">Password</label>
+                  <input class="input" id="account-password" type="password" placeholder="••••••••" required autocomplete="new-password" aria-describedby="account-password-error" />
+                  <p class="field__error" id="account-password-error" hidden></p>
+                </div>
+                <div class="field">
+                  <label class="field__label" for="account-totp">TOTP seed (optional)</label>
+                  <input class="input" id="account-totp" type="text" placeholder="Base32 secret" autocomplete="off" />
+                </div>
                 <button class="btn btn--primary btn--sm" type="submit">Save account</button>
               </form>
             </div>
