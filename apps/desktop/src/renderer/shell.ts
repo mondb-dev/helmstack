@@ -12,6 +12,7 @@ import type {
 } from "../../../../packages/shared/src/index.js";
 import { validateAccountForm, type AccountFormValues, type FieldError } from "./ui/validate.js";
 import { buildEmptyState, buildSkeletonRows } from "./ui/states.js";
+import { openDialog, type DialogHandle } from "./ui/dialog.js";
 
 declare global {
   interface Window {
@@ -85,12 +86,10 @@ const approvalCopy = document.getElementById("approval-copy");
 const approvalEffects = document.getElementById("approval-effects");
 const approvalApproveButton = document.getElementById("approval-approve-button") as HTMLButtonElement | null;
 const approvalRejectButton = document.getElementById("approval-reject-button") as HTMLButtonElement | null;
-const approvalBackdrop = document.getElementById("approval-backdrop");
 const handoffModal = document.getElementById("handoff-modal");
 const handoffReason = document.getElementById("handoff-reason");
 const handoffDoneButton = document.getElementById("handoff-done-button") as HTMLButtonElement | null;
 const handoffCancelButton = document.getElementById("handoff-cancel-button") as HTMLButtonElement | null;
-const handoffBackdrop = document.getElementById("handoff-backdrop");
 const intentBox = document.querySelector(".intent-box") as HTMLTextAreaElement | null;
 const intentRunButton = document.getElementById("intent-run-button") as HTMLButtonElement | null;
 const terminalOutput = document.getElementById("terminal-output");
@@ -102,6 +101,8 @@ let isEditingAddress = false;
 let pendingAddressValue: string | null = null;
 let activeApprovalRequestId: string | null = null;
 let activeHandoffRequestId: string | null = null;
+let approvalDialog: DialogHandle | null = null;
+let handoffDialog: DialogHandle | null = null;
 
 function getActiveTab(): TabSummary | undefined {
   return tabs.find((tab) => tab.isActive);
@@ -414,11 +415,17 @@ function showApprovalModal(requestId: string, summary: string, effects: string[]
     );
   }
   approvalModal?.removeAttribute("hidden");
+  // Required decision: trap focus, no Esc/backdrop dismissal.
+  if (approvalModal) {
+    approvalDialog = openDialog(approvalModal, { dismissable: false });
+  }
 }
 
 function hideApprovalModal() {
   activeApprovalRequestId = null;
   approvalModal?.setAttribute("hidden", "");
+  approvalDialog?.close();
+  approvalDialog = null;
 }
 
 const HANDOFF_REASON_LABELS: Record<HumanHandoffRecord["reason"], string> = {
@@ -434,11 +441,17 @@ function showHandoffModal(handoff: HumanHandoffRecord) {
     handoffReason.textContent = HANDOFF_REASON_LABELS[handoff.reason] ?? handoff.reason;
   }
   handoffModal?.removeAttribute("hidden");
+  // Required decision: trap focus, no Esc/backdrop dismissal.
+  if (handoffModal) {
+    handoffDialog = openDialog(handoffModal, { dismissable: false });
+  }
 }
 
 function hideHandoffModal() {
   activeHandoffRequestId = null;
   handoffModal?.setAttribute("hidden", "");
+  handoffDialog?.close();
+  handoffDialog = null;
 }
 
 async function navigateActiveTab(url: string) {
@@ -789,11 +802,9 @@ async function bootstrap() {
     setFixtureStatus(result.status === "blocked" || result.status === "failed" ? result.reason : "Approval request closed.");
   });
 
-  approvalBackdrop?.addEventListener("click", () => {
-    if (!activeApprovalRequestId) {
-      hideApprovalModal();
-    }
-  });
+  // Approval is a required decision — backdrop click is intentionally inert
+  // (no dismissal). The old `if (!activeApprovalRequestId) hide()` check was
+  // dead code: the id is always set while the modal is open.
 
   handoffDoneButton?.addEventListener("click", async () => {
     if (!activeHandoffRequestId) return;
@@ -810,11 +821,7 @@ async function bootstrap() {
     setFixtureStatus("Handoff cancelled.");
   });
 
-  handoffBackdrop?.addEventListener("click", () => {
-    if (!activeHandoffRequestId) {
-      hideHandoffModal();
-    }
-  });
+  // Handoff is likewise a required decision — backdrop click is inert.
 
   window.browserShell.onHandoffRequested((handoff) => {
     showHandoffModal(handoff);

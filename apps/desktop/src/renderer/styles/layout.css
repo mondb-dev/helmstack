@@ -19,7 +19,7 @@
   background: var(--color-surface-sunken);
   border-bottom: 1px solid var(--color-border);
   position: relative;
-  z-index: 10;
+  z-index: var(--z-titlebar);
 }
 
 .titlebar-drag {

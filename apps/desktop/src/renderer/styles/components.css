@@ -127,7 +127,7 @@
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 100;
+  z-index: var(--z-dropdown);
   min-width: 200px;
   padding: var(--space-2);
   border: 1px solid var(--color-border-strong);
@@ -526,7 +526,7 @@
 .modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: var(--z-modal);
   display: grid;
   place-items: center;
 }
