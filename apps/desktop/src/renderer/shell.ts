@@ -11,6 +11,7 @@ import type {
   ViewportRect
 } from "../../../../packages/shared/src/index.js";
 import { validateAccountForm, type AccountFormValues, type FieldError } from "./ui/validate.js";
+import { buildEmptyState, buildSkeletonRows } from "./ui/states.js";
 
 declare global {
   interface Window {
@@ -184,6 +185,13 @@ function renderVaultSecrets(secrets: VaultSecretSummary[]) {
     return;
   }
 
+  if (secrets.length === 0) {
+    vaultList.replaceChildren(
+      buildEmptyState({ title: "Vault is empty", hint: "Saved-account secrets appear here." })
+    );
+    return;
+  }
+
   vaultList.replaceChildren(
     ...secrets.map((secret) => {
       const item = document.createElement("div");
@@ -205,7 +213,12 @@ function renderAccounts(accounts: import("../../../../packages/shared/src/index.
   if (!accountsList) return;
 
   if (accounts.length === 0) {
-    accountsList.replaceChildren();
+    accountsList.replaceChildren(
+      buildEmptyState({
+        title: "No accounts yet",
+        hint: "Add credentials above so the agent can sign in for you.",
+      })
+    );
     return;
   }
 
@@ -610,9 +623,18 @@ function submitIntent() {
 }
 
 async function bootstrap() {
-  renderTabs(await window.browserShell.listTabs());
-  renderVaultSecrets(await window.browserShell.listVaultSecrets());
-  renderAccounts(await window.browserShell.listAccounts());
+  // Show loading skeletons while the initial sidebar lists are in flight.
+  vaultList?.replaceChildren(buildSkeletonRows(2));
+  accountsList?.replaceChildren(buildSkeletonRows(2));
+
+  const [tabs, secrets, accounts] = await Promise.all([
+    window.browserShell.listTabs(),
+    window.browserShell.listVaultSecrets(),
+    window.browserShell.listAccounts(),
+  ]);
+  renderTabs(tabs);
+  renderVaultSecrets(secrets);
+  renderAccounts(accounts);
   await syncActiveObservation();
   startViewportStabilizer();
 
