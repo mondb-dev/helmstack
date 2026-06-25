@@ -110,12 +110,9 @@ Status legend: `[ ]` todo · `[~]` partial · `[x]` done.
 
 ## Phase 5 — Theming + icons.
 
-### [ ] 5.1 — Theme system (dark/light/system + persistence)
-- **Scope:** Add the **light** semantic block to `tokens.css`; `renderer/ui/theme.ts` resolves `stored ?? system`, sets `data-theme`, persists to `localStorage`, listens to `matchMedia` changes; add a toggle control in the titlebar.
-- **Files:** `styles/tokens.css`, new `renderer/ui/theme.ts` + `test`, `index.html`, `shell.ts`.
-- **Depends on:** 1.2.
-- **Verify:** **jsdom unit test** of the resolve/persist logic (stored wins; falls back to system; toggles). Build. Manual: toggle flips the whole UI; light theme contrast pre-verified AA in styleguide §1.1.
-- **Risk:** Medium — light block must cover every semantic token (audit for `var()`s with no light value).
+### [x] 5.1 — Theme system (dark/light/system + persistence)
+- **Done.** Added the `:root[data-theme="light"]` semantic block to `tokens.css` (audited: covers **all 32** dark `--color-*`/`--focus-ring` tokens, 0 missing) with `color-scheme: light`. Built `renderer/ui/theme.ts` (`initTheme()` → controller): resolves `stored ?? system`, writes `data-theme` on `<html>`, persists the choice to `localStorage`, and follows `matchMedia('(prefers-color-scheme: light)')` changes **only while the choice is "system"**. Added a titlebar toggle (`#theme-toggle`) wired to `controller.toggle()`. Verified: new `theme.test.ts` (**8 tests**) green — stored-wins, system-fallback, persist, toggle, and OS-follow-only-when-system — suite **298 passed** (was 290), lint + typecheck + build green, CSS refs resolve.
+- **Notes:** (a) the **dark block stays the bare-`:root` default** (`:root, :root[data-theme="dark"]`) so tokens are defined pre-JS — no unstyled FOUC; the only flash is a brief dark→light for a light-OS user with no stored pref, since `shell.js` (which calls `initTheme`) loads at end of `<body>`. Acceptable; a `<head>` inline script could eliminate it later if desired. (b) `initTheme()` runs at **module top-level** (before render) to minimise that flash. (c) light values are the styleguide §1.1 decided set (AA-pre-verified); I filled the few tokens its snippet omitted — the status `*-subtle`/`-border`, `on-warning`/`on-danger`, and a lighter `--color-overlay` scrim `rgba(15,20,30,.45)`. (d) the toggle glyph is a placeholder `◐` — **task 5.2** swaps it for a Lucide sun/moon SVG. (e) full visual flip needs the Electron app; logic is covered by the jsdom test.
 
 ### [ ] 5.2 — Lucide icon set; replace ad-hoc glyphs
 - **Scope:** Add the Lucide SVGs used (close/add/chevron/play/stop/crosshair/camera/copy/check/alert/info/settings…) via a tiny `icon(name)` helper or inline `<svg>`; replace the brand gradient div, `×`, `&#9662;`, and CSS `\25B8` (§1.7).

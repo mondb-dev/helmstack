@@ -16,6 +16,11 @@ import { openDialog, type DialogHandle } from "./ui/dialog.js";
 import { toast } from "./ui/toast.js";
 import { attachRovingKeys } from "./ui/roving.js";
 import { createMenu } from "./ui/menu.js";
+import { initTheme } from "./ui/theme.js";
+
+// Apply the resolved theme as early as possible to minimise a flash of the
+// default (dark) chrome before the renderer paints.
+const themeController = initTheme();
 
 declare global {
   interface Window {
@@ -702,6 +707,11 @@ async function bootstrap() {
       await syncActiveObservation();
     });
   }
+
+  const themeToggle = document.getElementById("theme-toggle");
+  themeToggle?.addEventListener("click", () => {
+    themeController.toggle();
+  });
 
   addressForm?.addEventListener("submit", async (event) => {
     event.preventDefault();

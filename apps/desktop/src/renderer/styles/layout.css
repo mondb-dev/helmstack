@@ -51,6 +51,31 @@
   letter-spacing: -0.01em;
 }
 
+.titlebar-action {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.titlebar-action:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
 /* ── Tab Rail ────────────────────────────────────────────────── */
 
 .tab-rail {
