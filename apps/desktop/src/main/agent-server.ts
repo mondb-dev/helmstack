@@ -146,6 +146,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/tabs/:id/storage/:area      area=local|session → StorageEntry[]  (optional ?key=X)
  * POST /api/tabs/:id/storage/:area      { entries: Record<string,string> } → { ok: true }
  * DELETE /api/tabs/:id/storage/:area    body? { keys: string[] } — omit to clear all
+ * POST /api/tabs/:id/insert-text        { text } → { ok: true } — CDP Input.insertText into the focused element
  * GET  /api/tabs/:id/cookies            → CookieEntry[]
  * POST /api/tabs/:id/cookies            { name, value, domain?, path?, httpOnly?, secure?, sameSite?, expires? }
  * DELETE /api/tabs/:id/cookies/:name    ?url=… (optional)
@@ -819,6 +820,15 @@ export class AgentServer {
       const body = await readBody(req);
       if (typeof body.expression !== "string") return error(res, 400, "expression string is required");
       return json(res, await this.tabs.evaluateExpression(evalMatch[1] as TabId, body.expression));
+    }
+
+    // ── Insert text into the focused element (browser-level input events) ───────
+    const insertTextMatch = p.match(/^\/api\/tabs\/([^/]+)\/insert-text$/);
+    if (method === "POST" && insertTextMatch) {
+      const body = await readBody(req);
+      if (typeof body.text !== "string") return error(res, 400, "text string is required");
+      await this.tabs.insertText(insertTextMatch[1] as TabId, body.text);
+      return json(res, { ok: true });
     }
 
     // ── Visual element picker (human inspect → agent) ───────────────────────────

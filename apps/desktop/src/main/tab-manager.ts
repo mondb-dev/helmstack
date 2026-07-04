@@ -948,6 +948,20 @@ export class TabManager {
   }
 
   /**
+   * Insert text into the currently focused element via CDP Input.insertText.
+   * Fires browser-level input events, so framework-controlled editors (React
+   * contenteditables, Draft.js/Lexical composers) update their internal state —
+   * unlike DOM-level value assignment or execCommand, which newer Chromium
+   * versions no longer route through the framework event path. The caller is
+   * responsible for focusing the target element first (e.g. via evaluate).
+   */
+  async insertText(tabId: TabId, text: string): Promise<void> {
+    const { webContents } = this.requireTab(tabId).view;
+    this.ensureDebugger(webContents);
+    await webContents.debugger.sendCommand("Input.insertText", { text });
+  }
+
+  /**
    * Evaluate a JavaScript expression in the page and return its (JSON-able)
    * value. A raw execution primitive for agents that need to drive widgets the
    * structured DOM tools can't (e.g. a CodeMirror/Monaco instance). Awaits
