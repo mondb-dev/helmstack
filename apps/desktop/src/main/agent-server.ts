@@ -147,6 +147,8 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * POST /api/tabs/:id/storage/:area      { entries: Record<string,string> } → { ok: true }
  * DELETE /api/tabs/:id/storage/:area    body? { keys: string[] } — omit to clear all
  * POST /api/tabs/:id/insert-text        { text } → { ok: true } — CDP Input.insertText into the focused element
+ * POST /api/tabs/:id/key                 { key, modifiers?, code?, keyCode?, text? } → { ok: true } — CDP key press (chords via modifiers bitmask: Alt=1 Ctrl=2 Meta=4 Shift=8)
+ * POST /api/tabs/:id/click               { x, y } → { ok: true } — CDP left mouse click at viewport CSS coords (reaches cross-origin iframes)
  * GET  /api/tabs/:id/cookies            → CookieEntry[]
  * POST /api/tabs/:id/cookies            { name, value, domain?, path?, httpOnly?, secure?, sameSite?, expires? }
  * DELETE /api/tabs/:id/cookies/:name    ?url=… (optional)
@@ -828,6 +830,30 @@ export class AgentServer {
       const body = await readBody(req);
       if (typeof body.text !== "string") return error(res, 400, "text string is required");
       await this.tabs.insertText(insertTextMatch[1] as TabId, body.text);
+      return json(res, { ok: true });
+    }
+
+    // ── Press a key (with optional modifier chord) on the focused element ───────
+    const keyMatch = p.match(/^\/api\/tabs\/([^/]+)\/key$/);
+    if (method === "POST" && keyMatch) {
+      const body = await readBody(req);
+      if (typeof body.key !== "string") return error(res, 400, "key string is required");
+      await this.tabs.pressKey(keyMatch[1] as TabId, {
+        key: body.key,
+        code: typeof body.code === "string" ? body.code : undefined,
+        keyCode: typeof body.keyCode === "number" ? body.keyCode : undefined,
+        modifiers: typeof body.modifiers === "number" ? body.modifiers : undefined,
+        text: typeof body.text === "string" ? body.text : undefined
+      });
+      return json(res, { ok: true });
+    }
+
+    // ── Left mouse click at viewport coordinates (reaches cross-origin frames) ──
+    const clickMatch = p.match(/^\/api\/tabs\/([^/]+)\/click$/);
+    if (method === "POST" && clickMatch) {
+      const body = await readBody(req);
+      if (typeof body.x !== "number" || typeof body.y !== "number") return error(res, 400, "x and y numbers are required");
+      await this.tabs.clickAt(clickMatch[1] as TabId, body.x, body.y);
       return json(res, { ok: true });
     }
 

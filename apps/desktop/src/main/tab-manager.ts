@@ -962,6 +962,45 @@ export class TabManager {
   }
 
   /**
+   * Dispatch a single key press (keyDown + keyUp) to the focused element via CDP
+   * Input.dispatchKeyEvent. Supports modifier chords (bitmask: Alt=1, Ctrl=2,
+   * Meta=4, Shift=8) so callers can send e.g. Meta+Enter to submit a composer
+   * whose submit button lives in a cross-origin frame the DOM can't reach.
+   */
+  async pressKey(
+    tabId: TabId,
+    opts: { key: string; code?: string; keyCode?: number; modifiers?: number; text?: string }
+  ): Promise<void> {
+    const { webContents } = this.requireTab(tabId).view;
+    this.ensureDebugger(webContents);
+    const base = {
+      key: opts.key,
+      code: opts.code ?? opts.key,
+      windowsVirtualKeyCode: opts.keyCode ?? 0,
+      nativeVirtualKeyCode: opts.keyCode ?? 0,
+      modifiers: opts.modifiers ?? 0,
+      ...(opts.text ? { text: opts.text } : {})
+    };
+    await webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", ...base });
+    await webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+  }
+
+  /**
+   * Dispatch a real left mouse click at viewport CSS coordinates via CDP
+   * Input.dispatchMouseEvent. Browser-level, so it reaches targets in
+   * cross-origin iframes the DOM can't touch (e.g. an anti-automation-isolated
+   * post composer's submit button).
+   */
+  async clickAt(tabId: TabId, x: number, y: number): Promise<void> {
+    const { webContents } = this.requireTab(tabId).view;
+    this.ensureDebugger(webContents);
+    const base = { x, y, button: "left" as const, clickCount: 1 };
+    await webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...base });
+    await webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", ...base });
+    await webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", ...base });
+  }
+
+  /**
    * Evaluate a JavaScript expression in the page and return its (JSON-able)
    * value. A raw execution primitive for agents that need to drive widgets the
    * structured DOM tools can't (e.g. a CodeMirror/Monaco instance). Awaits
