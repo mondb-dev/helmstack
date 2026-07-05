@@ -149,6 +149,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * POST /api/tabs/:id/insert-text        { text } → { ok: true } — CDP Input.insertText into the focused element
  * POST /api/tabs/:id/key                 { key, modifiers?, code?, keyCode?, text? } → { ok: true } — CDP key press (chords via modifiers bitmask: Alt=1 Ctrl=2 Meta=4 Shift=8)
  * POST /api/tabs/:id/click               { x, y } → { ok: true } — CDP left mouse click at viewport CSS coords (reaches cross-origin iframes)
+ * DELETE /api/tabs/:id                    → TabSummary[] — close a tab
  * GET  /api/tabs/:id/cookies            → CookieEntry[]
  * POST /api/tabs/:id/cookies            { name, value, domain?, path?, httpOnly?, secure?, sameSite?, expires? }
  * DELETE /api/tabs/:id/cookies/:name    ?url=… (optional)
@@ -468,6 +469,14 @@ export class AgentServer {
       if (!this.isTabAccessible(tabScopeMatch[1] as TabId, agentId)) {
         return error(res, 403, "tab is owned by another agent");
       }
+    }
+
+    // Close a tab (tab hygiene; frees a tab an agent wedged/finished with).
+    const tabCloseMatch = p.match(/^\/api\/tabs\/([^/]+)$/);
+    if (method === "DELETE" && tabCloseMatch) {
+      const remaining = await this.tabs.closeTab(tabCloseMatch[1] as TabId);
+      this.tabOwners.delete(tabCloseMatch[1] as TabId);
+      return json(res, this.filterTabsForAgent(remaining, this.agentIdOf(req)));
     }
 
     const navMatch = p.match(/^\/api\/tabs\/([^/]+)\/navigate$/);
