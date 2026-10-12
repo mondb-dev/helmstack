@@ -31,6 +31,28 @@ import {
 
 const appDir = __dirname;
 
+// ── Side-by-side overrides ──────────────────────────────────────────────────
+// HELMSTACK_USER_DATA_DIR isolates profile/vault/token storage and
+// HELMSTACK_PORT moves the agent server, so a second instance (e.g. a dev build
+// next to the installed app) can run without sharing state or the port.
+// userData must be redirected before anything reads it (i.e. before whenReady).
+const userDataOverride = process.env.HELMSTACK_USER_DATA_DIR?.trim();
+if (userDataOverride) {
+  app.setPath("userData", path.resolve(userDataOverride));
+}
+const agentServerPort = resolveAgentServerPort(process.env.HELMSTACK_PORT);
+
+function resolveAgentServerPort(raw: string | undefined): number {
+  const DEFAULT_PORT = 7070;
+  if (!raw || raw.trim() === "") return DEFAULT_PORT;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.warn(`[main] Ignoring invalid HELMSTACK_PORT=${JSON.stringify(raw)}; using ${DEFAULT_PORT}`);
+    return DEFAULT_PORT;
+  }
+  return port;
+}
+
 let mainWindow: BrowserWindow | null = null;
 let core: HelmstackCore | null = null;
 let agentServer: AgentServer | null = null;
@@ -118,7 +140,7 @@ async function createMainWindow() {
     backend: "desktop",
     accounts,
     extensions: extensionsApi,
-    port: 7070,
+    port: agentServerPort,
     authToken
   });
   console.log(`[AgentServer] auth token: ${authToken}`);
