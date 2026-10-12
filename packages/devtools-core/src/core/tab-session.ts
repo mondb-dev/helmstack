@@ -86,6 +86,12 @@ export type TabSessionOptions = {
   defaultViewport?: () => { width: number; height: number };
   /** Social-surface perception for pulled observations. Default false. */
   includeSocial?: boolean;
+  /**
+   * Pull a fresh observation from the page on every `capturePerception`
+   * (default true). Backends whose push feed is already fresh enough (the
+   * desktop preload) pass false to skip the one-off extraction.
+   */
+  pullObservations?: boolean;
 };
 
 type Bounds = { x: number; y: number; width: number; height: number };
@@ -246,7 +252,9 @@ export class TabSession {
   /** Snapshot + observation → normalized `PageGraph`. Watches are evaluated by the core. */
   async capturePerception(): Promise<PerceptionResult> {
     const snapshot = await this.captureSnapshot();
-    const observation = await this.refreshObservation();
+    const observation = this.options.pullObservations === false
+      ? this.state.lastObservation
+      : await this.refreshObservation();
     return normalizePerception(snapshot, observation);
   }
 

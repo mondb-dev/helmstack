@@ -129,6 +129,20 @@ describe("HelmstackCore", () => {
     await expect(core.getLatestObservation(tab.id)).resolves.toMatchObject({ title: "fresh" });
   });
 
+  it("skips the pull and uses the pushed observation when pullObservations is false", async () => {
+    const tab = backend.addTab();
+    core = new HelmstackCore(backend, { dataDir, pullObservations: false });
+    backend.observe(makeObservation(tab.id, { title: "pushed" }));
+    stubPerceptionPull(tab.cdp, makeObservation("" as TabId, { title: "fresh" }));
+    tab.cdp.handlers.set("DOMSnapshot.captureSnapshot", () => ({ documents: [], strings: [] }));
+    tab.cdp.handlers.set("Accessibility.getFullAXTree", () => ({ nodes: [] }));
+
+    await core.capturePerception(tab.id);
+
+    expect(tab.cdp.methods()).not.toContain("Page.createIsolatedWorld");
+    await expect(core.getLatestObservation(tab.id)).resolves.toMatchObject({ title: "pushed" });
+  });
+
   it("clears log buffers on main-frame navigation", () => {
     const tab = backend.addTab();
     core = new HelmstackCore(backend, { dataDir });
@@ -180,6 +194,22 @@ describe("HelmstackCore", () => {
     expect(core.stopRecording(tab.id).commands).toEqual([
       expect.objectContaining({ source: "navigate", outcome: "completed" })
     ]);
+  });
+
+  it("navigate never leaks a rejected backend navigation as an unhandled rejection", async () => {
+    const tab = backend.addTab();
+    tab.navigate = async () => { throw new Error("net::ERR_NAME_NOT_RESOLVED"); };
+    core = new HelmstackCore(backend, { dataDir });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await expect(core.navigate(tab.id, "https://nope.invalid/")).resolves.toHaveLength(1);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("handoff context groups related tabs by parent and origin", async () => {

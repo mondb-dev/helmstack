@@ -1,140 +1,189 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
 
-import { computePerceptionDiff } from "../../../packages/devtools-core/src/core/perception/diff.js";
-import { evaluateAssertionAgainstGraph } from "../../../packages/devtools-core/src/core/perception/assertions.js";
-import { computeDiffRegions } from "../../../packages/devtools-core/src/core/reports/pixel-compare.js";
-import { evaluateStyleAssertion } from "../../../packages/devtools-core/src/core/cdp/style-inspector.js";
-import { matchesMockRule } from "../../../packages/devtools-core/src/core/cdp/cdp-events.js";
-import type {
-  ElementStyleInspection,
-  PageGraph,
-  StyleAssertion
-} from "../../../packages/shared/src/index.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-function graph(overrides: Partial<PageGraph> = {}): PageGraph {
-  return {
-    tabId: "t",
-    url: "https://example.com/",
-    title: "Home",
-    kind: "landing",
-    headings: [],
-    forms: [],
-    actions: [],
-    alerts: [],
-    media: [],
-    oauthProviders: [],
-    accessibility: { nodeCount: 0, roleCounts: {}, headingTrail: [], interactiveNodes: [] },
-    signals: { documentCount: 1, accessibilityNodeCount: 0, formCount: 0, actionCount: 0, capturedAt: 0 },
-    ...overrides
-  };
+import type { TabLifecycleEvent } from "../../../packages/devtools-core/src/backend.js";
+import type { TabId } from "../../../packages/shared/src/index.js";
+
+/** Minimal `WebContents` stand-in: an EventEmitter with the members the backend touches. */
+class FakeWebContents extends EventEmitter {
+  static nextId = 1;
+  readonly id = FakeWebContents.nextId++;
+  readonly session = sharedSession;
+  readonly debugger = Object.assign(new EventEmitter(), {
+    isAttached: () => false,
+    attach: vi.fn(),
+    sendCommand: vi.fn(async () => ({}))
+  });
+  url = "";
+  title = "";
+  loading = false;
+  loadURL = vi.fn(async (url: string) => { this.url = url; });
+  close = vi.fn();
+  setWindowOpenHandler = vi.fn();
+  getURL() { return this.url; }
+  getTitle() { return this.title; }
+  isLoading() { return this.loading; }
 }
 
-describe("evaluateAssertionAgainstGraph (NL assertion heuristics)", () => {
-  it("counts elements quantitatively", () => {
-    const g = graph({
-      actions: [
-        { id: "a1", label: "Save", kind: "button", selectorHint: "button", disabled: false },
-        { id: "a2", label: "Submit", kind: "submit", selectorHint: "button", disabled: false }
-      ]
+const sharedSession = new EventEmitter();
+
+vi.mock("electron", () => {
+  class WebContentsView {
+    readonly webContents = new FakeWebContents();
+    setBounds = vi.fn();
+    setVisible = vi.fn();
+  }
+  return { WebContentsView, BrowserWindow: class {} };
+});
+
+const { ElectronBackend } = await import("../src/main/tab-manager.js");
+
+function makeWindow() {
+  return Object.assign(new EventEmitter(), {
+    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }
+  });
+}
+
+function makeBackend() {
+  const accounts = { findRecordByOrigin: vi.fn(() => null) };
+  const backend = new ElectronBackend(makeWindow() as never, "/app/dist/main", "/preload.cjs", accounts as never);
+  const events: TabLifecycleEvent[] = [];
+  backend.onLifecycle((event) => events.push(event));
+  return { backend, events };
+}
+
+const wcOf = (tab: { view: unknown }) => (tab.view as { webContents: FakeWebContents }).webContents;
+const types = (events: TabLifecycleEvent[]) => events.map((e) => e.type);
+
+describe("ElectronBackend", () => {
+  beforeEach(() => {
+    sharedSession.removeAllListeners();
+  });
+
+  it("emits `created` before focusing, then loads the URL", async () => {
+    const { backend, events } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    expect(types(events).slice(0, 2)).toEqual(["created", "summary-changed"]);
+    expect(wcOf(tab).loadURL).toHaveBeenCalledWith("https://a.test/");
+    expect(backend.getTab(tab.id)).toBe(tab);
+    expect(tab.summary()).toMatchObject({ url: "https://a.test/", isActive: true, status: "loading" });
+  });
+
+  it("navigate updates the summary synchronously and emits summary-changed", async () => {
+    const { backend, events } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    events.length = 0;
+
+    const pending = tab.navigate("https://b.test/");
+    expect(tab.summary()).toMatchObject({ url: "https://b.test/", status: "loading", statusMessage: "Loading https://b.test/" });
+    expect(types(events)).toEqual(["summary-changed"]);
+    await pending;
+  });
+
+  it("a failed navigation flips the summary to error, emits and rejects", async () => {
+    const { backend, events } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    wcOf(tab).loadURL.mockRejectedValueOnce(new Error("ERR_NAME_NOT_RESOLVED"));
+    events.length = 0;
+
+    await expect(tab.navigate("https://nope.invalid/")).rejects.toThrow("ERR_NAME_NOT_RESOLVED");
+    expect(tab.summary()).toMatchObject({ status: "error", statusMessage: "Failed to load https://nope.invalid/" });
+    expect(types(events)).toEqual(["summary-changed", "summary-changed"]);
+  });
+
+  it("did-fail-load on the main frame reports an error summary", async () => {
+    const { backend, events } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    events.length = 0;
+    wcOf(tab).emit("did-fail-load", {}, -105, "ERR_NAME_NOT_RESOLVED", "https://a.test/", true);
+    expect(tab.summary()).toMatchObject({ status: "error", statusMessage: "Load failed (-105): ERR_NAME_NOT_RESOLVED" });
+    expect(types(events)).toEqual(["summary-changed"]);
+  });
+
+  it("maps webContents lifecycle to main-frame-navigation and load-finished", async () => {
+    const { backend, events } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    events.length = 0;
+    const wc = wcOf(tab);
+
+    wc.emit("did-start-navigation", { defaultPrevented: false }, "https://a.test/frame", false, false);
+    expect(events).toEqual([]);
+
+    wc.emit("did-start-navigation", { defaultPrevented: false }, "https://b.test/", false, true);
+    expect(events).toContainEqual({ type: "main-frame-navigation", tabId: tab.id, url: "https://b.test/" });
+
+    wc.url = "https://b.test/";
+    wc.title = "B";
+    wc.emit("did-finish-load");
+    expect(events).toContainEqual({ type: "load-finished", tabId: tab.id });
+    expect(tab.summary()).toMatchObject({ url: "https://b.test/", title: "B", status: "idle" });
+  });
+
+  it("closes a tab, emits `closed` and focuses the next one", async () => {
+    const { backend, events } = makeBackend();
+    const first = await backend.createTab("https://a.test/");
+    const second = await backend.createTab("https://b.test/");
+    events.length = 0;
+
+    await backend.closeTab(second.id);
+    expect(events[0]).toEqual({ type: "closed", tabId: second.id });
+    expect(wcOf(second).close).toHaveBeenCalled();
+    expect(backend.listTabs()).toEqual([first]);
+    expect(first.summary().isActive).toBe(true);
+    await expect(backend.closeTab("missing" as TabId)).rejects.toThrow(/Unknown tab/);
+  });
+
+  it("window.open creates a child tab", async () => {
+    const { backend } = makeBackend();
+    const parent = await backend.createTab("https://a.test/");
+    const handler = wcOf(parent).setWindowOpenHandler.mock.calls[0][0] as (d: { url: string }) => unknown;
+    expect(handler({ url: "https://popup.test/" })).toEqual({ action: "deny" });
+    await Promise.resolve();
+    const child = backend.listTabs().find((t) => t.id !== parent.id);
+    expect(child?.parentTabId).toBe(parent.id);
+  });
+
+  it("reports downloads with the same live entry on every progress change", async () => {
+    const { backend } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    const seen: unknown[] = [];
+    backend.onDownload((tabId, d) => seen.push([tabId, d, { ...d }]));
+
+    let received = 0;
+    const item = Object.assign(new EventEmitter(), {
+      getURL: () => "https://a.test/f.zip",
+      getFilename: () => "f.zip",
+      getMimeType: () => "application/zip",
+      getTotalBytes: () => 10,
+      getReceivedBytes: () => received,
+      isPaused: () => false
     });
-    expect(evaluateAssertionAgainstGraph("t", "2 buttons", g).pass).toBe(true);
-    expect(evaluateAssertionAgainstGraph("t", "3 buttons", g).pass).toBe(false);
+    sharedSession.emit("will-download", {}, item, wcOf(tab));
+    received = 5;
+    item.emit("updated");
+    received = 10;
+    item.emit("done", {}, "completed");
+
+    expect(seen).toHaveLength(3);
+    const entries = seen.map((s) => (s as unknown[])[1]);
+    expect(new Set(entries).size).toBe(1);
+    expect((seen as unknown[][]).map((s) => (s[2] as { state: string }).state)).toEqual(["progressing", "progressing", "completed"]);
   });
 
-  it("detects absence by substring (subject not present on the page)", () => {
-    // The absence heuristic confirms when the subject phrase is absent from page text.
-    expect(evaluateAssertionAgainstGraph("t", "no errors", graph()).pass).toBe(true);
-    const withError = graph({ alerts: ["3 errors occurred"] });
-    expect(evaluateAssertionAgainstGraph("t", "no errors", withError).pass).toBe(false);
+  it("forwards preload observations only for known tabs", async () => {
+    const { backend } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    const seen: string[] = [];
+    backend.onObservation((o) => seen.push(o.tabId));
+    backend.recordObservation({ tabId: tab.id } as never);
+    backend.recordObservation({ tabId: "ghost" } as never);
+    expect(seen).toEqual([tab.id]);
   });
 
-  it("checks the page title", () => {
-    const g = graph({ title: "Dashboard" });
-    expect(evaluateAssertionAgainstGraph("t", "the page title is 'Dashboard'", g).pass).toBe(true);
-    expect(evaluateAssertionAgainstGraph("t", "the page title is 'Settings'", g).pass).toBe(false);
-  });
-
-  it("returns evidence with the assertion", () => {
-    const result = evaluateAssertionAgainstGraph("t", "anything", graph({ headings: ["A", "B"] }));
-    expect(result.evidence.counts.headings).toBe(2);
-    expect(result.assertion).toBe("anything");
-  });
-});
-
-describe("evaluateStyleAssertion", () => {
-  const el: ElementStyleInspection = {
-    index: 0,
-    selectorHint: ".btn",
-    computed: { "background-color": "rgb(37, 99, 235)", "border-radius": "8px", "font-weight": "600" },
-    box: { margin: { top: 0, right: 0, bottom: 0, left: 0 }, padding: { top: 0, right: 0, bottom: 0, left: 0 }, border: { top: 0, right: 0, bottom: 0, left: 0 } },
-    bounds: { x: 0, y: 0, width: 10, height: 10, top: 0, right: 10, bottom: 10, left: 0 },
-    issues: []
-  } as unknown as ElementStyleInspection;
-
-  const check = (a: StyleAssertion) => evaluateStyleAssertion(el, a);
-
-  it("passes a numeric min and fails below it", () => {
-    expect(check({ property: "border-radius", min: 6 }).pass).toBe(true);
-    expect(check({ property: "border-radius", min: 10 }).pass).toBe(false);
-  });
-
-  it("compares colors via canonical equality", () => {
-    expect(check({ property: "background-color", equals: "rgb(37, 99, 235)" }).pass).toBe(true);
-  });
-
-  it("supports contains and not", () => {
-    expect(check({ property: "background-color", contains: "235" }).pass).toBe(true);
-    expect(check({ property: "font-weight", not: "400" }).pass).toBe(true);
-  });
-
-  it("fails when the property was not captured", () => {
-    expect(check({ property: "color", equals: "red" }).pass).toBe(false);
-  });
-});
-
-describe("computePerceptionDiff", () => {
-  const wrap = (g: PageGraph) => ({ graph: g, url: g.url, title: g.title, capturedAt: 0 });
-
-  it("reports a clean diff for identical graphs", () => {
-    const g = graph({ headings: ["Welcome"] });
-    const diff = computePerceptionDiff("a", "b", wrap(g), wrap(g));
-    expect(diff.identical).toBe(true);
-    expect(diff.changes).toHaveLength(0);
-  });
-
-  it("detects added/removed headings and a title change", () => {
-    const before = graph({ title: "Login", headings: ["Sign in"] });
-    const after = graph({ title: "Dashboard", headings: ["Overview"] });
-    const diff = computePerceptionDiff("a", "b", wrap(before), wrap(after));
-    const kinds = diff.changes.map((c) => c.kind);
-    expect(kinds).toContain("title_changed");
-    expect(kinds).toContain("heading_removed");
-    expect(kinds).toContain("heading_added");
-    expect(diff.identical).toBe(false);
-  });
-});
-
-describe("computeDiffRegions", () => {
-  it("merges nearby changed pixels into one box and keeps distant ones separate", () => {
-    const w = 40;
-    const h = 40;
-    const changed = new Uint8Array(w * h);
-    changed[0 * w + 0] = 1;   // cluster A
-    changed[1 * w + 1] = 1;   // within MERGE_GAP of A
-    changed[35 * w + 35] = 1; // far away → cluster B
-    const regions = computeDiffRegions(changed, w, h);
-    expect(regions).toHaveLength(2);
-  });
-});
-
-describe("matchesMockRule", () => {
-  it("matches glob wildcards and respects method", () => {
-    expect(matchesMockRule("https://x/api/products?id=1", "GET", { urlPattern: "*/api/products*" })).toBe(true);
-    expect(matchesMockRule("https://x/api/users", "GET", { urlPattern: "*/api/products*" })).toBe(false);
-    expect(matchesMockRule("https://x/api/p", "POST", { urlPattern: "*/api/p", method: "GET" })).toBe(false);
-  });
-
-  it("matches /regex/flags patterns", () => {
-    expect(matchesMockRule("https://x/api/v2/items", "GET", { urlPattern: "/\\/api\\/v\\d+\\//i" })).toBe(true);
+  it("defaultViewport follows the shell rect", async () => {
+    const { backend } = makeBackend();
+    await backend.setViewport({ x: 0, y: 40, width: 900, height: 600 });
+    expect(backend.defaultViewport()).toEqual({ width: 900, height: 600 });
   });
 });

@@ -15,9 +15,13 @@ import {
   type VaultSecretInput,
   type ViewportRect
 } from "../../../../packages/shared/src/index.js";
-import { TabManager } from "./tab-manager.js";
+import { ElectronBackend } from "./tab-manager.js";
 import { ExtensionManager } from "./extension-manager.js";
-import type { AccountsApi, AgentApi, ExtensionsApi } from "../../../../packages/devtools-core/src/api.js";
+import { AccountStore } from "./account-store.js";
+import { VaultStore } from "./vault-store.js";
+import { createDesktopSecrets } from "./desktop-secrets.js";
+import type { AccountsApi, ExtensionsApi } from "../../../../packages/devtools-core/src/api.js";
+import { HelmstackCore } from "../../../../packages/devtools-core/src/core/helmstack-core.js";
 import {
   type AgentServer,
   agentTokenPath,
@@ -28,7 +32,7 @@ import {
 const appDir = __dirname;
 
 let mainWindow: BrowserWindow | null = null;
-let tabManager: TabManager | null = null;
+let core: HelmstackCore | null = null;
 let agentServer: AgentServer | null = null;
 
 /**
@@ -88,22 +92,29 @@ async function createMainWindow() {
     }
   });
 
-  tabManager = new TabManager(mainWindow, appDir, userDataPath, pagePreloadPath);
-  registerIpcHandlers(tabManager);
+  // ── Browser backend + shared core ────────────────────────────────────────
+  // ElectronBackend owns the WebContentsViews; every agent tool lives once in
+  // HelmstackCore (packages/devtools-core), shared with the headless daemon.
+  const vault = new VaultStore(userDataPath);
+  const accountStore = new AccountStore(userDataPath);
+  const browserBackend = new ElectronBackend(mainWindow, appDir, pagePreloadPath, accountStore);
+  core = new HelmstackCore(browserBackend, {
+    dataDir: userDataPath,
+    secrets: createDesktopSecrets(vault, accountStore),
+    // The page preload already pushes fresh observations; skip the CDP pull.
+    pullObservations: false
+  });
+  registerIpcHandlers(core, browserBackend, vault, accountStore);
 
   // ── Agent server ──────────────────────────────────────────────────────────
   // Binds to 127.0.0.1 only.  External agents connect here.
   // Auth is on by default: use HELMSTACK_AUTH_TOKEN if provided, otherwise
   // generate a token and persist it so local agents can read it.
   const authToken = process.env.HELMSTACK_AUTH_TOKEN || readOrCreateAgentToken(userDataPath);
-  // Compile-time guarantees that the server is decoupled from Electron types:
-  // TabManager satisfies the backend-agnostic AgentApi (and the optional
-  // accounts slice) structurally; ExtensionManager satisfies ExtensionsApi.
-  const api: AgentApi = tabManager;
-  const accounts: AccountsApi = tabManager;
+  const accounts = accountsApi(accountStore);
   const extensionsApi: ExtensionsApi = extensions;
   agentServer = createAgentServer({
-    api,
+    api: core,
     backend: "desktop",
     accounts,
     extensions: extensionsApi,
@@ -129,17 +140,29 @@ async function createMainWindow() {
   });
 
   await mainWindow.loadFile(path.join(appDir, "../renderer/index.html"));
-  await tabManager.createTab("https://example.com");
+  await core.createTab("https://example.com");
 }
 
-function registerIpcHandlers(manager: TabManager) {
+/** The agent server's optional accounts slice over the `safeStorage`-backed store. */
+function accountsApi(store: AccountStore): AccountsApi {
+  return {
+    listAccounts: () => store.listAccounts(),
+    saveAccount: (input) => store.saveAccount(input),
+    lookupAccounts: (origin) => store.lookupByOrigin(origin),
+    updateAccount: (id, update) => store.updateAccount(id, update),
+    deleteAccount: (id) => store.deleteAccount(id),
+    generateTotp: (accountId) => store.generateTotp(accountId)
+  };
+}
+
+function registerIpcHandlers(manager: HelmstackCore, shell: ElectronBackend, vault: VaultStore, accounts: AccountStore) {
   const handlers: BrowserShellApi = {
     openTab: async (url?: string) => manager.createTab(url),
     navigate: async (tabId: TabId, url: string) => manager.navigate(tabId, url),
     listTabs: async () => manager.listTabs(),
-    focusTab: async (tabId: TabId) => manager.focusTab(tabId),
+    focusTab: async (tabId: TabId) => shell.focusTab(tabId),
     closeTab: async (tabId: TabId) => manager.closeTab(tabId),
-    setViewport: async (rect: ViewportRect) => manager.setViewport(rect),
+    setViewport: async (rect: ViewportRect) => shell.setViewport(rect),
     captureSnapshot: async (tabId: TabId) => manager.captureSnapshot(tabId),
     getLatestObservation: async (tabId: TabId) => manager.getLatestObservation(tabId),
     capturePerception: async (tabId: TabId) => manager.capturePerception(tabId),
@@ -148,26 +171,26 @@ function registerIpcHandlers(manager: TabManager) {
     executeCommand: async (tabId: TabId, command) => manager.executeCommand(tabId, command),
     approveCommand: async (requestId: string) => manager.approveCommand(requestId),
     rejectCommand: async (requestId: string) => manager.rejectCommand(requestId),
-    listVaultSecrets: async () => manager.listVaultSecrets(),
-    saveVaultSecrets: async (updates: VaultSecretInput[]) => manager.saveVaultSecrets(updates),
-    getVaultStatus: async () => manager.getVaultStatus(),
+    listVaultSecrets: async () => vault.listSecrets(),
+    saveVaultSecrets: async (updates: VaultSecretInput[]) => vault.saveSecrets(updates),
+    getVaultStatus: async () => vault.getStatus(),
     listApprovalPolicies: async () => manager.listApprovalPolicies(),
     updateApprovalPolicy: async (key: ApprovalPolicyKey, decision: ApprovalDecision) => manager.updateApprovalPolicy(key, decision),
-    getFixtureUrl: async (name: FixturePageName) => manager.getFixtureUrl(name),
+    getFixtureUrl: async (name: FixturePageName) => shell.getFixtureUrl(name),
     // Screenshot
     captureScreenshot: async (tabId: TabId) => manager.captureScreenshot(tabId),
-    pickElement: async (tabId: TabId) => manager.pickElement(tabId),
+    pickElement: async (tabId: TabId) => shell.pickElement(tabId),
     // Handoffs
     listHandoffs: async () => manager.listHandoffs(),
     resolveHandoff: async (requestId: string) => manager.resolveHandoff(requestId),
     cancelHandoff: async (requestId: string) => manager.cancelHandoff(requestId),
     // Accounts
-    listAccounts: async () => manager.listAccounts(),
-    saveAccount: async (input: AccountInput) => manager.saveAccount(input),
-    updateAccount: async (id: string, update: AccountUpdate) => manager.updateAccount(id, update),
-    deleteAccount: async (id: string) => manager.deleteAccount(id),
-    lookupAccounts: async (origin: string) => manager.lookupAccounts(origin),
-    generateTotp: async (accountId: string) => manager.generateTotp(accountId),
+    listAccounts: async () => accounts.listAccounts(),
+    saveAccount: async (input: AccountInput) => accounts.saveAccount(input),
+    updateAccount: async (id: string, update: AccountUpdate) => accounts.updateAccount(id, update),
+    deleteAccount: async (id: string) => accounts.deleteAccount(id),
+    lookupAccounts: async (origin: string) => accounts.lookupByOrigin(origin),
+    generateTotp: async (accountId: string) => accounts.generateTotp(accountId),
     // Intent — handled outside this function (needs agentServer reference)
     setIntent: async () => {},
     getIntent: async () => ""
@@ -211,7 +234,7 @@ function registerIpcHandlers(manager: TabManager) {
   ipcMain.handle(BrowserShellChannel.GenerateTotp, (_event, accountId: string) => handlers.generateTotp(accountId));
 
   ipcMain.on(BrowserShellChannel.PageObserved, (_event, observation: PageObservation) => {
-    manager.recordObservation(observation);
+    shell.recordObservation(observation);
   });
 
   manager.onTabsChanged((tabs) => {

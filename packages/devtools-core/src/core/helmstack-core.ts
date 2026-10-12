@@ -93,6 +93,12 @@ export type HelmstackCoreOptions = {
   secrets?: SecretResolver;
   /** Social-surface perception for pulled observations. Default false. */
   includeSocial?: boolean;
+  /**
+   * Pull a fresh observation over CDP before each perception capture
+   * (default true). The desktop passes false: its preload pushes observations
+   * and a pull would ship the whole perception bundle on every capture.
+   */
+  pullObservations?: boolean;
 };
 
 type ScreenshotListEntry = { id: string; tabId: string; url: string; width: number; height: number; capturedAt: number };
@@ -107,6 +113,7 @@ export class HelmstackCore implements AgentApi {
 
   private readonly sessions = new Map<TabId, TabSession>();
   private readonly includeSocial: boolean;
+  private readonly pullObservations: boolean;
 
   private readonly approvals = new ApprovalStore();
   private readonly handoffs = new HandoffStore();
@@ -127,6 +134,7 @@ export class HelmstackCore implements AgentApi {
   constructor(private readonly browser: BrowserBackend, options: HelmstackCoreOptions) {
     this.backend = browser.kind;
     this.includeSocial = options.includeSocial ?? false;
+    this.pullObservations = options.pullObservations ?? true;
 
     this.policies = new ApprovalPolicyStore(options.dataDir);
     this.sitePatterns = new SitePatternStore(options.dataDir);
@@ -202,7 +210,8 @@ export class HelmstackCore implements AgentApi {
     if (existing) return existing;
     const session = new TabSession(tab, createTabState(), {
       defaultViewport: () => this.browser.defaultViewport(),
-      includeSocial: this.includeSocial
+      includeSocial: this.includeSocial,
+      pullObservations: this.pullObservations
     });
     this.sessions.set(tab.id, session);
     // Buffer logs from the first document on, not from the first snapshot.
