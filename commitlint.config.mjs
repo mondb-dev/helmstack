@@ -10,6 +10,8 @@ export default {
         "mcp-server",
         "perception",
         "shared",
+        "daemon",
+        "devtools-core",
         "agent-example",
         "deps",
         "release",
