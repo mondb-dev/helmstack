@@ -118,7 +118,8 @@ import {
   type WebSocketFrameEntry,
   VIEWPORT_PRESETS
 } from "../../../../packages/shared/src/index.js";
-import { SiteCapabilityRegistry } from "./site-capability-registry.js";
+import { SiteCapabilityRegistry } from "../../../../packages/devtools-core/src/core/commands/site-capability-registry.js";
+import { createDesktopSecrets } from "./desktop-secrets.js";
 import { SitePatternStore } from "../../../../packages/devtools-core/src/core/stores/site-pattern-store.js";
 import { VaultStore } from "./vault-store.js";
 
@@ -202,8 +203,7 @@ export class TabManager {
       this.perceptionCache.set(id, entry);
     }
     this.capabilityRegistry = new SiteCapabilityRegistry(
-      this.vault,
-      this.accounts,
+      createDesktopSecrets(this.vault, this.accounts),
       this.approvals,
       this.handoffs,
       this.policies,
@@ -1470,7 +1470,7 @@ export class TabManager {
   async getPerceptionPacket(tabId: TabId): Promise<BrowserPerceptionPacket> {
     const tab = this.requireTab(tabId);
     const result = await this.capturePerception(tabId);
-    const packet = await this.capabilityRegistry.buildPerceptionPacket(tabId, tab.lastObservation, result, tab.view.webContents);
+    const packet = await this.capabilityRegistry.buildPerceptionPacket(tabId, tab.lastObservation, result, { cdp: electronCdpTarget(tab.view.webContents), navigate: (u) => tab.view.webContents.loadURL(u) });
     return {
       ...packet,
       sitePatterns: this.sitePatterns.get(originFromUrl(result.graph.url))
@@ -1480,7 +1480,7 @@ export class TabManager {
   async listCapabilityManifests(tabId: TabId): Promise<SiteCapabilityManifest[]> {
     const tab = this.requireTab(tabId);
     const result = await this.capturePerception(tabId);
-    return this.capabilityRegistry.listCapabilityManifests(tabId, result, tab.view.webContents);
+    return this.capabilityRegistry.listCapabilityManifests(tabId, result, { cdp: electronCdpTarget(tab.view.webContents), navigate: (u) => tab.view.webContents.loadURL(u) });
   }
 
   async executeCommand(tabId: TabId, command: BrowserOutputCommand): Promise<BrowserCommandResult> {
@@ -1491,7 +1491,7 @@ export class TabManager {
       return budgetBlock;
     }
     const result = await this.capturePerception(tabId);
-    const execution = await this.capabilityRegistry.executeCommand(tabId, command, tab.lastObservation, result, tab.view.webContents);
+    const execution = await this.capabilityRegistry.executeCommand(tabId, command, tab.lastObservation, result, { cdp: electronCdpTarget(tab.view.webContents), navigate: (u) => tab.view.webContents.loadURL(u) });
     this.recordCommand(tab, "command", command, execution.status);
 
     if (execution.status !== "completed") {
@@ -1524,7 +1524,7 @@ export class TabManager {
       }
 
       const result = await this.capturePerception(tab.id);
-      const execution = await this.capabilityRegistry.approveCommand(requestId, tab.lastObservation, result, tab.view.webContents);
+      const execution = await this.capabilityRegistry.approveCommand(requestId, tab.lastObservation, result, { cdp: electronCdpTarget(tab.view.webContents), navigate: (u) => tab.view.webContents.loadURL(u) });
 
       if (execution.status === "completed") {
         await waitForPageSettled(electronCdpTarget(tab.view.webContents));

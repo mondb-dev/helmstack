@@ -1,14 +1,9 @@
-import type { WebContents } from "electron";
-
-import { AccountStore } from "./account-store.js";
-import { ApprovalPolicyStore } from "../../../../packages/devtools-core/src/core/stores/approval-policy-store.js";
-import { executeBrowserAction as runBrowserAction, executeDomTool, waitForPageSettled } from "../../../../packages/devtools-core/src/core/cdp/dom-actuator.js";
-import { electronCdpTarget } from "./electron-cdp-target.js";
-import { ApprovalStore } from "../../../../packages/devtools-core/src/core/stores/approval-store.js";
-import { HandoffStore } from "../../../../packages/devtools-core/src/core/stores/handoff-store.js";
-import { VaultStore } from "./vault-store.js";
+import { ApprovalPolicyStore } from "../stores/approval-policy-store.js";
+import { executeBrowserAction as runBrowserAction, executeDomTool, waitForPageSettled } from "../cdp/dom-actuator.js";
+import { ApprovalStore } from "../stores/approval-store.js";
+import { HandoffStore } from "../stores/handoff-store.js";
+import type { PageHandle, SecretResolver } from "./types.js";
 import type {
-  AccountRef,
   BrowserAction,
   BrowserCommandResult,
   BrowserOutputCommand,
@@ -29,7 +24,7 @@ import type {
   WebMcpManifest,
   WebMcpValidationIssue,
   WebMcpToolDescriptor
-} from "../../../../packages/shared/src/index.js";
+} from "../../../../shared/src/index.js";
 
 type WebMcpHeuristicProbe = {
   hasNavigatorWebMcp: boolean;
@@ -44,8 +39,7 @@ export class SiteCapabilityRegistry {
   private readonly handoffListeners = new Set<HandoffListener>();
 
   constructor(
-    private readonly vault: VaultStore,
-    private readonly accounts: AccountStore,
+    private readonly secrets: SecretResolver,
     private readonly approvals: ApprovalStore,
     private readonly handoffs: HandoffStore,
     private readonly policies: ApprovalPolicyStore,
@@ -57,18 +51,16 @@ export class SiteCapabilityRegistry {
   }
 
   /**
-   * Combined value resolver: handles both vault refs (`{ kind: "vault" }`)
-   * and account refs (`{ kind: "account" }`).
+   * Unwraps `{ kind: "literal" }` values here so every backend agrees on them
+   * (a passthrough resolver would otherwise hand the wrapper to the actuator);
+   * secret refs go to the injected resolver.
    */
   private resolveValue(value: unknown): unknown {
-    if (isAccountRef(value)) {
-      return this.accounts.resolveRef(value);
-    }
-    return this.vault.resolveValue(value);
+    return isLiteralValue(value) ? value.value : this.secrets.resolveValue(value);
   }
 
-  async buildPerceptionPacket(tabId: TabId, observation: PageObservation | null, result: PerceptionResult, webContents: WebContents) {
-    const manifests = await this.listCapabilityManifests(tabId, result, webContents);
+  async buildPerceptionPacket(tabId: TabId, observation: PageObservation | null, result: PerceptionResult, page: PageHandle) {
+    const manifests = await this.listCapabilityManifests(tabId, result, page);
     const preferred = manifests.find((manifest) => manifest.preferred)?.provider;
     return {
       tabId,
@@ -80,10 +72,10 @@ export class SiteCapabilityRegistry {
     } satisfies BrowserPerceptionPacket;
   }
 
-  async listCapabilityManifests(tabId: TabId, result: PerceptionResult, webContents: WebContents): Promise<SiteCapabilityManifest[]> {
+  async listCapabilityManifests(tabId: TabId, result: PerceptionResult, page: PageHandle): Promise<SiteCapabilityManifest[]> {
     const [domManifest, webMcpManifest] = await Promise.all([
       Promise.resolve(this.buildDomManifest(tabId, result)),
-      this.buildWebMcpManifest(tabId, result, webContents)
+      this.buildWebMcpManifest(tabId, result, page)
     ]);
 
     const preferredProvider = pickPreferredProvider(domManifest, webMcpManifest);
@@ -98,7 +90,7 @@ export class SiteCapabilityRegistry {
     command: BrowserOutputCommand,
     observation: PageObservation | null,
     result: PerceptionResult,
-    webContents: WebContents,
+    page: PageHandle,
     options: { skipApproval?: boolean } = {}
   ): Promise<BrowserCommandResult> {
     if (!options.skipApproval) {
@@ -110,7 +102,7 @@ export class SiteCapabilityRegistry {
 
     switch (command.type) {
       case "navigate":
-        await webContents.loadURL(command.url);
+        await page.navigate(command.url);
         return {
           status: "completed",
           command
@@ -123,12 +115,12 @@ export class SiteCapabilityRegistry {
           graph: result.graph
         };
       case "invoke_site_tool":
-        return this.executeSiteTool(webContents, command, result);
+        return this.executeSiteTool(page, command, result);
       case "click":
       case "type":
       case "select":
       case "submit":
-        return this.executeBrowserAction(webContents, command);
+        return this.executeBrowserAction(page, command);
       case "await_human":
         return this.createHandoff(tabId, command);
     }
@@ -146,7 +138,7 @@ export class SiteCapabilityRegistry {
     requestId: string,
     observation: PageObservation | null,
     result: PerceptionResult,
-    webContents: WebContents
+    page: PageHandle
   ): Promise<BrowserCommandResult> {
     const pending = this.approvals.take(requestId);
     if (!pending) {
@@ -161,7 +153,7 @@ export class SiteCapabilityRegistry {
       };
     }
 
-    return this.executeCommand(pending.tabId, pending.command, observation, result, webContents, { skipApproval: true });
+    return this.executeCommand(pending.tabId, pending.command, observation, result, page, { skipApproval: true });
   }
 
   rejectCommand(requestId: string): BrowserCommandResult {
@@ -241,8 +233,8 @@ export class SiteCapabilityRegistry {
     };
   }
 
-  private async buildWebMcpManifest(tabId: TabId, result: PerceptionResult, webContents: WebContents): Promise<WebMcpManifest> {
-    const probe = await this.probeWebMcp(webContents);
+  private async buildWebMcpManifest(tabId: TabId, result: PerceptionResult, page: PageHandle): Promise<WebMcpManifest> {
+    const probe = await this.probeWebMcp(page);
     const hasSignals = probe.hasNavigatorWebMcp || probe.hasWindowWebMcp || probe.manifestScriptCount > 0 || probe.metaHintCount > 0;
 
     if (!hasSignals) {
@@ -263,7 +255,7 @@ export class SiteCapabilityRegistry {
       };
     }
 
-    const extracted = await this.extractWebMcpManifestData(webContents);
+    const extracted = await this.extractWebMcpManifestData(page);
     const validationIssues = validateWebMcpManifest(extracted);
     const tools = this.normalizeWebMcpTools(extracted.tools, validationIssues);
     const hasErrors = validationIssues.some((issue) => issue.severity === "error");
@@ -299,9 +291,9 @@ export class SiteCapabilityRegistry {
     };
   }
 
-  private async extractWebMcpManifestData(webContents: WebContents): Promise<{ version?: string; tools: unknown[] }> {
+  private async extractWebMcpManifestData(page: PageHandle): Promise<{ version?: string; tools: unknown[] }> {
     try {
-      const raw: unknown = await webContents.executeJavaScript(
+      const raw: unknown = await page.cdp.evaluate(
         `(async () => {
           if (typeof navigator !== "undefined" && navigator.webMcp) {
             if (Array.isArray(navigator.webMcp.tools)) return { version: navigator.webMcp.version, tools: navigator.webMcp.tools };
@@ -329,7 +321,7 @@ export class SiteCapabilityRegistry {
           }
           return { tools: [] };
         })()`,
-        true
+        { userGesture: true }
       );
       if (!raw || typeof raw !== "object") return { tools: [] };
       const manifest = raw as { version?: unknown; tools?: unknown[] };
@@ -394,11 +386,11 @@ export class SiteCapabilityRegistry {
     });
   }
 
-  private async invokeWebMcpTool(webContents: WebContents, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+  private async invokeWebMcpTool(page: PageHandle, toolName: string, args: Record<string, unknown>): Promise<unknown> {
     const nameJson = JSON.stringify(toolName);
     const argsJson = JSON.stringify(args);
 
-    return webContents.executeJavaScript(
+    return page.cdp.evaluate(
       `(async () => {
         const name = ${nameJson};
         const args = ${argsJson};
@@ -433,20 +425,20 @@ export class SiteCapabilityRegistry {
 
         throw new Error("No WebMCP invocation method available for tool: " + name);
       })()`,
-      true
+      { userGesture: true }
     );
   }
 
-  private async probeWebMcp(webContents: WebContents): Promise<WebMcpHeuristicProbe> {
+  private async probeWebMcp(page: PageHandle): Promise<WebMcpHeuristicProbe> {
     try {
-      return await webContents.executeJavaScript(
+      return await page.cdp.evaluate(
         `(() => ({
           hasNavigatorWebMcp: typeof navigator !== "undefined" && "webMcp" in navigator,
           hasWindowWebMcp: typeof window !== "undefined" && ("WebMCP" in window || "__WEB_MCP__" in window),
           manifestScriptCount: document.querySelectorAll('script[type="application/webmcp+json"]').length,
           metaHintCount: document.querySelectorAll('meta[name="webmcp"], meta[name="web-mcp"]').length
         }))()`,
-        true
+        { userGesture: true }
       );
     } catch {
       return {
@@ -507,7 +499,7 @@ export class SiteCapabilityRegistry {
   }
 
   private async executeSiteTool(
-    webContents: WebContents,
+    page: PageHandle,
     command: Extract<BrowserOutputCommand, { type: "invoke_site_tool" }>,
     result: PerceptionResult
   ): Promise<BrowserCommandResult> {
@@ -521,8 +513,8 @@ export class SiteCapabilityRegistry {
 
     if (command.provider === "dom") {
       const execution = await withDomRetry(
-        () => executeDomTool(electronCdpTarget(webContents), command, result.graph.forms, result.graph.actions, (value) => this.resolveValue(value)),
-        webContents
+        () => executeDomTool(page.cdp, command, result.graph.forms, result.graph.actions, (value) => this.resolveValue(value)),
+        page
       );
       return {
         status: "completed",
@@ -533,7 +525,7 @@ export class SiteCapabilityRegistry {
 
     if (command.provider === "webmcp") {
       try {
-        const invocationResult = await this.invokeWebMcpTool(webContents, command.toolName, command.args ?? {});
+        const invocationResult = await this.invokeWebMcpTool(page, command.toolName, command.args ?? {});
         return {
           status: "completed",
           command,
@@ -557,8 +549,8 @@ export class SiteCapabilityRegistry {
     };
   }
 
-  private async executeBrowserAction(webContents: WebContents, command: BrowserAction): Promise<BrowserCommandResult> {
-    await withDomRetry(() => runBrowserAction(electronCdpTarget(webContents), command, (value) => this.vault.resolveValue(value)), webContents);
+  private async executeBrowserAction(page: PageHandle, command: BrowserAction): Promise<BrowserCommandResult> {
+    await withDomRetry(() => runBrowserAction(page.cdp, command, (value) => this.resolveValue(value)), page);
     return {
       status: "completed",
       command
@@ -635,7 +627,7 @@ const RETRYABLE_DOM_PATTERNS = [
   "Resolved backend node is not"
 ] as const;
 
-async function withDomRetry<T>(fn: () => Promise<T>, webContents: WebContents, maxAttempts = 3): Promise<T> {
+async function withDomRetry<T>(fn: () => Promise<T>, page: PageHandle, maxAttempts = 3): Promise<T> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -651,7 +643,7 @@ async function withDomRetry<T>(fn: () => Promise<T>, webContents: WebContents, m
       }
 
       // Wait for the page to settle (navigation / SPA re-render) then back off.
-      await waitForPageSettled(electronCdpTarget(webContents), 1500);
+      await waitForPageSettled(page.cdp, 1500);
       await delay(300 * 2 ** attempt);
     }
   }
@@ -690,8 +682,8 @@ function originFromUrl(url: string): string {
   }
 }
 
-function isAccountRef(value: unknown): value is AccountRef {
-  return Boolean(value && typeof value === "object" && "kind" in value && "accountId" in value && value.kind === "account");
+function isLiteralValue(value: unknown): value is { kind: "literal"; value: unknown } {
+  return Boolean(value && typeof value === "object" && "kind" in value && "value" in value && value.kind === "literal");
 }
 
 function validateWebMcpManifest(manifest: { version?: string; tools: unknown[] }): WebMcpValidationIssue[] {
