@@ -2,7 +2,26 @@
 
 Headless HelmStack runtime. It drives a plain Chrome over the Chrome DevTools Protocol, so HelmStack's inspection tools can run without the Electron desktop app: locally through `npx` and in CI.
 
-This package is the runtime foundation. The HTTP API is not wired up yet.
+## Running the daemon
+
+```sh
+npm run build -w @helmstack/daemon
+node apps/daemon/dist/main.js                      # 127.0.0.1:7070, headless, data in ~/.helmstack/daemon
+node apps/daemon/dist/main.js --port 7171 --headful
+node apps/daemon/dist/main.js --connect http://127.0.0.1:9222   # drive a Chrome you started yourself
+```
+
+The package declares a `helmstack-daemon` bin, so `npx helmstack-daemon` also works once npm has linked it (after the next `npm install` in this repo, or from the published package).
+
+The daemon serves the same agent HTTP+SSE API as the desktop app, so you can point `@helmstack/mcp-server` (`HELMSTACK_PORT`, `HELMSTACK_AUTH_TOKEN`) or the agent SDK at it without changes. `/api/health` reports `backend: "daemon"`. The accounts, extensions and element-pick routes are desktop-only and answer `501 unsupported_on_backend`.
+
+Options: `--port` (default `$HELMSTACK_PORT` or 7070), `--data-dir`, `--chrome-path`, `--headful`, `--connect <browserURL>`.
+
+The auth token comes from `$HELMSTACK_AUTH_TOKEN`. If that is unset, the daemon reads `<data-dir>/helmstack-agent-token`, creating it on first run.
+
+If the port is in use, the daemon exits with status 1 and a message before it launches Chrome. On SIGINT or SIGTERM it stops the server and closes Chrome.
+
+## Library
 
 - `launchChrome()` finds and launches Chrome (headless by default, with a throwaway profile), or connects to a Chrome that is already running.
 - `ChromeTabs` is a tab registry with stable `tab-N` ids. It covers open, list, navigate, close, viewport, screenshot and change notifications.

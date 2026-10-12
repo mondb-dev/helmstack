@@ -193,6 +193,11 @@ export class ChromeBackend implements BrowserBackend {
     return backend;
   }
 
+  /** PID of the Chrome this backend launched (undefined when connected). */
+  get browserProcessId(): number | undefined {
+    return this.#handle?.mode === "launched" ? this.#handle.browser.process()?.pid : undefined;
+  }
+
   defaultViewport(): { width: number; height: number } {
     return { ...this.#viewport };
   }
