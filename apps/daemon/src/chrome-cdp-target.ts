@@ -19,6 +19,8 @@ export interface CdpSessionLike {
   send(method: string, params?: Record<string, unknown>): Promise<unknown>;
   on(type: "*", handler: (type: string | symbol, payload: unknown) => void): unknown;
   off(type: "*", handler: (type: string | symbol, payload: unknown) => void): unknown;
+  /** Present on puppeteer sessions; detaches from the target. */
+  detach?(): Promise<void>;
 }
 
 type FrameNavigated = { frame: { id: string; parentId?: string; url: string; urlFragment?: string } };
@@ -148,6 +150,11 @@ export class ChromeCdpTarget implements CdpTarget {
 
   url(): string {
     return this.#url;
+  }
+
+  /** Id of the top-level frame (equals the page's target id in Chrome). */
+  mainFrameId(): string {
+    return this.#mainFrameId;
   }
 
   isLoading(): boolean {

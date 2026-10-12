@@ -271,6 +271,8 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<C
       // Leave the viewport to Chrome (window size) so our own CDP session's
       // Emulation overrides are the only ones in play.
       defaultViewport: null,
+      // ADR 0001 §6.2: talk to Chrome over a pipe; no remote-debugging port is opened.
+      pipe: true,
       args: [
         `--window-size=${size.width},${size.height}`,
         "--no-first-run",

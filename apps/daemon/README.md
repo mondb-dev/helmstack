@@ -7,6 +7,7 @@ This package is the runtime foundation. The HTTP API is not wired up yet.
 - `launchChrome()` finds and launches Chrome (headless by default, with a throwaway profile), or connects to a Chrome that is already running.
 - `ChromeTabs` is a tab registry with stable `tab-N` ids. It covers open, list, navigate, close, viewport, screenshot and change notifications.
 - `ChromeCdpTarget` implements the shared `CdpTarget` contract from `@helmstack/shared` on top of one puppeteer CDP session per tab.
+- `ChromeBackend` implements devtools-core's `BrowserBackend` (`kind: "daemon"`). It emits tab lifecycle events, injects perception into every tab over CDP, and saves downloads to `<dataDir>/downloads`. The default data dir is `~/.helmstack/daemon`. `ChromeBackend.launch()` starts Chrome over a pipe, so no debugging port is opened. Each tab's content area is sized to 1280×800.
 
 ```ts
 import { ChromeTabs, launchChrome } from "@helmstack/daemon";
