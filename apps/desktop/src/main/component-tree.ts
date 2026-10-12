@@ -1,4 +1,4 @@
-import type { WebContents } from "electron";
+import type { CdpTarget } from "../../../../packages/shared/src/index.js";
 
 import type { ComponentFramework, ComponentNode, ComponentTreeReport, TabId } from "../../../../packages/shared/src/index.js";
 import { SELECTOR_FOR_SOURCE } from "../../../../packages/perception/src/page-selector.js";
@@ -212,10 +212,10 @@ export function componentTreeCollectorScript(): string {
 /**
  * Probe React / Vue / Svelte devtools hooks and return a component tree (name,
  * one-level-deep props, source `file:line`, React key, and hook/class state).
- * Extracted from `TabManager`. Assumes the CDP debugger is attached.
+ * Extracted from `TabManager`.
  */
-export async function runComponentTree(webContents: WebContents, tabId: TabId): Promise<ComponentTreeReport> {
-  const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+export async function runComponentTree(target: CdpTarget, tabId: TabId): Promise<ComponentTreeReport> {
+  const result = await target.send("Runtime.evaluate", {
     expression: componentTreeCollectorScript(),
     returnByValue: true
   }) as { result: { value: { framework: string; tree: unknown; nodeCount: number } } };
@@ -223,7 +223,7 @@ export async function runComponentTree(webContents: WebContents, tabId: TabId): 
   const val = result.result.value;
   return {
     tabId,
-    url: webContents.getURL(),
+    url: target.url(),
     capturedAt: Date.now(),
     framework: val.framework as ComponentFramework,
     tree: val.tree as ComponentNode | null,

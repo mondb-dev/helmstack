@@ -1,4 +1,4 @@
-import type { WebContents } from "electron";
+import type { CdpTarget } from "../../../../packages/shared/src/index.js";
 
 import type {
   ElementStyleAssertionReport,
@@ -12,13 +12,12 @@ import { clampInt } from "./util.js";
 
 /**
  * Element style inspector — computed-style/box/contrast inspection and CSS
- * assertions over CDP. Extracted from `TabManager`. Assumes the CDP debugger is
- * already attached.
+ * assertions over CDP. Extracted from `TabManager`.
  */
-export async function inspectStyles(webContents: WebContents, tabId: TabId, selector: string, options: { limit?: number } = {}): Promise<ElementStyleInspectionReport> {
+export async function inspectStyles(target: CdpTarget, tabId: TabId, selector: string, options: { limit?: number } = {}): Promise<ElementStyleInspectionReport> {
   const limit = clampInt(options.limit ?? 20, 1, 100);
 
-  const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+  const result = await target.send("Runtime.evaluate", {
     expression: `(${buildElementStyleInspectorScript()})(${JSON.stringify({ selector, limit })})`,
     returnByValue: true,
     awaitPromise: true
@@ -26,13 +25,13 @@ export async function inspectStyles(webContents: WebContents, tabId: TabId, sele
 
   const value = result.result.value;
   if (!value) {
-    return { tabId, url: webContents.getURL(), capturedAt: Date.now(), selector, matchedCount: 0, inspectedCount: 0, elements: [], warnings: ["Style inspection did not return a value."] };
+    return { tabId, url: target.url(), capturedAt: Date.now(), selector, matchedCount: 0, inspectedCount: 0, elements: [], warnings: ["Style inspection did not return a value."] };
   }
   return { ...value, tabId, capturedAt: Date.now() };
 }
 
-export async function assertStyles(webContents: WebContents, tabId: TabId, selector: string, assertions: StyleAssertion[], options: { limit?: number } = {}): Promise<ElementStyleAssertionReport> {
-  const inspection = await inspectStyles(webContents, tabId, selector, options);
+export async function assertStyles(target: CdpTarget, tabId: TabId, selector: string, assertions: StyleAssertion[], options: { limit?: number } = {}): Promise<ElementStyleAssertionReport> {
+  const inspection = await inspectStyles(target, tabId, selector, options);
   const checks: StyleAssertionCheck[] = [];
   for (const element of inspection.elements) {
     for (const assertion of assertions) {

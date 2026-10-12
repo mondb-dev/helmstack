@@ -1,47 +1,33 @@
-import type { WebContents } from "electron";
-
-import type { TabRecord } from "./tab-manager.js"; // type-only — erased at runtime, no cycle
+import type { CdpTarget, LocationOverride, MediaEmulation, ResourceBudget } from "../../../../packages/shared/src/index.js";
 
 /**
  * Per-tab device/network emulation appliers — media features, CPU/network
  * resource budgets, and geolocation/timezone/locale overrides — pushed to the
- * page over CDP. Extracted from `TabManager`. Each reads the override state off
- * the `TabRecord` and is a no-op when that state is unset.
+ * page over CDP. Extracted from `TabManager`. Each takes the tab's current
+ * override state and is a no-op when that state is unset.
  */
-function ensureAttached(webContents: WebContents): void {
-  if (!webContents.debugger.isAttached()) webContents.debugger.attach("1.3");
-}
-
-export async function applyMediaEmulation(tab: TabRecord): Promise<void> {
-  const emulation = tab.mediaEmulation;
+export async function applyMediaEmulation(target: CdpTarget, emulation: MediaEmulation | null): Promise<void> {
   if (!emulation) return;
-
-  const { webContents } = tab.view;
-  ensureAttached(webContents);
 
   const features: Array<{ name: string; value: string }> = [];
   if (emulation.colorScheme) features.push({ name: "prefers-color-scheme", value: emulation.colorScheme });
   if (emulation.reducedMotion) features.push({ name: "prefers-reduced-motion", value: emulation.reducedMotion });
   if (emulation.forcedColors) features.push({ name: "forced-colors", value: emulation.forcedColors });
 
-  await webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
+  await target.send("Emulation.setEmulatedMedia", {
     media: emulation.media ?? "",
     features
   }).catch(() => {});
 }
 
-export async function applyResourceBudget(tab: TabRecord): Promise<void> {
-  const budget = tab.resourceBudget;
+export async function applyResourceBudget(target: CdpTarget, budget: ResourceBudget | null): Promise<void> {
   if (!budget) return;
 
-  const { webContents } = tab.view;
-  ensureAttached(webContents);
-
-  await webContents.debugger.sendCommand("Emulation.setCPUThrottlingRate", {
+  await target.send("Emulation.setCPUThrottlingRate", {
     rate: Math.max(1, budget.cpuThrottlingRate ?? 1)
   }).catch(() => {});
 
-  await webContents.debugger.sendCommand("Network.emulateNetworkConditions", {
+  await target.send("Network.emulateNetworkConditions", {
     offline: budget.offline ?? false,
     latency: budget.latencyMs ?? 0,
     downloadThroughput: budget.downloadThroughputKbps ? budget.downloadThroughputKbps * 1024 / 8 : -1,
@@ -49,24 +35,20 @@ export async function applyResourceBudget(tab: TabRecord): Promise<void> {
   }).catch(() => {});
 }
 
-export async function applyLocationOverride(tab: TabRecord): Promise<void> {
-  const location = tab.locationOverride;
+export async function applyLocationOverride(target: CdpTarget, location: LocationOverride | null): Promise<void> {
   if (!location) return;
 
-  const { webContents } = tab.view;
-  ensureAttached(webContents);
-
-  await webContents.debugger.sendCommand("Emulation.setGeolocationOverride", {
+  await target.send("Emulation.setGeolocationOverride", {
     latitude: location.latitude,
     longitude: location.longitude,
     accuracy: location.accuracy ?? 1
   }).catch(() => {});
 
   if (location.timezoneId) {
-    await webContents.debugger.sendCommand("Emulation.setTimezoneOverride", { timezoneId: location.timezoneId }).catch(() => {});
+    await target.send("Emulation.setTimezoneOverride", { timezoneId: location.timezoneId }).catch(() => {});
   }
 
   if (location.locale) {
-    await webContents.debugger.sendCommand("Emulation.setLocaleOverride", { locale: location.locale }).catch(() => {});
+    await target.send("Emulation.setLocaleOverride", { locale: location.locale }).catch(() => {});
   }
 }

@@ -1,4 +1,4 @@
-import type { WebContents } from "electron";
+import type { CdpTarget } from "../../../../packages/shared/src/index.js";
 
 import type { PerformanceReport, TabId } from "../../../../packages/shared/src/index.js";
 
@@ -6,15 +6,14 @@ import type { PerformanceReport, TabId } from "../../../../packages/shared/src/i
  * Capture performance metrics: CDP `Performance.getMetrics` counters plus
  * Navigation Timing and Core Web Vitals (LCP/FCP/CLS/INP/TTFB) and the top-20
  * slowest resources via `Runtime.evaluate`. Extracted from `TabManager`.
- * Assumes the CDP debugger is already attached.
  */
-export async function capturePerformance(webContents: WebContents, tabId: TabId): Promise<PerformanceReport> {
+export async function capturePerformance(target: CdpTarget, tabId: TabId): Promise<PerformanceReport> {
   // Enable Performance domain (idempotent).
-  await webContents.debugger.sendCommand("Performance.enable", { timeDomain: "timeTicks" });
+  await target.send("Performance.enable", { timeDomain: "timeTicks" });
 
   const [cdpResult, pageData] = await Promise.all([
-    webContents.debugger.sendCommand("Performance.getMetrics") as Promise<{ metrics: Array<{ name: string; value: number }> }>,
-    webContents.debugger.sendCommand("Runtime.evaluate", {
+    target.send("Performance.getMetrics") as Promise<{ metrics: Array<{ name: string; value: number }> }>,
+    target.send("Runtime.evaluate", {
       expression: `(function() {
         var t = performance.timing;
         var nav = t && t.navigationStart ? {
@@ -67,7 +66,7 @@ export async function capturePerformance(webContents: WebContents, tabId: TabId)
 
   return {
     tabId,
-    url: webContents.getURL(),
+    url: target.url(),
     capturedAt: Date.now(),
     navigation: pd.nav,
     vitals: {

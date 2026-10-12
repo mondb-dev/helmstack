@@ -1,4 +1,4 @@
-import type { WebContents } from "electron";
+import type { CdpTarget } from "../../../../packages/shared/src/index.js";
 
 import type {
   CookieEntry,
@@ -12,14 +12,14 @@ import type {
 /**
  * Storage inspector — localStorage / sessionStorage / cookies / IndexedDB
  * reads and writes over CDP. Extracted from `TabManager` (which now delegates).
- * Each function assumes the CDP debugger is already attached to `webContents`.
+ * Each function talks to the page through a `CdpTarget`, which attaches on demand.
  */
 
 /** Full snapshot of all storage areas for the tab's current origin. */
-export async function capture(webContents: WebContents, tabId: TabId): Promise<StorageReport> {
-  const url = webContents.getURL();
+export async function capture(target: CdpTarget, tabId: TabId): Promise<StorageReport> {
+  const url = target.url();
 
-  const storageResult = await webContents.debugger.sendCommand("Runtime.evaluate", {
+  const storageResult = await target.send("Runtime.evaluate", {
     expression: `(function() {
       function dump(store) {
         var out = [];
@@ -36,7 +36,7 @@ export async function capture(webContents: WebContents, tabId: TabId): Promise<S
     awaitPromise: false
   }) as { result: { value: { local: StorageEntry[]; session: StorageEntry[] } } };
 
-  const cookieResult = await webContents.debugger.sendCommand("Network.getCookies", {
+  const cookieResult = await target.send("Network.getCookies", {
     urls: [url]
   }) as { cookies: Array<{
     name: string; value: string; domain: string; path: string;
@@ -56,7 +56,7 @@ export async function capture(webContents: WebContents, tabId: TabId): Promise<S
     size: c.size
   }));
 
-  const idbResult = await webContents.debugger.sendCommand("Runtime.evaluate", {
+  const idbResult = await target.send("Runtime.evaluate", {
     expression: `(async function() {
       async function getDbs() {
         var dbs = await indexedDB.databases();
@@ -121,10 +121,10 @@ export async function capture(webContents: WebContents, tabId: TabId): Promise<S
 }
 
 /** Read all entries (or a single key) from localStorage or sessionStorage. */
-export async function read(webContents: WebContents, area: StorageArea, key?: string): Promise<StorageEntry[]> {
+export async function read(target: CdpTarget, area: StorageArea, key?: string): Promise<StorageEntry[]> {
   const storeName = area === "local" ? "localStorage" : "sessionStorage";
 
-  const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+  const result = await target.send("Runtime.evaluate", {
     expression: key
       ? `(function(){var v=${storeName}.getItem(${JSON.stringify(key)});return v===null?null:[{key:${JSON.stringify(key)},value:v,bytes:${JSON.stringify(key)}.length+v.length}];})()`
       : `(function(){var out=[];for(var i=0;i<${storeName}.length;i++){var k=${storeName}.key(i);var v=${storeName}.getItem(k)??"";out.push({key:k,value:v,bytes:k.length+v.length});}return out;})()`,
@@ -136,13 +136,13 @@ export async function read(webContents: WebContents, area: StorageArea, key?: st
 }
 
 /** Set one or more key/value pairs in localStorage or sessionStorage. */
-export async function write(webContents: WebContents, area: StorageArea, entries: Record<string, string>): Promise<void> {
+export async function write(target: CdpTarget, area: StorageArea, entries: Record<string, string>): Promise<void> {
   const storeName = area === "local" ? "localStorage" : "sessionStorage";
   const pairs = Object.entries(entries)
     .map(([k, v]) => `${storeName}.setItem(${JSON.stringify(k)},${JSON.stringify(v)})`)
     .join(";");
 
-  await webContents.debugger.sendCommand("Runtime.evaluate", {
+  await target.send("Runtime.evaluate", {
     expression: `(function(){${pairs}})()`,
     returnByValue: false,
     awaitPromise: false
@@ -150,13 +150,13 @@ export async function write(webContents: WebContents, area: StorageArea, entries
 }
 
 /** Remove specific keys or clear the entire area. */
-export async function clear(webContents: WebContents, area: StorageArea, keys?: string[]): Promise<void> {
+export async function clear(target: CdpTarget, area: StorageArea, keys?: string[]): Promise<void> {
   const storeName = area === "local" ? "localStorage" : "sessionStorage";
   const expr = keys && keys.length
     ? `(function(){${keys.map(k => `${storeName}.removeItem(${JSON.stringify(k)})`).join(";")};})()`
     : `${storeName}.clear()`;
 
-  await webContents.debugger.sendCommand("Runtime.evaluate", {
+  await target.send("Runtime.evaluate", {
     expression: expr,
     returnByValue: false,
     awaitPromise: false
@@ -164,9 +164,9 @@ export async function clear(webContents: WebContents, area: StorageArea, keys?: 
 }
 
 /** Set (upsert) a cookie. Defaults to the tab's current origin. */
-export async function setCookie(webContents: WebContents, cookie: Partial<CookieEntry> & { name: string; value: string }): Promise<void> {
-  const url = webContents.getURL();
-  await webContents.debugger.sendCommand("Network.setCookie", {
+export async function setCookie(target: CdpTarget, cookie: Partial<CookieEntry> & { name: string; value: string }): Promise<void> {
+  const url = target.url();
+  await target.send("Network.setCookie", {
     url,
     name: cookie.name,
     value: cookie.value,
@@ -180,18 +180,18 @@ export async function setCookie(webContents: WebContents, cookie: Partial<Cookie
 }
 
 /** Delete a cookie by name (and optionally a target URL). */
-export async function deleteCookie(webContents: WebContents, name: string, url?: string): Promise<void> {
-  await webContents.debugger.sendCommand("Network.deleteCookies", {
+export async function deleteCookie(target: CdpTarget, name: string, url?: string): Promise<void> {
+  await target.send("Network.deleteCookies", {
     name,
-    url: url ?? webContents.getURL()
+    url: url ?? target.url()
   });
 }
 
 /** Clear all cookies for the tab's current origin (or a given URL). */
-export async function clearCookies(webContents: WebContents, url?: string): Promise<void> {
-  const targetUrl = url ?? webContents.getURL();
-  const res = await webContents.debugger.sendCommand("Network.getCookies", { urls: [targetUrl] }) as { cookies: Array<{ name: string }> };
+export async function clearCookies(target: CdpTarget, url?: string): Promise<void> {
+  const targetUrl = url ?? target.url();
+  const res = await target.send("Network.getCookies", { urls: [targetUrl] }) as { cookies: Array<{ name: string }> };
   for (const c of (res.cookies ?? [])) {
-    await webContents.debugger.sendCommand("Network.deleteCookies", { name: c.name, url: targetUrl });
+    await target.send("Network.deleteCookies", { name: c.name, url: targetUrl });
   }
 }

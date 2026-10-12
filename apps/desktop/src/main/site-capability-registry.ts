@@ -3,6 +3,7 @@ import type { WebContents } from "electron";
 import { AccountStore } from "./account-store.js";
 import { ApprovalPolicyStore } from "./approval-policy-store.js";
 import { executeBrowserAction as runBrowserAction, executeDomTool, waitForPageSettled } from "./dom-actuator.js";
+import { electronCdpTarget } from "./electron-cdp-target.js";
 import { ApprovalStore } from "./approval-store.js";
 import { HandoffStore } from "./handoff-store.js";
 import { VaultStore } from "./vault-store.js";
@@ -520,7 +521,7 @@ export class SiteCapabilityRegistry {
 
     if (command.provider === "dom") {
       const execution = await withDomRetry(
-        () => executeDomTool(webContents, command, result.graph.forms, result.graph.actions, (value) => this.resolveValue(value)),
+        () => executeDomTool(electronCdpTarget(webContents), command, result.graph.forms, result.graph.actions, (value) => this.resolveValue(value)),
         webContents
       );
       return {
@@ -557,7 +558,7 @@ export class SiteCapabilityRegistry {
   }
 
   private async executeBrowserAction(webContents: WebContents, command: BrowserAction): Promise<BrowserCommandResult> {
-    await withDomRetry(() => runBrowserAction(webContents, command, (value) => this.vault.resolveValue(value)), webContents);
+    await withDomRetry(() => runBrowserAction(electronCdpTarget(webContents), command, (value) => this.vault.resolveValue(value)), webContents);
     return {
       status: "completed",
       command
@@ -650,7 +651,7 @@ async function withDomRetry<T>(fn: () => Promise<T>, webContents: WebContents, m
       }
 
       // Wait for the page to settle (navigation / SPA re-render) then back off.
-      await waitForPageSettled(webContents, 1500);
+      await waitForPageSettled(electronCdpTarget(webContents), 1500);
       await delay(300 * 2 ** attempt);
     }
   }

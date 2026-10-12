@@ -1,15 +1,14 @@
-import type { WebContents } from "electron";
+import type { CdpTarget } from "../../../../packages/shared/src/index.js";
 
 import type { ThreeSceneReport, TabId } from "../../../../packages/shared/src/index.js";
 
 /**
  * Three.js scene inspector — probes a live renderer/scene without app-side
  * instrumentation, walks the scene graph, reads renderer draw-call stats, and
- * estimates FPS via a short rAF sample. Extracted from `TabManager`. Assumes the
- * CDP debugger is already attached.
+ * estimates FPS via a short rAF sample. Extracted from `TabManager`.
  */
-export async function captureThreeScene(webContents: WebContents, tabId: TabId): Promise<ThreeSceneReport> {
-  const result = await webContents.debugger.sendCommand("Runtime.evaluate", {
+export async function captureThreeScene(target: CdpTarget, tabId: TabId): Promise<ThreeSceneReport> {
+  const result = await target.send("Runtime.evaluate", {
     expression: `(function() {
       // ── Helpers ────────────────────────────────────────────────────────
       function hex(c) {
@@ -198,7 +197,7 @@ export async function captureThreeScene(webContents: WebContents, tabId: TabId):
   }) as { result: { value: Record<string, unknown> } };
 
   // FPS estimate via a short rAF sample (100ms window)
-  const fpsResult = await webContents.debugger.sendCommand("Runtime.evaluate", {
+  const fpsResult = await target.send("Runtime.evaluate", {
     expression: `new Promise(function(resolve) {
       var t0 = performance.now(); var frames = 0;
       function tick() {
@@ -217,7 +216,7 @@ export async function captureThreeScene(webContents: WebContents, tabId: TabId):
 
   return {
     tabId,
-    url: webContents.getURL(),
+    url: target.url(),
     capturedAt: Date.now(),
     detected: val.detected ?? false,
     scene: (val.scene ?? null) as ThreeSceneReport["scene"],

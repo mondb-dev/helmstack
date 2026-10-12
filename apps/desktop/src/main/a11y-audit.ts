@@ -1,4 +1,4 @@
-import type { WebContents } from "electron";
+import type { CdpTarget } from "../../../../packages/shared/src/index.js";
 
 import type {
   A11yAuditReport,
@@ -369,22 +369,21 @@ export function buildA11yReport(input: A11yReportInput): A11yAuditReport {
 /**
  * Run the accessibility audit over CDP. Without `selector` the full page is
  * audited; with `selector` the audit is scoped to that element's AX subtree
- * (via `getPartialAXTree`) and page-level rules are skipped. Assumes the CDP
- * debugger is attached.
+ * (via `getPartialAXTree`) and page-level rules are skipped.
  */
-export async function runA11yAudit(webContents: WebContents, tabId: TabId, selector?: string): Promise<A11yAuditReport> {
-  await webContents.debugger.sendCommand("Accessibility.enable");
+export async function runA11yAudit(target: CdpTarget, tabId: TabId, selector?: string): Promise<A11yAuditReport> {
+  await target.send("Accessibility.enable");
 
   if (selector) {
-    const doc = await webContents.debugger.sendCommand("DOM.getDocument", { depth: 0 }) as { root: { nodeId: number } };
-    const found = await webContents.debugger.sendCommand("DOM.querySelector", {
+    const doc = await target.send("DOM.getDocument", { depth: 0 }) as { root: { nodeId: number } };
+    const found = await target.send("DOM.querySelector", {
       nodeId: doc.root.nodeId,
       selector
     }) as { nodeId: number };
 
     let nodes: RawAxNode[] = [];
     if (found.nodeId) {
-      const ax = await webContents.debugger.sendCommand("Accessibility.getPartialAXTree", {
+      const ax = await target.send("Accessibility.getPartialAXTree", {
         nodeId: found.nodeId,
         fetchRelatives: false
       }) as { nodes: RawAxNode[] };
@@ -393,13 +392,13 @@ export async function runA11yAudit(webContents: WebContents, tabId: TabId, selec
 
     return buildA11yReport({
       nodes, pageLang: null, pageTitle: "", scoped: true, selector,
-      url: webContents.getURL(), tabId, capturedAt: Date.now()
+      url: target.url(), tabId, capturedAt: Date.now()
     });
   }
 
   const [axResult, domChecks] = await Promise.all([
-    webContents.debugger.sendCommand("Accessibility.getFullAXTree", {}) as Promise<{ nodes: RawAxNode[] }>,
-    webContents.debugger.sendCommand("Runtime.evaluate", {
+    target.send("Accessibility.getFullAXTree", {}) as Promise<{ nodes: RawAxNode[] }>,
+    target.send("Runtime.evaluate", {
       expression: `(function() {
         var html = document.documentElement;
         var lang = html ? html.getAttribute('lang') : null;
@@ -415,7 +414,7 @@ export async function runA11yAudit(webContents: WebContents, tabId: TabId, selec
     pageLang: domChecks.result.value.lang,
     pageTitle: domChecks.result.value.title,
     scoped: false,
-    url: webContents.getURL(),
+    url: target.url(),
     tabId,
     capturedAt: Date.now()
   });

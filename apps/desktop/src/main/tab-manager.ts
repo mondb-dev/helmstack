@@ -36,6 +36,7 @@ import { handleCdpMessage } from "./cdp-events.js";
 import { applyMediaEmulation, applyResourceBudget, applyLocationOverride } from "./overrides.js";
 import { clampInt } from "./util.js";
 import { waitForPageSettled } from "./dom-actuator.js";
+import { electronCdpTarget } from "./electron-cdp-target.js";
 import { ApprovalPolicyStore } from "./approval-policy-store.js";
 import { ApprovalStore } from "./approval-store.js";
 import { HandoffStore } from "./handoff-store.js";
@@ -60,6 +61,7 @@ import {
   type FileUploadTarget,
   type FixturePageName,
   type HumanHandoffRecord,
+  type CdpTarget,
   type LocationOverride,
   type MediaEmulation,
   type NetworkInterceptRule,
@@ -1309,7 +1311,7 @@ export class TabManager {
   async setResourceBudget(tabId: TabId, budget: ResourceBudget): Promise<ResourceBudget> {
     const tab = this.requireTab(tabId);
     tab.resourceBudget = { ...budget };
-    await applyResourceBudget(tab);
+    await applyResourceBudget(electronCdpTarget(tab.view.webContents), tab.resourceBudget);
     return tab.resourceBudget;
   }
 
@@ -1333,7 +1335,7 @@ export class TabManager {
   async setLocationOverride(tabId: TabId, location: LocationOverride): Promise<LocationOverride> {
     const tab = this.requireTab(tabId);
     tab.locationOverride = { ...location };
-    await applyLocationOverride(tab);
+    await applyLocationOverride(electronCdpTarget(tab.view.webContents), tab.locationOverride);
     return tab.locationOverride;
   }
 
@@ -1354,7 +1356,7 @@ export class TabManager {
   async setMediaEmulation(tabId: TabId, emulation: MediaEmulation): Promise<MediaEmulation> {
     const tab = this.requireTab(tabId);
     tab.mediaEmulation = { ...emulation };
-    await applyMediaEmulation(tab);
+    await applyMediaEmulation(electronCdpTarget(tab.view.webContents), tab.mediaEmulation);
     return tab.mediaEmulation;
   }
 
@@ -1494,7 +1496,7 @@ export class TabManager {
       return execution;
     }
 
-    await waitForPageSettled(tab.view.webContents);
+    await waitForPageSettled(electronCdpTarget(tab.view.webContents));
 
     const refreshed = await this.capturePerception(tabId);
     return {
@@ -1523,7 +1525,7 @@ export class TabManager {
       const execution = await this.capabilityRegistry.approveCommand(requestId, tab.lastObservation, result, tab.view.webContents);
 
       if (execution.status === "completed") {
-        await waitForPageSettled(tab.view.webContents);
+        await waitForPageSettled(electronCdpTarget(tab.view.webContents));
         const refreshed = await this.capturePerception(tab.id);
         return {
           ...execution,
@@ -1760,9 +1762,9 @@ export class TabManager {
     webContents.on("did-navigate-in-page", updateSummary);
     webContents.on("did-finish-load", () => {
       updateSummary();
-      void applyLocationOverride(tab);
-      void applyResourceBudget(tab);
-      void applyMediaEmulation(tab);
+      void applyLocationOverride(electronCdpTarget(webContents), tab.locationOverride);
+      void applyResourceBudget(electronCdpTarget(webContents), tab.resourceBudget);
+      void applyMediaEmulation(electronCdpTarget(webContents), tab.mediaEmulation);
     });
     webContents.on("did-start-loading", updateSummary);
     webContents.on("did-stop-loading", updateSummary);
@@ -1890,11 +1892,9 @@ export class TabManager {
     return webContents.debugger;
   }
 
-  /** Require the tab and ensure its CDP debugger is attached; returns its WebContents. */
-  private debuggerFor(tabId: TabId): Electron.WebContents {
-    const webContents = this.requireTab(tabId).view.webContents;
-    this.ensureDebugger(webContents);
-    return webContents;
+  /** Require the tab and return its CDP target (attaches the debugger on first send). */
+  private debuggerFor(tabId: TabId): CdpTarget {
+    return electronCdpTarget(this.requireTab(tabId).view.webContents);
   }
 
   private emitTabsChanged() {

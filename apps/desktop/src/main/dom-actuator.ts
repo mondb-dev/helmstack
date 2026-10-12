@@ -1,4 +1,4 @@
-import type { WebContents } from "electron";
+import type { CdpTarget } from "../../../../packages/shared/src/index.js";
 
 import type {
   BrowserAction,
@@ -19,7 +19,7 @@ type DomToolInvocation = Extract<import("../../../../packages/shared/src/index.j
 type ValueResolver = (value: unknown) => unknown;
 
 export async function executeDomTool(
-  webContents: WebContents,
+  target: CdpTarget,
   command: DomToolInvocation,
   forms: ObservedForm[],
   actions: ObservedAction[],
@@ -36,7 +36,7 @@ export async function executeDomTool(
       throw new Error(`Unknown observed action: ${actionId}`);
     }
 
-    await activateObservedAction(webContents, action);
+    await activateObservedAction(target, action);
     return {} satisfies DomActuationEffects;
   }
 
@@ -47,7 +47,7 @@ export async function executeDomTool(
       throw new Error(`Unknown observed form: ${formId}`);
     }
 
-    await fillObservedForm(webContents, form, command.args, resolveValue);
+    await fillObservedForm(target, form, command.args, resolveValue);
     return {
       effects: collectFormFillEffects(form)
     } satisfies DomActuationEffects;
@@ -60,7 +60,7 @@ export async function executeDomTool(
       throw new Error(`Unknown observed form: ${formId}`);
     }
 
-    await submitObservedForm(webContents, form);
+    await submitObservedForm(target, form);
     return {
       effects: collectSubmitEffects(form)
     } satisfies DomActuationEffects;
@@ -69,23 +69,23 @@ export async function executeDomTool(
   throw new Error(`Unsupported DOM tool: ${command.toolName}`);
 }
 
-export async function executeBrowserAction(webContents: WebContents, action: BrowserAction, resolveValue: ValueResolver) {
+export async function executeBrowserAction(target: CdpTarget, action: BrowserAction, resolveValue: ValueResolver) {
   switch (action.type) {
     case "click":
       await humanJitter();
-      await callBackendNode(webContents, action.node.backendNodeId, clickFunctionSource());
+      await callBackendNode(target, action.node.backendNodeId, clickFunctionSource());
       return {} satisfies DomActuationEffects;
     case "type":
       await humanJitter();
-      await callBackendNode(webContents, action.node.backendNodeId, typeFunctionSource(), [serializeTextValue(resolveValue(action.value), action.value)]);
+      await callBackendNode(target, action.node.backendNodeId, typeFunctionSource(), [serializeTextValue(resolveValue(action.value), action.value)]);
       return {} satisfies DomActuationEffects;
     case "select":
       await humanJitter();
-      await callBackendNode(webContents, action.node.backendNodeId, selectFunctionSource(), [action.optionText]);
+      await callBackendNode(target, action.node.backendNodeId, selectFunctionSource(), [action.optionText]);
       return {} satisfies DomActuationEffects;
     case "submit":
       await humanJitter(200, 500);
-      await callBackendNode(webContents, action.node.backendNodeId, submitFunctionSource());
+      await callBackendNode(target, action.node.backendNodeId, submitFunctionSource());
       return {} satisfies DomActuationEffects;
     case "await_human":
       // Handled at the registry level via createHandoff() before reaching the DOM actuator.
@@ -95,26 +95,14 @@ export async function executeBrowserAction(webContents: WebContents, action: Bro
   }
 }
 
-export async function waitForPageSettled(webContents: WebContents, timeoutMs = 1000) {
-  if (webContents.isLoading()) {
-    await Promise.race([
-      new Promise<void>((resolve) => {
-        const onStop = () => {
-          webContents.removeListener("did-stop-loading", onStop);
-          resolve();
-        };
-        webContents.on("did-stop-loading", onStop);
-      }),
-      delay(timeoutMs)
-    ]);
-  }
-
+export async function waitForPageSettled(target: CdpTarget, timeoutMs = 1000) {
+  await target.waitForLoadStop(timeoutMs);
   await delay(150);
 }
 
-async function activateObservedAction(webContents: WebContents, action: ObservedAction) {
+async function activateObservedAction(target: CdpTarget, action: ObservedAction) {
   await executeInPage(
-    webContents,
+    target,
     {
       kind: "activate-action",
       selectorHint: action.selectorHint,
@@ -125,7 +113,7 @@ async function activateObservedAction(webContents: WebContents, action: Observed
   );
 }
 
-async function fillObservedForm(webContents: WebContents, form: ObservedForm, args: Record<string, unknown>, resolveValue: ValueResolver) {
+async function fillObservedForm(target: CdpTarget, form: ObservedForm, args: Record<string, unknown>, resolveValue: ValueResolver) {
   const assignments = form.fields
     .filter((field) => Object.hasOwn(args, field.id))
     .map((field) => ({
@@ -138,7 +126,7 @@ async function fillObservedForm(webContents: WebContents, form: ObservedForm, ar
   }
 
   await executeInPage(
-    webContents,
+    target,
     {
       kind: "fill-form",
       fields: assignments.map(({ field, value }) => ({
@@ -152,9 +140,9 @@ async function fillObservedForm(webContents: WebContents, form: ObservedForm, ar
   );
 }
 
-async function submitObservedForm(webContents: WebContents, form: ObservedForm) {
+async function submitObservedForm(target: CdpTarget, form: ObservedForm) {
   await executeInPage(
-    webContents,
+    target,
     {
       kind: "submit-form",
       selectorHint: form.selectorHint,
@@ -167,30 +155,26 @@ async function submitObservedForm(webContents: WebContents, form: ObservedForm) 
   );
 }
 
-async function executeInPage(webContents: WebContents, payload: unknown, script: string) {
-  await webContents.executeJavaScript(`(${script})(${JSON.stringify(payload)})`, true);
+async function executeInPage(target: CdpTarget, payload: unknown, script: string) {
+  await target.evaluate(`(${script})(${JSON.stringify(payload)})`, { userGesture: true });
 }
 
-async function callBackendNode(webContents: WebContents, backendNodeId: number, functionDeclaration: string, args: unknown[] = []) {
-  if (!webContents.debugger.isAttached()) {
-    webContents.debugger.attach("1.3");
-  }
-
-  const resolved = await webContents.debugger.sendCommand("DOM.resolveNode", { backendNodeId });
+async function callBackendNode(target: CdpTarget, backendNodeId: number, functionDeclaration: string, args: unknown[] = []) {
+  const resolved = await target.send("DOM.resolveNode", { backendNodeId });
   const objectId = resolved.object?.objectId;
   if (!objectId) {
     throw new Error(`Unable to resolve backend node ${backendNodeId}.`);
   }
 
   try {
-    await webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+    await target.send("Runtime.callFunctionOn", {
       objectId,
       functionDeclaration,
       arguments: args.map((value) => ({ value })),
       awaitPromise: true
     });
   } finally {
-    await webContents.debugger.sendCommand("Runtime.releaseObject", { objectId }).catch(() => {});
+    await target.send("Runtime.releaseObject", { objectId }).catch(() => {});
   }
 }
 
