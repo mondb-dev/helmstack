@@ -94,7 +94,9 @@ export function handleCdpMessage(tab: CdpEventState, cdp: CdpTarget, method: str
         url: (request.url as string) ?? "",
         method: (request.method as string) ?? "GET",
         failed: false,
-        timestamp: (params.timestamp as number) ?? Date.now(),
+        // `params.timestamp` is CDP's monotonic clock (seconds since an arbitrary
+        // origin); HAR needs epoch ms, which `wallTime` (epoch seconds) provides.
+        timestamp: typeof params.wallTime === "number" ? params.wallTime * 1000 : Date.now(),
         requestHeaders
       });
       break;
