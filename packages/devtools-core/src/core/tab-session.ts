@@ -155,7 +155,10 @@ export class TabSession {
     this.state.cdpLoggingEnabled = true;
     try {
       await Promise.all([
+        // Runtime: page console.* (consoleAPICalled), exceptions, and execution-context
+        // tracking for the isolated-world filter. Idempotent with the perception injector's call.
         this.cdp.send("Runtime.enable"),
+        // Log: browser-side entries (network errors, interventions, violations).
         this.cdp.send("Log.enable"),
         this.cdp.send("Network.enable", { maxTotalBufferSize: 0, maxResourceBufferSize: 0 }),
         this.cdp.send("Performance.enable", { timeDomain: "timeTicks" }).catch(() => {})
