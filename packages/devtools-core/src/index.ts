@@ -4,6 +4,7 @@
  * Must never import `electron` (enforced by ESLint for this package).
  */
 export * from "./api.js";
+export * from "./backend.js";
 export * from "./http/index.js";
 export * from "./core/index.js";
 

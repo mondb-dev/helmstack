@@ -37,3 +37,4 @@ export * from "./stores/site-pattern-store.js";
 export * from "./stores/visual-diff-store.js";
 export * from "./perception/assertions.js";
 export * from "./perception/diff.js";
+export * from "./commands/types.js";
