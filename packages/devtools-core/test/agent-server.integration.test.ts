@@ -2,14 +2,13 @@ import * as http from "node:http";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { AgentServer } from "../src/main/agent-server.js";
-import type { ExtensionManager } from "../src/main/extension-manager.js";
-import type { TabManager } from "../src/main/tab-manager.js";
+import type { AgentApi } from "../src/api.js";
+import { type AgentServer, createAgentServer } from "../src/http/agent-server.js";
 
 const TOKEN = "test-token-123";
 
-/** Minimal TabManager stub — only the members the server touches for these routes. */
-function stubTabManager(): TabManager {
+/** Minimal AgentApi stub — only the members the server touches for these routes. */
+function stubApi(): AgentApi {
   return {
     onTabsChanged() {},
     onPageObserved() {},
@@ -19,16 +18,14 @@ function stubTabManager(): TabManager {
     listTabs() {
       return [{ id: "tab-1", title: "Example", url: "https://example.com", isActive: true, status: "idle", statusMessage: "" }];
     }
-  } as unknown as TabManager;
+  } as unknown as AgentApi;
 }
-
-const stubExtensions = {} as unknown as ExtensionManager;
 
 let server: AgentServer;
 let port: number;
 
 beforeAll(async () => {
-  server = new AgentServer(stubTabManager(), stubExtensions, 0, TOKEN);
+  server = createAgentServer({ api: stubApi(), backend: "desktop", port: 0, authToken: TOKEN });
   await server.start();
   port = server.boundPort!;
 });

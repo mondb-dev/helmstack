@@ -1,4 +1,4 @@
-import type { AccountInput, NetworkInterceptRule, ResourceBudget } from "../../../../packages/shared/src/index.js";
+import type { AccountInput, NetworkInterceptRule, ResourceBudget } from "../../../shared/src/index.js";
 
 /**
  * Lightweight, zero-dependency validators for REST request bodies. Each returns

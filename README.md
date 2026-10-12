@@ -64,7 +64,7 @@ The browser exposes an HTTP+SSE API at `127.0.0.1:7070` (localhost only, never n
 - `intent_changed` — new task entered in UI
 - `agent_log` — agent logging events
 
-See `apps/desktop/src/main/agent-server.ts` for the full API surface.
+See `packages/devtools-core/src/http/agent-server.ts` for the full API surface.
 
 ### Cognitive Runtime
 

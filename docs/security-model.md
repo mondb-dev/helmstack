@@ -56,7 +56,7 @@ interference but is **not** a security boundary:
 
 This caveat is asserted in code (`AgentServer.agentIdOf` / `isTabAccessible`
 carry `SECURITY:` comments) and codified by a test in
-`apps/desktop/test/agent-server.integration.test.ts` so it can't silently be
+`packages/devtools-core/test/agent-server.integration.test.ts` so it can't silently be
 mistaken for a security boundary.
 
 ## Credential storage

@@ -9,7 +9,8 @@ export default defineConfig({
           include: [
             "packages/perception/test/**/*.test.ts",
             "apps/desktop/test/**/*.test.ts",
-            "packages/mcp-server/test/**/*.test.ts"
+            "packages/mcp-server/test/**/*.test.ts",
+            "packages/devtools-core/test/**/*.test.ts"
           ],
           environment: "jsdom",
           setupFiles: ["./packages/perception/test/setup.ts"],

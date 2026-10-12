@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isAllowedOrigin, isLoopbackHostHeader, parseHostname } from "../src/main/agent-server.js";
+import { isAllowedOrigin, isLoopbackHostHeader, parseHostname } from "../src/http/agent-server.js";
 
 describe("parseHostname", () => {
   it("strips the port", () => {

@@ -14,12 +14,57 @@ import type {
   TabId,
   TabSummary,
   ViewportPresetName,
-} from "../../../../packages/shared/src/index.js";
-import type { TabManager } from "./tab-manager.js";
-import type { ExtensionManager } from "./extension-manager.js";
+} from "../../../shared/src/index.js";
+import type { AccountsApi, AgentApi, BackendKind, ExtensionsApi, OptionalCapability } from "../api.js";
 import { parseAccountInput, parseNetworkMockRules, parseResourceBudget, parseViewportBody } from "./request-validation.js";
 
 type SseClient = { res: http.ServerResponse; agentId: string | null };
+
+/** Default control-plane port shared by the desktop app and the daemon. */
+export const DEFAULT_AGENT_PORT = 7070;
+
+/** `code` of the 501 body returned when an optional slice is missing. */
+export const UNSUPPORTED_ON_BACKEND = "unsupported_on_backend";
+
+export interface AgentServerOptions {
+  /** The browser the server drives. */
+  api: AgentApi;
+  /** Which runtime is serving. Falls back to `api.backend`; one of the two is required. */
+  backend?: BackendKind;
+  /** Optional credential accounts + TOTP slice. Absent → `/api/accounts*` answer 501. */
+  accounts?: AccountsApi;
+  /** Optional browser-extension slice. Absent → `/api/extensions*` answer 501. */
+  extensions?: ExtensionsApi;
+  /** TCP port (default 7070; 0 picks a free port, see `boundPort`). */
+  port?: number;
+  /**
+   * Shared REST/SSE auth token. `null` disables auth; `undefined` falls back
+   * to `HELMSTACK_AUTH_TOKEN` (or no auth when that is unset).
+   */
+  authToken?: string | null;
+  /** Bind address. Loopback only — the control plane is never network-exposed. */
+  host?: "127.0.0.1";
+}
+
+/** Thrown by {@link AgentServer.start} when the port is already bound. */
+export class AgentServerPortInUseError extends Error {
+  readonly code = "EADDRINUSE";
+
+  constructor(readonly host: string, readonly port: number, cause?: unknown) {
+    super(
+      `HelmStack agent server cannot listen on ${host}:${port}: the port is already in use. ` +
+      "Another HelmStack instance (desktop app or daemon) is probably running — stop it, " +
+      "or pick a different port (the daemon honours HELMSTACK_PORT / --port).",
+      { cause }
+    );
+    this.name = "AgentServerPortInUseError";
+  }
+}
+
+/** Create (but do not start) the agent HTTP+SSE server. Call `start()` to bind. */
+export function createAgentServer(opts: AgentServerOptions): AgentServer {
+  return new AgentServer(opts);
+}
 
 /** Loopback host names that are safe for a localhost-only control plane. */
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -70,9 +115,16 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  *
  * Binds to 127.0.0.1 only — never exposed to the network.
  *
+ * Typed against {@link AgentApi} only (ADR 0001 §4.4), so the Electron desktop
+ * and the headless daemon serve the identical API.
+ *
+ * Optional slices (accounts, extensions, pick) answer
+ * `501 { error, code: "unsupported_on_backend", feature, backend }` when the
+ * backend does not provide them.
+ *
  * REST endpoints
  * --------------
- * GET  /api/health
+ * GET  /api/health                         → { status, connectedAgents, tabs, backend, capabilities }
  * GET  /api/tabs
  * POST /api/tabs                          { url?: string }
  * POST /api/tabs/:id/navigate             { url: string }
@@ -176,13 +228,26 @@ export class AgentServer {
   /** agentId → intent string: per-agent intent, falls back to global */
   private readonly perAgentIntents = new Map<string, string>();
 
-  constructor(
-    private readonly tabs: TabManager,
-    private readonly extensions: ExtensionManager,
-    readonly port: number = 7070,
-    private readonly authToken: string | null = process.env.HELMSTACK_AUTH_TOKEN || null
-  ) {
+  private readonly tabs: AgentApi;
+  private readonly accounts: AccountsApi | undefined;
+  private readonly extensions: ExtensionsApi | undefined;
+  private readonly authToken: string | null;
+  readonly port: number;
+  readonly host: "127.0.0.1";
+  readonly backend: BackendKind;
+
+  constructor(opts: AgentServerOptions) {
+    const backend = opts.backend ?? opts.api.backend;
+    if (!backend) throw new Error("createAgentServer: `backend` is required (pass it as an option or set api.backend)");
+    this.tabs = opts.api;
+    this.accounts = opts.accounts;
+    this.extensions = opts.extensions;
+    this.port = opts.port ?? DEFAULT_AGENT_PORT;
+    this.host = opts.host ?? "127.0.0.1";
+    this.backend = backend;
+    this.authToken = opts.authToken === undefined ? (process.env.HELMSTACK_AUTH_TOKEN || null) : opts.authToken;
     this.server = http.createServer(this.handle.bind(this));
+    const tabs = this.tabs;
 
     tabs.onTabsChanged((allTabs) => {
       // Prune owners for tabs that have been closed
@@ -209,13 +274,34 @@ export class AgentServer {
     return addr && typeof addr === "object" ? addr.port : null;
   }
 
+  /** Optional features this backend provides (reported by `GET /api/health`). */
+  get capabilities(): OptionalCapability[] {
+    const caps: OptionalCapability[] = [];
+    if (this.accounts) caps.push("accounts");
+    if (this.extensions) caps.push("extensions");
+    if (typeof this.tabs.pickElement === "function") caps.push("pick");
+    return caps;
+  }
+
+  /**
+   * Bind the server. Rejects with {@link AgentServerPortInUseError} when the
+   * port is taken (e.g. desktop and daemon both on 7070) instead of a bare
+   * `EADDRINUSE`, so callers can fail fast with an actionable message.
+   */
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.server.on("error", reject);
-      this.server.listen(this.port, "127.0.0.1", () => {
-        console.log(`[AgentServer] listening on http://127.0.0.1:${this.port}`);
+      const onError = (err: NodeJS.ErrnoException) => {
+        this.server.off("listening", onListening);
+        reject(err.code === "EADDRINUSE" ? new AgentServerPortInUseError(this.host, this.port, err) : err);
+      };
+      const onListening = () => {
+        this.server.off("error", onError);
+        console.log(`[AgentServer] listening on http://${this.host}:${this.boundPort ?? this.port} (backend: ${this.backend})`);
         resolve();
-      });
+      };
+      this.server.once("error", onError);
+      this.server.once("listening", onListening);
+      this.server.listen(this.port, this.host);
     });
   }
 
@@ -414,7 +500,13 @@ export class AgentServer {
 
     // ── Health ───────────────────────────────────────────────────────────────
     if (method === "GET" && p === "/api/health") {
-      return json(res, { status: "ok", connectedAgents: this.clients.size, tabs: this.tabs.listTabs().length });
+      return json(res, {
+        status: "ok",
+        connectedAgents: this.clients.size,
+        tabs: this.tabs.listTabs().length,
+        backend: this.backend,
+        capabilities: this.capabilities
+      });
     }
 
     // ── Intent ────────────────────────────────────────────────────────────────
@@ -591,54 +683,16 @@ export class AgentServer {
       return json(res, result);
     }
 
-    // ── Accounts ─────────────────────────────────────────────────────────────
-    if (method === "GET" && p === "/api/accounts") {
-      return json(res, this.tabs.listAccounts());
+    // ── Accounts (optional slice) ────────────────────────────────────────────
+    if (p === "/api/accounts" || p.startsWith("/api/accounts/")) {
+      if (!this.accounts) return unsupported(res, "accounts", this.backend);
+      return this.routeAccounts(req, res, method, p, this.accounts);
     }
 
-    if (method === "POST" && p === "/api/accounts") {
-      const parsed = parseAccountInput(await readBody(req));
-      if (!parsed.ok) return error(res, 400, parsed.error);
-      return json(res, this.tabs.saveAccount(parsed.value));
-    }
-
-    const accountLookupMatch = p.match(/^\/api\/accounts\/lookup\/(.+)$/);
-    if (method === "GET" && accountLookupMatch) {
-      return json(res, this.tabs.lookupAccounts(decodeURIComponent(accountLookupMatch[1])));
-    }
-
-    const accountMatch = p.match(/^\/api\/accounts\/([^/]+)$/);
-    if (accountMatch) {
-      if (method === "PATCH") {
-        const body = await readBody(req);
-        return json(res, this.tabs.updateAccount(accountMatch[1], body as AccountUpdate));
-      }
-      if (method === "DELETE") {
-        this.tabs.deleteAccount(accountMatch[1]);
-        return json(res, { deleted: accountMatch[1] });
-      }
-    }
-
-    const totpMatch = p.match(/^\/api\/accounts\/([^/]+)\/totp$/);
-    if (method === "GET" && totpMatch) {
-      return json(res, this.tabs.generateTotp(totpMatch[1]));
-    }
-
-    // ── Extensions ───────────────────────────────────────────────────────────
-    if (method === "GET" && p === "/api/extensions") {
-      return json(res, await this.extensions.listExtensions());
-    }
-
-    if (method === "POST" && p === "/api/extensions") {
-      const body = await readBody(req);
-      if (typeof body.path !== "string") return error(res, 400, "path is required");
-      return json(res, await this.extensions.loadExtension(body.path));
-    }
-
-    const extDeleteMatch = p.match(/^\/api\/extensions\/([^/]+)$/);
-    if (method === "DELETE" && extDeleteMatch) {
-      await this.extensions.removeExtension(extDeleteMatch[1]);
-      return json(res, { removed: extDeleteMatch[1] });
+    // ── Extensions (optional slice) ──────────────────────────────────────────
+    if (p === "/api/extensions" || p.startsWith("/api/extensions/")) {
+      if (!this.extensions) return unsupported(res, "extensions", this.backend);
+      return this.routeExtensions(req, res, method, p, this.extensions);
     }
 
     // ── Console / network logs ────────────────────────────────────────────────
@@ -869,6 +923,7 @@ export class AgentServer {
     // ── Visual element picker (human inspect → agent) ───────────────────────────
     const pickMatch = p.match(/^\/api\/tabs\/([^/]+)\/pick$/);
     if (method === "GET" && pickMatch) {
+      if (typeof this.tabs.pickElement !== "function") return unsupported(res, "pick", this.backend);
       return json(res, await this.tabs.pickElement(pickMatch[1] as TabId));
     }
 
@@ -1147,6 +1202,74 @@ export class AgentServer {
     return error(res, 404, "Not found");
   }
 
+  private async routeAccounts(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    method: string,
+    p: string,
+    accounts: AccountsApi
+  ): Promise<void> {
+    if (method === "GET" && p === "/api/accounts") {
+      return json(res, accounts.listAccounts());
+    }
+
+    if (method === "POST" && p === "/api/accounts") {
+      const parsed = parseAccountInput(await readBody(req));
+      if (!parsed.ok) return error(res, 400, parsed.error);
+      return json(res, accounts.saveAccount(parsed.value));
+    }
+
+    const accountLookupMatch = p.match(/^\/api\/accounts\/lookup\/(.+)$/);
+    if (method === "GET" && accountLookupMatch) {
+      return json(res, accounts.lookupAccounts(decodeURIComponent(accountLookupMatch[1])));
+    }
+
+    const accountMatch = p.match(/^\/api\/accounts\/([^/]+)$/);
+    if (accountMatch) {
+      if (method === "PATCH") {
+        const body = await readBody(req);
+        return json(res, accounts.updateAccount(accountMatch[1], body as AccountUpdate));
+      }
+      if (method === "DELETE") {
+        accounts.deleteAccount(accountMatch[1]);
+        return json(res, { deleted: accountMatch[1] });
+      }
+    }
+
+    const totpMatch = p.match(/^\/api\/accounts\/([^/]+)\/totp$/);
+    if (method === "GET" && totpMatch) {
+      return json(res, accounts.generateTotp(totpMatch[1]));
+    }
+
+    return error(res, 404, "Not found");
+  }
+
+  private async routeExtensions(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    method: string,
+    p: string,
+    extensions: ExtensionsApi
+  ): Promise<void> {
+    if (method === "GET" && p === "/api/extensions") {
+      return json(res, await extensions.listExtensions());
+    }
+
+    if (method === "POST" && p === "/api/extensions") {
+      const body = await readBody(req);
+      if (typeof body.path !== "string") return error(res, 400, "path is required");
+      return json(res, await extensions.loadExtension(body.path));
+    }
+
+    const extDeleteMatch = p.match(/^\/api\/extensions\/([^/]+)$/);
+    if (method === "DELETE" && extDeleteMatch) {
+      await extensions.removeExtension(extDeleteMatch[1]);
+      return json(res, { removed: extDeleteMatch[1] });
+    }
+
+    return error(res, 404, "Not found");
+  }
+
   private isAuthorized(req: http.IncomingMessage): boolean {
     if (!this.authToken) return true;
 
@@ -1175,6 +1298,17 @@ function json(res: http.ServerResponse, data: unknown) {
 function error(res: http.ServerResponse, code: number, message: string) {
   res.writeHead(code, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: message }));
+}
+
+/** 501 for a route whose optional API slice this backend does not provide. */
+function unsupported(res: http.ServerResponse, feature: OptionalCapability, backend: BackendKind) {
+  res.writeHead(501, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({
+    error: `${feature} is not supported on the ${backend} backend`,
+    code: UNSUPPORTED_ON_BACKEND,
+    feature,
+    backend
+  }));
 }
 
 async function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {

@@ -28,5 +28,16 @@ export default tseslint.config(
       "no-empty": ["warn", { allowEmptyCatch: true }],
       "no-control-regex": "off"
     }
+  },
+  // devtools-core is shared by the Electron desktop and the headless daemon:
+  // it must stay Electron-free (ADR 0001 §2).
+  {
+    files: ["packages/devtools-core/**/*.ts"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        paths: [{ name: "electron", message: "packages/devtools-core must not depend on Electron (ADR 0001). Put Electron code in apps/desktop." }],
+        patterns: [{ group: ["electron/*"], message: "packages/devtools-core must not depend on Electron (ADR 0001). Put Electron code in apps/desktop." }]
+      }]
+    }
   }
 );

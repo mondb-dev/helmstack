@@ -5,7 +5,7 @@ import {
   parseNetworkMockRules,
   parseResourceBudget,
   parseViewportBody
-} from "../src/main/request-validation.js";
+} from "../src/http/request-validation.js";
 
 describe("parseNetworkMockRules", () => {
   it("accepts well-formed rules", () => {

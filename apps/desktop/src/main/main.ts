@@ -1,6 +1,4 @@
 import { app, BrowserWindow, ipcMain, session } from "electron";
-import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -19,7 +17,13 @@ import {
 } from "../../../../packages/shared/src/index.js";
 import { TabManager } from "./tab-manager.js";
 import { ExtensionManager } from "./extension-manager.js";
-import { AgentServer } from "./agent-server.js";
+import type { AccountsApi, AgentApi, ExtensionsApi } from "../../../../packages/devtools-core/src/api.js";
+import {
+  type AgentServer,
+  agentTokenPath,
+  createAgentServer,
+  readOrCreateAgentToken
+} from "../../../../packages/devtools-core/src/http/index.js";
 
 const appDir = __dirname;
 
@@ -92,9 +96,22 @@ async function createMainWindow() {
   // Auth is on by default: use HELMSTACK_AUTH_TOKEN if provided, otherwise
   // generate a token and persist it so local agents can read it.
   const authToken = process.env.HELMSTACK_AUTH_TOKEN || readOrCreateAgentToken(userDataPath);
-  agentServer = new AgentServer(tabManager, extensions, 7070, authToken);
+  // Compile-time guarantees that the server is decoupled from Electron types:
+  // TabManager satisfies the backend-agnostic AgentApi (and the optional
+  // accounts slice) structurally; ExtensionManager satisfies ExtensionsApi.
+  const api: AgentApi = tabManager;
+  const accounts: AccountsApi = tabManager;
+  const extensionsApi: ExtensionsApi = extensions;
+  agentServer = createAgentServer({
+    api,
+    backend: "desktop",
+    accounts,
+    extensions: extensionsApi,
+    port: 7070,
+    authToken
+  });
   console.log(`[AgentServer] auth token: ${authToken}`);
-  console.log(`[AgentServer] token file: ${path.join(userDataPath, "helmstack-agent-token")}`);
+  console.log(`[AgentServer] token file: ${agentTokenPath(userDataPath)}`);
   await agentServer.start().catch((err: unknown) => {
     console.error("[AgentServer] Failed to start:", err);
   });
@@ -206,28 +223,6 @@ function registerIpcHandlers(manager: TabManager) {
   manager.onHandoffRequested((handoff: HumanHandoffRecord) => {
     sendToShell(BrowserShellChannel.HandoffRequested, handoff);
   });
-}
-
-/**
- * Read the persisted agent auth token, or generate and store one (0600) on
- * first launch. Local agents can read this file to authenticate without the
- * user having to set HELMSTACK_AUTH_TOKEN by hand.
- */
-function readOrCreateAgentToken(userDataPath: string): string {
-  const tokenPath = path.join(userDataPath, "helmstack-agent-token");
-  try {
-    if (existsSync(tokenPath)) {
-      const existing = readFileSync(tokenPath, "utf8").trim();
-      if (existing) return existing;
-    }
-  } catch {
-    // fall through to regenerate
-  }
-
-  const token = randomBytes(32).toString("hex");
-  mkdirSync(userDataPath, { recursive: true });
-  writeFileSync(tokenPath, token, { encoding: "utf8", mode: 0o600 });
-  return token;
 }
 
 app.whenReady().then(createMainWindow);
