@@ -9,3 +9,7 @@ export * from "./http/index.js";
 export * from "./core/index.js";
 
 export * from "./perception/injector.js";
+
+export * from "./core/tab-state.js";
+export * from "./core/tab-session.js";
+export * from "./core/helmstack-core.js";
