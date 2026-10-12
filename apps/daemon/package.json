@@ -1,0 +1,33 @@
+{
+  "name": "@helmstack/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Headless HelmStack runtime that drives a plain Chrome over CDP",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mondb-dev/helmstack.git",
+    "directory": "apps/daemon"
+  },
+  "dependencies": {
+    "@helmstack/shared": "*",
+    "puppeteer-core": "^25.13.0"
+  }
+}
