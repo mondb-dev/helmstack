@@ -1,16 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// tab-manager imports electron at module scope (only used inside methods); a
-// stub lets us import and test its pure module-level functions.
-vi.mock("electron", () => ({ BrowserWindow: class {}, nativeImage: {}, WebContentsView: class {} }));
-
-import {
-  computePerceptionDiff,
-  evaluateAssertionAgainstGraph
-} from "../src/main/tab-manager.js";
-import { computeDiffRegions } from "../src/main/pixel-compare.js";
-import { evaluateStyleAssertion } from "../src/main/style-inspector.js";
-import { matchesMockRule } from "../src/main/cdp-events.js";
+import { computePerceptionDiff } from "../../../packages/devtools-core/src/core/perception/diff.js";
+import { evaluateAssertionAgainstGraph } from "../../../packages/devtools-core/src/core/perception/assertions.js";
+import { computeDiffRegions } from "../../../packages/devtools-core/src/core/reports/pixel-compare.js";
+import { evaluateStyleAssertion } from "../../../packages/devtools-core/src/core/cdp/style-inspector.js";
+import { matchesMockRule } from "../../../packages/devtools-core/src/core/cdp/cdp-events.js";
 import type {
   ElementStyleInspection,
   PageGraph,

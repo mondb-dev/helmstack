@@ -5,6 +5,6 @@
  */
 export * from "./api.js";
 export * from "./http/index.js";
+export * from "./core/index.js";
 
-// WP-D: perception injector export goes here, e.g.
-// export * from "./perception/injector.js";
+export * from "./perception/injector.js";

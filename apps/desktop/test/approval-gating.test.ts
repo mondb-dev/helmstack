@@ -9,9 +9,9 @@ vi.mock("electron", () => ({
 }));
 
 import { AccountStore } from "../src/main/account-store.js";
-import { ApprovalPolicyStore } from "../src/main/approval-policy-store.js";
-import { ApprovalStore } from "../src/main/approval-store.js";
-import { HandoffStore } from "../src/main/handoff-store.js";
+import { ApprovalPolicyStore } from "../../../packages/devtools-core/src/core/stores/approval-policy-store.js";
+import { ApprovalStore } from "../../../packages/devtools-core/src/core/stores/approval-store.js";
+import { HandoffStore } from "../../../packages/devtools-core/src/core/stores/handoff-store.js";
 import { SiteCapabilityRegistry } from "../src/main/site-capability-registry.js";
 import { VaultStore } from "../src/main/vault-store.js";
 import type { BrowserOutputCommand, PageGraph, PerceptionResult } from "../../../packages/shared/src/index.js";

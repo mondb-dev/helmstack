@@ -7,39 +7,41 @@ import { BrowserWindow, WebContentsView } from "electron";
 import { normalizePerception } from "../../../../packages/perception/src/normalize.js";
 import { AccountStore } from "./account-store.js";
 import { installAntiDetection } from "./anti-detection.js";
-import { isStealthEnabled } from "./runtime-config.js";
-import { PerceptionBaselineStore, type PerceptionBaselineEntry } from "./baseline-store.js";
-import { buildHar } from "./har.js";
-import { buildDesignTokensReport, designTokenCollectorScript, type RawDesignTokens } from "./design-tokens.js";
-import { buildCssCoverageReport, type RawRuleRange, type RawStylesheetCoverage } from "./css-coverage.js";
-import { buildJsCoverageReport, type RawScriptCoverage } from "./js-coverage.js";
-import { buildTraceSummary, type RawTraceEvent } from "./trace-summary.js";
-import { detectFramework as classifyFramework, frameworkSignalsScript, type RawFrameworkSignals } from "./framework-detect.js";
+import { isStealthEnabled } from "../../../../packages/devtools-core/src/core/runtime-config.js";
+import { PerceptionBaselineStore, type PerceptionBaselineEntry } from "../../../../packages/devtools-core/src/core/stores/baseline-store.js";
+import { buildHar } from "../../../../packages/devtools-core/src/core/reports/har.js";
+import { buildDesignTokensReport, designTokenCollectorScript, type RawDesignTokens } from "../../../../packages/devtools-core/src/core/reports/design-tokens.js";
+import { buildCssCoverageReport, type RawRuleRange, type RawStylesheetCoverage } from "../../../../packages/devtools-core/src/core/reports/css-coverage.js";
+import { buildJsCoverageReport, type RawScriptCoverage } from "../../../../packages/devtools-core/src/core/reports/js-coverage.js";
+import { buildTraceSummary, type RawTraceEvent } from "../../../../packages/devtools-core/src/core/reports/trace-summary.js";
+import { detectFramework as classifyFramework, frameworkSignalsScript, type RawFrameworkSignals } from "../../../../packages/devtools-core/src/core/reports/framework-detect.js";
 import { pickElement } from "./element-picker.js";
-import { buildLayoutIssuesReport, layoutIssueDetectorScript, type LayoutIssuesRaw } from "./layout-issues.js";
-import { buildMediaStateReport, mediaStateCollectorScript, type MediaStateRaw } from "./media-state.js";
-import { exportRecordingAll, renderRecordingScript } from "./recording-export.js";
-import { buildHealthReport } from "./health-report.js";
-import { AssertionWatchStore } from "./assertion-watch.js";
-import { buildMutationReport, mutationTimelineScript, type RawMutationTimeline } from "./mutation-timeline.js";
-import { buildComponentSourceReport, componentSourceCollectorScript, type RawComponentSources } from "./component-source.js";
-import { VisualDiffStore } from "./visual-diff-store.js";
-import { correlateRegionsToElements, elementBoundsScript } from "./element-bounds.js";
-import { analyzeFocusOrder, focusableElementsScript, type RawFocusOrder } from "./focus-order.js";
-import * as storage from "./storage-inspector.js";
-import { capturePerformance } from "./performance-probe.js";
-import { captureThreeScene } from "./threejs-inspector.js";
-import { inspectStyles, assertStyles } from "./style-inspector.js";
-import { runA11yAudit } from "./a11y-audit.js";
-import { runComponentTree } from "./component-tree.js";
-import { handleCdpMessage } from "./cdp-events.js";
-import { applyMediaEmulation, applyResourceBudget, applyLocationOverride } from "./overrides.js";
-import { clampInt } from "./util.js";
-import { waitForPageSettled } from "./dom-actuator.js";
+import { buildLayoutIssuesReport, layoutIssueDetectorScript, type LayoutIssuesRaw } from "../../../../packages/devtools-core/src/core/reports/layout-issues.js";
+import { buildMediaStateReport, mediaStateCollectorScript, type MediaStateRaw } from "../../../../packages/devtools-core/src/core/reports/media-state.js";
+import { exportRecordingAll, renderRecordingScript } from "../../../../packages/devtools-core/src/core/reports/recording-export.js";
+import { buildHealthReport } from "../../../../packages/devtools-core/src/core/reports/health-report.js";
+import { AssertionWatchStore } from "../../../../packages/devtools-core/src/core/stores/assertion-watch.js";
+import { buildMutationReport, mutationTimelineScript, type RawMutationTimeline } from "../../../../packages/devtools-core/src/core/reports/mutation-timeline.js";
+import { buildComponentSourceReport, componentSourceCollectorScript, type RawComponentSources } from "../../../../packages/devtools-core/src/core/reports/component-source.js";
+import { VisualDiffStore } from "../../../../packages/devtools-core/src/core/stores/visual-diff-store.js";
+import { correlateRegionsToElements, elementBoundsScript } from "../../../../packages/devtools-core/src/core/reports/element-bounds.js";
+import { analyzeFocusOrder, focusableElementsScript, type RawFocusOrder } from "../../../../packages/devtools-core/src/core/reports/focus-order.js";
+import * as storage from "../../../../packages/devtools-core/src/core/cdp/storage-inspector.js";
+import { capturePerformance } from "../../../../packages/devtools-core/src/core/cdp/performance-probe.js";
+import { captureThreeScene } from "../../../../packages/devtools-core/src/core/cdp/threejs-inspector.js";
+import { inspectStyles, assertStyles } from "../../../../packages/devtools-core/src/core/cdp/style-inspector.js";
+import { runA11yAudit } from "../../../../packages/devtools-core/src/core/cdp/a11y-audit.js";
+import { runComponentTree } from "../../../../packages/devtools-core/src/core/cdp/component-tree.js";
+import { handleCdpMessage } from "../../../../packages/devtools-core/src/core/cdp/cdp-events.js";
+import { computePerceptionDiff } from "../../../../packages/devtools-core/src/core/perception/diff.js";
+import { evaluateAssertionAgainstGraph } from "../../../../packages/devtools-core/src/core/perception/assertions.js";
+import { applyMediaEmulation, applyResourceBudget, applyLocationOverride } from "../../../../packages/devtools-core/src/core/cdp/overrides.js";
+import { clampInt } from "../../../../packages/devtools-core/src/core/util.js";
+import { waitForPageSettled } from "../../../../packages/devtools-core/src/core/cdp/dom-actuator.js";
 import { electronCdpTarget } from "./electron-cdp-target.js";
-import { ApprovalPolicyStore } from "./approval-policy-store.js";
-import { ApprovalStore } from "./approval-store.js";
-import { HandoffStore } from "./handoff-store.js";
+import { ApprovalPolicyStore } from "../../../../packages/devtools-core/src/core/stores/approval-policy-store.js";
+import { ApprovalStore } from "../../../../packages/devtools-core/src/core/stores/approval-store.js";
+import { HandoffStore } from "../../../../packages/devtools-core/src/core/stores/handoff-store.js";
 import {
   type AccountInput,
   type AccountSummary,
@@ -117,7 +119,7 @@ import {
   VIEWPORT_PRESETS
 } from "../../../../packages/shared/src/index.js";
 import { SiteCapabilityRegistry } from "./site-capability-registry.js";
-import { SitePatternStore } from "./site-pattern-store.js";
+import { SitePatternStore } from "../../../../packages/devtools-core/src/core/stores/site-pattern-store.js";
 import { VaultStore } from "./vault-store.js";
 
 type EmulatedViewport = { width: number; height: number; mobile: boolean };
@@ -1708,7 +1710,7 @@ export class TabManager {
 
     // Route CDP messages to the log/mock handler (bound once; safe before debugger attach).
     webContents.debugger.on("message", (_event: Electron.Event, method: string, params: Record<string, unknown>) => {
-      handleCdpMessage(tab, method, params);
+      handleCdpMessage(tab, electronCdpTarget(webContents), method, params);
     });
 
     const updateSummary = () => {
@@ -1925,304 +1927,3 @@ function originFromUrl(url: string): string {
  *   - star wildcard anywhere (e.g. "star/api/products*")
  *   - /regex/flags literal regex (e.g. /\/api\/v\d+\//i)
  */
-
-/**
- * Pure structural diff of two perception graph snapshots.
- * Operates on PageGraph fields: headings, forms, actions, alerts, title, kind, media.
- */
-export function computePerceptionDiff(
-  beforeId: string,
-  afterId: string,
-  before: { graph: PageGraph; url: string; title: string; capturedAt: number },
-  after:  { graph: PageGraph; url: string; title: string; capturedAt: number }
-): import("../../../../packages/shared/src/index.js").PerceptionDiff {
-  const changes: import("../../../../packages/shared/src/index.js").PerceptionChange[] = [];
-
-  const bg = before.graph;
-  const ag = after.graph;
-
-  // Title change
-  if (bg.title !== ag.title) {
-    changes.push({ kind: "title_changed", description: `Page title changed`, before: bg.title, after: ag.title });
-  }
-
-  // Page kind change
-  if (bg.kind !== ag.kind) {
-    changes.push({ kind: "page_kind_changed", description: `Page kind changed from "${bg.kind}" to "${ag.kind}"`, before: bg.kind, after: ag.kind });
-  }
-
-  // Headings diff
-  const beforeHeadings = new Set(bg.headings);
-  const afterHeadings  = new Set(ag.headings);
-  for (const h of bg.headings) {
-    if (!afterHeadings.has(h)) changes.push({ kind: "heading_removed", description: `Heading removed: "${h}"` });
-  }
-  for (const h of ag.headings) {
-    if (!beforeHeadings.has(h)) changes.push({ kind: "heading_added", description: `Heading added: "${h}"` });
-  }
-
-  // Forms diff — match by id, then name, then index
-  const beforeForms = new Map(bg.forms.map(f => [f.id, f]));
-  const afterForms  = new Map(ag.forms.map(f => [f.id, f]));
-  const allFormIds = new Set([...beforeForms.keys(), ...afterForms.keys()]);
-  for (const id of allFormIds) {
-    const bf = beforeForms.get(id);
-    const af = afterForms.get(id);
-    if (bf && !af) {
-      changes.push({ kind: "form_removed", description: `Form removed: "${bf.name ?? bf.purpose}" (${bf.fields.length} fields)` });
-    } else if (!bf && af) {
-      changes.push({ kind: "form_added", description: `Form added: "${af.name ?? af.purpose}" (${af.fields.length} fields)` });
-    } else if (bf && af) {
-      const bFieldIds = new Set(bf.fields.map(f => f.id));
-      const aFieldIds = new Set(af.fields.map(f => f.id));
-      const removedFields = bf.fields.filter(f => !aFieldIds.has(f.id)).map(f => f.label);
-      const addedFields   = af.fields.filter(f => !bFieldIds.has(f.id)).map(f => f.label);
-      if (removedFields.length || addedFields.length) {
-        const parts: string[] = [];
-        if (removedFields.length) parts.push(`removed fields: ${removedFields.join(", ")}`);
-        if (addedFields.length)   parts.push(`added fields: ${addedFields.join(", ")}`);
-        changes.push({ kind: "form_changed", description: `Form "${af.name ?? af.purpose}" changed — ${parts.join("; ")}` });
-      }
-    }
-  }
-
-  // Actions diff — match by label+kind key
-  const actionKey = (a: { label: string; kind: string }) => `${a.kind}::${a.label}`;
-  const beforeActions = new Set(bg.actions.map(actionKey));
-  const afterActions  = new Set(ag.actions.map(actionKey));
-  for (const a of bg.actions) {
-    if (!afterActions.has(actionKey(a))) changes.push({ kind: "action_removed", description: `Action removed: "${a.label}" (${a.kind})` });
-  }
-  for (const a of ag.actions) {
-    if (!beforeActions.has(actionKey(a))) changes.push({ kind: "action_added", description: `Action added: "${a.label}" (${a.kind})` });
-  }
-
-  // Alerts diff
-  const beforeAlerts = new Set(bg.alerts);
-  const afterAlerts  = new Set(ag.alerts);
-  for (const al of bg.alerts) {
-    if (!afterAlerts.has(al))  changes.push({ kind: "alert_removed", description: `Alert removed: "${al}"` });
-  }
-  for (const al of ag.alerts) {
-    if (!beforeAlerts.has(al)) changes.push({ kind: "alert_added",   description: `Alert added: "${al}"` });
-  }
-
-  // Media diff (by src/url key)
-  const mediaKey = (m: { src?: string; alt?: string }) => m.src ?? m.alt ?? "";
-  const beforeMedia = new Set(bg.media.map(mediaKey));
-  const afterMedia  = new Set(ag.media.map(mediaKey));
-  for (const m of bg.media) {
-    if (!afterMedia.has(mediaKey(m)))  changes.push({ kind: "media_removed", description: `Media removed: ${mediaKey(m) || "(unknown)"}` });
-  }
-  for (const m of ag.media) {
-    if (!beforeMedia.has(mediaKey(m))) changes.push({ kind: "media_added",   description: `Media added: ${mediaKey(m) || "(unknown)"}` });
-  }
-
-  // Build summary
-  let summary: string;
-  if (changes.length === 0) {
-    summary = "No structural changes detected.";
-  } else {
-    const counts: Record<string, number> = {};
-    for (const c of changes) {
-      const group = c.kind.replace(/_added|_removed|_changed/, "");
-      counts[group] = (counts[group] ?? 0) + 1;
-    }
-    const parts = Object.entries(counts).map(([g, n]) => `${n} ${g}${n > 1 ? "s" : ""} changed`);
-    summary = parts.join(", ") + ".";
-  }
-
-  return {
-    beforeId, afterId,
-    beforeUrl: before.url, afterUrl: after.url,
-    capturedAt: Date.now(),
-    changes,
-    summary,
-    identical: changes.length === 0
-  };
-}
-
-// evaluateAssertionAgainstGraph (module-level)
-
-/**
- * Pure, synchronous heuristic evaluator.  Takes a pre-captured `PageGraph`
- * and a free-text assertion and returns an `AssertionResult`.
- *
- * Strategy (in order of confidence):
- *  1. Quantitative  "N items/results/errors/buttons/fields/forms/links"patterns 
- *  2. Absence  "no X", "not visible", "does not exist"patterns 
- *  3. Presence  label/text appears in actions/headings/alerts/formspatterns 
- *  4. Title / URL exact or contains checks
- *  5. Disabled-state  "X is disabled / enabled"checks 
- *  6. Count  "at least N", "more than N", "fewer than N"comparisons 
- *  7.  low-confidence pass/fail based on keyword scanFallback 
- */
-export function evaluateAssertionAgainstGraph(
-  tabId: TabId,
-  assertion: string,
-  graph: PageGraph
-): AssertionResult {
-  const norm = assertion.toLowerCase().trim();
-
-  // Build evidence bundle
-  const allFields = graph.forms.flatMap(f => f.fields.map(ff => ff.id ?? ff.label ?? ""));
-  const evidence: import("../../../../packages/shared/src/index.js").AssertionEvidence = {
-    url: graph.url,
-    title: graph.title,
-    headings: graph.headings,
-    actionLabels: graph.actions.map(a => a.label),
-    alertTexts: graph.alerts,
-    formSummaries: graph.forms.map(f =>
-      `${f.purpose}: ${f.fields.map(ff => ff.id ?? ff.label ?? "field").join(", ")}`
-    ),
-    counts: {
-      headings: graph.headings.length,
-      actions: graph.actions.length,
-      forms: graph.forms.length,
-      alerts: graph.alerts.length,
-      fields: allFields.length,
-      mediaItems: graph.media.length
-    }
-  };
-
-  // Helpers
-  /** All searchable text on the page as a single lowercase string. */
-  const fullText = [
-    graph.title,
-    ...graph.headings,
-    ...graph.actions.map(a => a.label),
-    ...graph.alerts,
-    ...allFields,
-    ...graph.forms.map(f => f.name ?? ""),
-    graph.url
-  ].join(" ").toLowerCase();
-
-  function pass(explanation: string, confidence: import("../../../../packages/shared/src/index.js").AssertionConfidence = "high"): AssertionResult {
-    return { tabId, assertion, pass: true, confidence, explanation, evidence };
-  }
-  function fail(explanation: string, confidence: import("../../../../packages/shared/src/index.js").AssertionConfidence = "high"): AssertionResult {
-    return { tabId, assertion, pass: false, confidence, explanation, evidence };
-  }
-
-  // 1. Quantitative: "shows N items / results / " errors
-  const qtyMatch = norm.match(/\b(\d+)\s+(item|result|error|warning|button|link|field|form|message|alert|heading|image|video)s?\b/);
-  if (qtyMatch) {
-    const expected = parseInt(qtyMatch[1], 10);
-    const noun = qtyMatch[2];
-    const nounCounts: Record<string, number> = {
-      item:    graph.actions.length,   // best  no cart-specific fieldproxy 
-      result:  graph.headings.length,
-      error:   graph.alerts.filter(a => /error|invalid|fail/i.test(a)).length,
-      warning: graph.alerts.filter(a => /warn/i.test(a)).length,
-      button:  graph.actions.filter(a => a.kind === "button" || a.kind === "submit").length,
-      link:    graph.actions.filter(a => a.kind === "link").length,
-      field:   allFields.length,
-      form:    graph.forms.length,
-      message: graph.alerts.length,
-      alert:   graph.alerts.length,
-      heading: graph.headings.length,
-      image:   (graph.accessibility.roleCounts.img ?? 0) + (graph.accessibility.roleCounts.image ?? 0),
-      video:   graph.media.filter(m => m.kind === "video").length
-    };
-    // Also check if the exact number appears in visible text (e.g. "3 items in cart")
-    const numInText = fullText.includes(String(expected)) && fullText.includes(noun);
-    const actual = nounCounts[noun] ?? 0;
-    if (numInText) {
-      return pass(`The text "${expected} ${noun}" was found on the page.`);
-    }
-    if (actual === expected) {
-      return pass(`Found exactly ${actual} ${noun}(s) matches expected ${expected}.`);
-    }
-    if (Math.abs(actual - expected) <= 1) {
-      return fail(`Expected ${expected} ${noun}(s) but found ${actual}, close but not matching.`, "medium");
-    }
-    return fail(`Expected ${expected} ${noun}(s) but found ${actual}.`);
-  }
-
-  // 2. Absence: "no X", "not visible", "does not exist", "hidden"
-  const absenceMatch = norm.match(/\b(no |not |doesn't |does not |isn't |is not |never |hidden |absent )([\w\s]{2,40})/);
-  if (absenceMatch) {
-    const subject = absenceMatch[2].trim();
-    const found = fullText.includes(subject);
-    if (!found) {
-      return pass(`"${subject}" was not found on the page, absence confirmed.`);
-    }
-    return fail(`"${subject}" was found on the page but the assertion expects it to be absent.`);
-  }
-
-  // 3. Disabled / enabled state
-  const disabledMatch = norm.match(/\b([\w\s]{2,30})\s+is\s+(disabled|enabled|clickable|active|inactive)\b/);
-  if (disabledMatch) {
-    const label = disabledMatch[1].trim();
-    const state = disabledMatch[2];
-    const action = graph.actions.find(a => a.label.toLowerCase().includes(label));
-    if (!action) {
-      return fail(`Could not find an action with label matching "${label}".`, "medium");
-    }
-    const expectDisabled = state === "disabled" || state === "inactive";
-    if (action.disabled === expectDisabled) {
-      return pass(`Action "${action.label}" is ${state} as expected.`);
-    }
-    return fail(`Action "${action.label}" is ${action.disabled ? "disabled" : "enabled"} but assertion expects ${state}.`);
-  }
-
-  // 4. Title assertion
-  if (norm.includes("title") || norm.includes("page is") || norm.includes("page title")) {
-    const quoted = norm.match(/["']([^"']+)["']/);
-    const titleLower = graph.title.toLowerCase();
-    if (quoted) {
-      const q = quoted[1].toLowerCase();
-      if (titleLower.includes(q)) return pass(`Page title "${graph.title}" contains "${quoted[1]}".`);
-      return fail(`Page title is "${graph.title}" does not contain "${quoted[1]}".`);
-    }
-    // No quote, just check that title is non-empty
-    if (graph.title.trim()) return pass(`Page title is "${graph.title}".`, "medium");
-    return fail("Page has no title.", "medium");
-  }
-
-  // 5. At-least / more-than / fewer-than
-  const compMatch = norm.match(/\b(at least|more than|fewer than|less than|at most)\s+(\d+)\s+([\w]+)s?\b/);
-  if (compMatch) {
-    const op = compMatch[1];
-    const n = parseInt(compMatch[2], 10);
-    const noun = compMatch[3];
-    const count = evidence.counts[noun as keyof typeof evidence.counts] ?? 0;
-    const ok = (op === "at least" || op === "more than")
-      ? (op === "at least" ? count >= n : count > n)
-      : (op === "at most" ? count <= n : count < n);
-    if (ok) return pass(`There are ${count} ${noun}(s) that satisfy "${op} ${n}".`);
-    return fail(`There are ${count} ${noun}(s) that do not satisfy "${op} ${n}".`);
-  }
-
-  // 6. Presence: label/text appears anywhere
-  // Strip common filler words to get the core subject
-  const stripped = norm
-    .replace(/\b(the|a|an|is|are|shows?|displays?|contains?|has|have|visible|present|exists?|on the page)\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (stripped.length >= 3) {
-    if (fullText.includes(stripped)) {
-      return pass(`"${stripped}" was found in the page content.`, "medium");
-    }
-    // Try word-by-word: all significant words present?
-    const words = stripped.split(" ").filter(w => w.length > 2);
-    const allPresent = words.length > 0 && words.every(w => fullText.includes(w));
-    if (allPresent) {
-      return pass(`All key terms (${words.join(", ")}) were found on the page.`, "medium");
-    }
-    const anyPresent = words.some(w => fullText.includes(w));
-    if (!anyPresent) {
-      return fail(`None of the key terms (${words.join(", ")}) were found on the page.`, "low");
-    }
-    return fail(`Only some key terms were found. Assertion may not hold. Review evidence.`, "low");
-  }
-
-  // 7. Fallback
-  return {
-    tabId, assertion, pass: false,
-    confidence: "low",
-    explanation: "Could not determine truth of assertion from page graph alone. Provide the evidence bundle to an LLM for a second opinion.",
-    evidence
-  };
-}

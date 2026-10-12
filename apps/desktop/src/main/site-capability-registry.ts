@@ -1,11 +1,11 @@
 import type { WebContents } from "electron";
 
 import { AccountStore } from "./account-store.js";
-import { ApprovalPolicyStore } from "./approval-policy-store.js";
-import { executeBrowserAction as runBrowserAction, executeDomTool, waitForPageSettled } from "./dom-actuator.js";
+import { ApprovalPolicyStore } from "../../../../packages/devtools-core/src/core/stores/approval-policy-store.js";
+import { executeBrowserAction as runBrowserAction, executeDomTool, waitForPageSettled } from "../../../../packages/devtools-core/src/core/cdp/dom-actuator.js";
 import { electronCdpTarget } from "./electron-cdp-target.js";
-import { ApprovalStore } from "./approval-store.js";
-import { HandoffStore } from "./handoff-store.js";
+import { ApprovalStore } from "../../../../packages/devtools-core/src/core/stores/approval-store.js";
+import { HandoffStore } from "../../../../packages/devtools-core/src/core/stores/handoff-store.js";
 import { VaultStore } from "./vault-store.js";
 import type {
   AccountRef,

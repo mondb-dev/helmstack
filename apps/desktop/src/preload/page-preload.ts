@@ -1,7 +1,7 @@
 import { ipcRenderer } from "electron";
 
 import { extractPageObservation, installPageObservationStream } from "../../../../packages/perception/src/dom-extractor.js";
-import { isSocialPerceptionEnabled } from "../main/runtime-config.js";
+import { isSocialPerceptionEnabled } from "../../../../packages/devtools-core/src/core/runtime-config.js";
 import { BrowserShellChannel, type TabId } from "../../../../packages/shared/src/index.js";
 
 // Belt-and-suspenders: remove the webdriver flag from every page context.
