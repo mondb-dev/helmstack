@@ -1,6 +1,7 @@
 export * from "./account.js";
 export * from "./ai.js";
 export * from "./browser.js";
+export * from "./cdp.js";
 export * from "./ipc.js";
 export * from "./perception.js";
 export * from "./policy.js";
