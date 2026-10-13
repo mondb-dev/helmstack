@@ -120,7 +120,8 @@ describe.skipIf(!chrome)("daemon CLI binary (spawned) + unchanged mcp-server", (
 
   beforeAll(async () => {
     // Build the real bin (dist/main.js) so this exercises what `npx helmstack-daemon` runs.
-    execFileSync(path.join(repoRoot, "node_modules/.bin/tsup"), { cwd: daemonDir, stdio: "pipe" });
+    // Run tsup's JS entry with node (not node_modules/.bin/tsup, a shell shim that execFile can't run on Windows).
+    execFileSync(process.execPath, [path.join(repoRoot, "node_modules/tsup/dist/cli-default.js")], { cwd: daemonDir, stdio: "pipe" });
     dataDir = await mkdtemp(path.join(tmpdir(), "helmstack-daemon-cli-"));
     proc = spawn(process.execPath, [path.join(daemonDir, "dist/main.js"), "--port", "0", "--data-dir", dataDir, "--chrome-path", chrome!.path], {
       env: { ...process.env, HELMSTACK_AUTH_TOKEN: token, HELMSTACK_PORT: "" },
@@ -187,7 +188,9 @@ describe.skipIf(!chrome)("daemon CLI binary (spawned) + unchanged mcp-server", (
     }
   }, 60_000);
 
-  it("SIGTERM shuts down cleanly: exit 0, Chrome gone", async () => {
+  // Windows has no POSIX signals: Node's kill("SIGTERM") there is TerminateProcess,
+  // so the daemon's graceful-shutdown handler never runs (exit code null, no log line).
+  it.skipIf(process.platform === "win32")("SIGTERM shuts down cleanly: exit 0, Chrome gone", async () => {
     expect(isAlive(chromePid)).toBe(true);
     const exited = new Promise<number | null>((resolve) => proc.once("exit", (code) => resolve(code)));
     proc.kill("SIGTERM");

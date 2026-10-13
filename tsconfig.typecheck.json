@@ -1,7 +1,13 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    // Resolve workspace packages to their TypeScript sources so typecheck
+    // never depends on build output (package.json "types" point at dist/,
+    // which doesn't exist on a fresh CI checkout before build:packages).
+    "paths": {
+      "@helmstack/*": ["./packages/*/src/index.ts"]
+    }
   },
   "include": [
     "apps/*/src/**/*.ts",

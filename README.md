@@ -860,6 +860,31 @@ Run TypeScript verification:
 npx tsc --noEmit -p apps/desktop/tsconfig.json
 ```
 
+### Agent API contract suite
+
+`packages/devtools-core/test/contract/` holds one HTTP scenario set for the agent API (tabs, perception + snapshot diff, screenshots + viewport suite + screenshot diff, a11y, element styles, layout issues, design tokens, focus order, network mock, logs + HAR, coverage, storage, cookies, assertion watches, approvals, health, 501 slices). It runs against several backends:
+
+| Factory | File | Runs |
+| --- | --- | --- |
+| core + scripted backend | `scripted.contract.test.ts` | Always. No browser, so scenarios that read in-page collector results (a11y, styles, layout, tokens, focus order, coverage, storage, cookies, console) are skipped. |
+| daemon (headless Chrome) | `daemon.contract.test.ts` | When Chrome is found (`HELMSTACK_CHROME_PATH`, a system install, or `npx @puppeteer/browsers install chrome@stable`). With `CI_REQUIRE_CHROME=1`, a missing Chrome fails the run instead of skipping. |
+| external instance | `external.contract.test.ts` | Only when `HELMSTACK_CONTRACT_URL` is set. |
+
+```bash
+npx vitest run --project contract
+```
+
+To run the same suite against the desktop app (Electron can't run in CI), start the app and point the external factory at it. The suite never defaults to port 7070; you have to set the URL yourself.
+
+```bash
+HELMSTACK_PORT=7171 npm run dev            # in one terminal
+HELMSTACK_CONTRACT_URL=http://127.0.0.1:7171 \
+HELMSTACK_CONTRACT_TOKEN="$(cat "<userData>/helmstack-agent-token")" \
+  npx vitest run --project contract external
+```
+
+Use the token the app was launched with: `HELMSTACK_AUTH_TOKEN` if you set one, otherwise the contents of `<userData>/helmstack-agent-token`. The suite opens its own tabs and closes them again. It serves the fixture pages from a local server on 127.0.0.1 and gives its snapshots run-unique ids. If your approval policy for the fixture origin is "allow" rather than the default "ask", the approval scenario fails because the submit completes without being queued.
+
 Build the app:
 
 ```bash

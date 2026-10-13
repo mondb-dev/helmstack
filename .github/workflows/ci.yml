@@ -50,6 +50,8 @@ jobs:
       - name: Typecheck
         # Covers every workspace (incl. tests) on all OSes — catches type
         # regressions on Linux, where the Electron desktop build is skipped.
+        # Workspace imports resolve to sources via `paths` in
+        # tsconfig.typecheck.json, so this runs before any build output exists.
         run: npm run typecheck
 
       - name: Lint
@@ -64,4 +66,58 @@ jobs:
         if: runner.os != 'Linux'
 
       - name: Run tests
+        # Real-Chrome tests (apps/daemon/test/*.integration.test.ts and the
+        # daemon contract suite) run wherever the runner image ships Chrome
+        # (all three GitHub-hosted images do) and skip cleanly otherwise. The
+        # guaranteed-Chrome run is the `daemon-headless` job below.
         run: npm test
+
+  daemon-headless:
+    name: Daemon + contract suite (headless Chrome)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Chrome for Testing channel/version for @puppeteer/browsers
+      # (e.g. "stable", or pin a build such as "131.0.6778.85").
+      CHROME_VERSION: stable
+      # Missing Chrome fails the run instead of skipping the real-browser tests.
+      CI_REQUIRE_CHROME: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Chrome for Testing
+        # @puppeteer/browsers is the version pinned in package-lock.json
+        # (a puppeteer-core dependency), so --no-install never fetches another.
+        run: |
+          out="$(npx --no-install @puppeteer/browsers install "chrome@${CHROME_VERSION}" --path "$RUNNER_TEMP/chrome" --format '{{buildId}} {{path}}')"
+          echo "$out"
+          read -r build chrome_path <<< "$(echo "$out" | tail -n 1)"
+          test -x "$chrome_path"
+          echo "Installed Chrome for Testing $build at $chrome_path"
+          echo "HELMSTACK_CHROME_PATH=$chrome_path" >> "$GITHUB_ENV"
+
+      - name: Allow Chrome's sandbox (Ubuntu 23.10+ AppArmor userns restriction)
+        # Chrome for Testing has no setuid sandbox helper; without unprivileged
+        # user namespaces it aborts with "No usable sandbox". See
+        # https://pptr.dev/troubleshooting#issues-with-apparmor-on-ubuntu
+        run: |
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          "$HELMSTACK_CHROME_PATH" --headless=new --disable-gpu --dump-dom about:blank >/dev/null
+
+      - name: Build packages, daemon and mcp-server
+        # build:packages includes mcp-server (its dist/ is spawned by the daemon e2e test).
+        run: |
+          npm run build:packages
+          npm run build -w @helmstack/daemon
+
+      - name: Run daemon + contract suites
+        run: npx vitest run --project daemon --project contract
