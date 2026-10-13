@@ -1,7 +1,6 @@
 {
   "name": "@helmstack/daemon",
   "version": "0.1.0",
-  "private": true,
   "description": "Headless HelmStack runtime that drives a plain Chrome over CDP",
   "license": "MIT",
   "type": "module",
@@ -33,5 +32,11 @@
   "dependencies": {
     "@helmstack/shared": "*",
     "puppeteer-core": "^25.13.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

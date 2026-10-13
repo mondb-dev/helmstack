@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @helmstack/desktop",
-    "build:packages": "npm run build -w packages/shared -w packages/perception -w packages/devtools-core -w packages/agent-sdk -w packages/mcp-server",
+    "build:packages": "npm run build -w packages/shared -w packages/perception -w packages/devtools-core -w packages/agent-sdk -w packages/mcp-server -w apps/daemon",
     "dev": "npm run dev -w @helmstack/desktop",
     "package:mac": "npm run package:mac -w @helmstack/desktop",
     "serve:test-pages": "node apps/desktop/scripts/serve-test-pages.mjs",
