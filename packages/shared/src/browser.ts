@@ -1003,7 +1003,23 @@ export type StorageReport = {
 
 // ── CSS coverage / unused-rule report ──────────────────────────────────────
 
-/** Per-stylesheet CSS rule-usage coverage, derived from CDP rule-usage tracking. */
+/** A style rule that never matched during a CSS coverage capture. */
+export type CssUnusedRule = {
+  /** Selector text, whitespace-collapsed (truncated to 200 chars). */
+  selector: string;
+  /** Offsets into the stylesheet text. */
+  startOffset: number;
+  endOffset: number;
+  /** 1-based line/column within the stylesheet text (not the HTML document for inline sheets). */
+  line: number;
+  column: number;
+};
+
+/**
+ * Per-stylesheet CSS rule-usage coverage. Rules are the sheet's style rules
+ * (incl. nested and inside `@media`/`@supports`/`@layer`/`@container`), enumerated
+ * from the sheet text; `@keyframes`, `@font-face` and other at-rules are not rules.
+ */
 export type CssStylesheetCoverage = {
   styleSheetId: string;
   /** Source URL of the stylesheet, or "" for inline / constructed sheets. */
@@ -1021,6 +1037,18 @@ export type CssStylesheetCoverage = {
   unusedRuleCount: number;
   /** `usedBytes / ruleBytes * 100`, rounded to 0.1; 0 when no rules tracked. */
   usedPercent: number;
+  /**
+   * "measured" when the sheet text was read and its rules enumerated; "unknown"
+   * when the text could not be fetched — all counts are then 0 and the sheet is
+   * excluded from the summary totals (never reported as 100% used).
+   */
+  status?: "measured" | "unknown";
+  /** True for inline `<style>` sheets. */
+  isInline?: boolean;
+  /** Rules that never matched, in source order (capped; see `unusedRulesTruncated`). */
+  unusedRules?: CssUnusedRule[];
+  /** True when `unusedRules` was capped and more unused rules exist. */
+  unusedRulesTruncated?: boolean;
 };
 
 /** Aggregate unused-CSS report across all of a tab's stylesheets. */
@@ -1041,6 +1069,8 @@ export type CssCoverageReport = {
     ruleCount: number;
     usedRuleCount: number;
     unusedRuleCount: number;
+    /** Stylesheets whose text could not be fetched (status "unknown"); included in `stylesheetCount`. */
+    unknownStylesheetCount?: number;
   };
 };
 

@@ -66,7 +66,8 @@ import { assertStyles, inspectStyles } from "./cdp/style-inspector.js";
 import { captureThreeScene } from "./cdp/threejs-inspector.js";
 import type { PageHandle } from "./commands/types.js";
 import { buildComponentSourceReport, componentSourceCollectorScript, type RawComponentSources } from "./reports/component-source.js";
-import { buildCssCoverageReport, type RawRuleRange, type RawStylesheetCoverage } from "./reports/css-coverage.js";
+import type { RuleUsageRange } from "./css-rules.js";
+import { buildCssCoverageReport, rawStylesheetFromUsage, type RawStylesheetCoverage } from "./reports/css-coverage.js";
 import { buildDesignTokensReport, designTokenCollectorScript, type RawDesignTokens } from "./reports/design-tokens.js";
 import { correlateRegionsToElements, elementBoundsScript } from "./reports/element-bounds.js";
 import { analyzeFocusOrder, focusableElementsScript, type RawFocusOrder } from "./reports/focus-order.js";
@@ -495,16 +496,25 @@ export class TabSession {
   /**
    * Measure unused CSS via CDP rule-usage tracking. Reloads the page (as the
    * DevTools Coverage panel does), guarded by a hard timeout.
+   *
+   * Current Chrome's `CSS.stopRuleUsageTracking` lists only the rules that were
+   * *used*, so the full rule set is enumerated from each stylesheet's text
+   * (`CSS.getStyleSheetText`) for every sheet announced via `CSS.styleSheetAdded`
+   * — including sheets with no used rules — and usage ranges are matched to it.
    */
   async captureCssCoverage(): Promise<CssCoverageReport> {
     const cdp = this.cdp;
 
-    // Capture stylesheet headers (id → sourceURL) emitted after CSS.enable.
-    const headers = new Map<string, string>();
+    // Track the page's own stylesheets (id → header) as CSS.styleSheetAdded announces them.
+    type SheetHeader = { styleSheetId: string; sourceURL?: string; origin?: string; isInline?: boolean };
+    const headers = new Map<string, SheetHeader>();
     const offHeaders = cdp.onEvent((method, params) => {
-      const header = (params as { header?: { styleSheetId: string; sourceURL?: string } }).header;
-      if (method === "CSS.styleSheetAdded" && header) {
-        headers.set(header.styleSheetId, header.sourceURL ?? "");
+      if (method === "CSS.styleSheetAdded") {
+        const header = (params as { header?: SheetHeader }).header;
+        // Only author sheets: skip user-agent, injected and DevTools inspector sheets.
+        if (header && (header.origin === undefined || header.origin === "regular")) headers.set(header.styleSheetId, header);
+      } else if (method === "CSS.styleSheetRemoved") {
+        headers.delete((params as { styleSheetId?: string }).styleSheetId ?? "");
       }
     });
     const load = waitForCdpEvent(cdp, "Page.loadEventFired");
@@ -515,6 +525,9 @@ export class TabSession {
       await cdp.send("Page.enable").catch(() => {});
       await cdp.send("CSS.startRuleUsageTracking");
 
+      // Sheets announced so far belong to the pre-reload document.
+      headers.clear();
+
       // Reload so rules used during initial render are counted; race against a
       // timeout so a stalled load never hangs the capture.
       await cdp.send("Page.reload", { ignoreCache: false }).catch(() => {});
@@ -522,25 +535,41 @@ export class TabSession {
       await delay(RELOAD_SETTLE_MS); // settle late-applied styles
 
       const stop = await cdp.send<{
-        ruleUsage?: Array<{ styleSheetId: string; startOffset: number; endOffset: number; used: boolean }>;
+        ruleUsage?: Array<{ styleSheetId?: string; startOffset: number; endOffset: number; used: boolean }>;
       }>("CSS.stopRuleUsageTracking");
-      const ruleUsage = stop.ruleUsage ?? [];
 
-      const bySheet = new Map<string, RawRuleRange[]>();
-      for (const r of ruleUsage) {
-        const arr = bySheet.get(r.styleSheetId) ?? [];
+      const usageBySheet = new Map<string, RuleUsageRange[]>();
+      for (const r of stop.ruleUsage ?? []) {
+        if (!r.styleSheetId) continue; // user-agent / user stylesheet rules
+        const arr = usageBySheet.get(r.styleSheetId) ?? [];
         arr.push({ startOffset: r.startOffset, endOffset: r.endOffset, used: r.used });
-        bySheet.set(r.styleSheetId, arr);
+        usageBySheet.set(r.styleSheetId, arr);
       }
 
+      // Every announced sheet, plus any sheet only seen in the usage list.
+      const sheetIds = new Set<string>([...headers.keys(), ...usageBySheet.keys()]);
       const stylesheets: RawStylesheetCoverage[] = [];
-      for (const [styleSheetId, ranges] of bySheet) {
-        let text = "";
+      for (const styleSheetId of sheetIds) {
+        let text: string | null = null;
         try {
           const t = await cdp.send<{ text?: string }>("CSS.getStyleSheetText", { styleSheetId });
           text = t.text ?? "";
-        } catch { /* stylesheet may have been replaced by the reload */ }
-        stylesheets.push({ styleSheetId, sourceURL: headers.get(styleSheetId) ?? "", text, ranges });
+        } catch {
+          /* replaced by the reload or otherwise gone: reported as "unknown" */
+        }
+        const header = headers.get(styleSheetId);
+        // Usage for a sheet never announced after the reload whose text is gone is
+        // from the pre-reload document: stale, not an "unknown" sheet of this page.
+        if (text === null && !header) continue;
+        stylesheets.push(
+          rawStylesheetFromUsage({
+            styleSheetId,
+            sourceURL: header?.sourceURL ?? "",
+            text,
+            usage: usageBySheet.get(styleSheetId) ?? [],
+            ...(header?.isInline !== undefined ? { isInline: header.isInline } : {})
+          })
+        );
       }
 
       return buildCssCoverageReport({ url: cdp.url(), stylesheets }, this.id, Date.now());

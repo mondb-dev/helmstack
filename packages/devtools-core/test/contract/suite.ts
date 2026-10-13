@@ -339,17 +339,18 @@ export function defineContractSuite(factory: BackendFactory): void {
       });
     }, SLOW);
 
-    // KNOWN PRODUCT BUG (reported, not fixed here): current Chrome's
-    // CSS.stopRuleUsageTracking only lists *used* rules, so captureCssCoverage
-    // reports 100% used / 0 unused rules for fixture.css, which has 2 unused
-    // rules. Un-skip once the report derives unused rules from the sheet text.
-    it.skip("CSS coverage counts rules that never matched as unused", async () => {
+    // Current Chrome's CSS.stopRuleUsageTracking lists only *used* rules; the
+    // report must still count fixture.css's 2 never-matching rules as unused.
+    it.skipIf(needsBrowser)("CSS coverage counts rules that never matched as unused", async () => {
       await withTab(pages.styled, async (tabId) => {
         await perceive(tabId, (p) => p.result.graph.url === pages.styled);
         const css = await ok("GET", `/api/tabs/${tabId}/css-coverage`);
         const sheet = css.stylesheets.find((s: Json) => s.sourceURL === `${pages.origin}/fixture.css`);
-        expect(sheet.unusedRuleCount).toBeGreaterThanOrEqual(2);
+        expect(sheet, JSON.stringify(css.stylesheets.map((s: Json) => s.sourceURL))).toBeDefined();
+        expect(sheet).toMatchObject({ status: "measured", ruleCount: 5, usedRuleCount: 3, unusedRuleCount: 2 });
+        expect(sheet.usedPercent).toBeGreaterThan(0);
         expect(sheet.usedPercent).toBeLessThan(100);
+        expect(sheet.unusedRules.map((r: Json) => r.selector)).toEqual([".never-used-rule", ".also-never-used > span"]);
       });
     }, SLOW);
 
