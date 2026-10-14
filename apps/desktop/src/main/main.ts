@@ -205,7 +205,13 @@ function registerIpcHandlers(
     getFixtureUrl: async (name: FixturePageName) => shell.getFixtureUrl(name),
     // Screenshot
     captureScreenshot: async (tabId: TabId) => manager.captureScreenshot(tabId),
-    pickElement: async (tabId: TabId) => shell.pickElement(tabId),
+    // "Select for agent": record the human's pick so agents can read it
+    // (GET /api/tabs/:id/picks/latest, SSE element_picked, MCP tool).
+    pickElement: async (tabId: TabId) => {
+      const pick = await shell.pickElement(tabId);
+      manager.recordHumanPick(tabId, pick);
+      return pick;
+    },
     // Handoffs
     listHandoffs: async () => manager.listHandoffs(),
     resolveHandoff: async (requestId: string) => manager.resolveHandoff(requestId),

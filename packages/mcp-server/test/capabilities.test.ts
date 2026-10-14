@@ -84,6 +84,13 @@ describe("MCP tool gating", () => {
     for (const name of AGENT_SUBSTRATE_TOOLS) expect(tools).toContain(name);
   });
 
+  it("browser_get_selected_element is part of the default FE-dev surface", async () => {
+    expect(AGENT_SUBSTRATE_TOOLS).not.toContain("browser_get_selected_element");
+    const tools = await registeredTools(undefined);
+    expect(tools).toContain("browser_get_selected_element");
+    expect(tools).toContain("browser_pick_element");
+  });
+
   it("HELMSTACK_PROFILE=fe-dev keeps them off", async () => {
     const tools = await registeredToolsWith({ HELMSTACK_PROFILE: "fe-dev" });
     for (const name of AGENT_SUBSTRATE_TOOLS) expect(tools).not.toContain(name);

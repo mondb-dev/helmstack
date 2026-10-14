@@ -10,7 +10,8 @@
  *  - the tab id (`:id` of `/api/tabs/:id/…` only) and the agent id header
  *    (truncated);
  *  - status, timing, and a summary built **only from numbers, booleans and
- *    fixed enums** of the JSON response (counts, pass/fail, statuses).
+ *    fixed enums** of the JSON response (counts, pass/fail, statuses) — the
+ *    one exception is a picked element's tag name, validated by {@link pickTag}.
  * Request bodies, headers other than `X-Agent-ID`, tokens, typed text,
  * selectors, assertion text, URLs and response strings are never read into
  * an entry.
@@ -54,6 +55,27 @@ const commandStatus: Summarizer = (d) => {
   if (typeof d.status !== "string" || !COMMAND_STATUSES.has(d.status)) return undefined;
   return d.status.replace(/_/g, " ");
 };
+
+/** Tag name of a recorded human pick (`{ pick: { tagName } }`); never its text or selector. */
+const tagSummary: Summarizer = (d) => pickTag((d.pick as { tagName?: unknown } | undefined)?.tagName);
+
+/** A lower-case tag name when it looks like one, else undefined (keeps page strings out of the feed). */
+export function pickTag(tagName: unknown): string | undefined {
+  if (typeof tagName !== "string") return undefined;
+  const tag = tagName.toLowerCase();
+  return /^[a-z][a-z0-9-]{0,63}$/.test(tag) ? tag : undefined;
+}
+
+/**
+ * Activity entry for a pick the human made with "Select for agent" in the
+ * shell. Not an HTTP route: `method`/`route` are fixed markers so the feed
+ * can show it alongside agent calls. The summary is the tag name only.
+ */
+export const SHELL_PICK_ACTIVITY = {
+  method: "SHELL",
+  route: "shell:select-for-agent",
+  label: "You selected an element"
+} as const;
 
 /**
  * Every agent API route, its label and optional summary. Keep in sync with the
@@ -133,6 +155,8 @@ export const ACTIVITY_ROUTES: readonly ActivityRoute[] = [
   { method: "GET", pattern: "/api/tabs/:id/mutations", label: "Mutation timeline" },
   { method: "GET", pattern: "/api/tabs/:id/threejs-scene", label: "Three.js scene" },
   { method: "GET", pattern: "/api/tabs/:id/pick", label: "Pick element" },
+  { method: "GET", pattern: "/api/tabs/:id/picks/latest", label: "Read selected element", summarize: tagSummary },
+  { method: "GET", pattern: "/api/picks", label: "List selected elements", summarize: arrayCount("element") },
   // Input
   { method: "POST", pattern: "/api/tabs/:id/evaluate", label: "Evaluate script" },
   { method: "POST", pattern: "/api/tabs/:id/insert-text", label: "Type text" },

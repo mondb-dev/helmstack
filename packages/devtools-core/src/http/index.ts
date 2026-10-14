@@ -5,6 +5,7 @@ export {
   DEFAULT_AGENT_PORT,
   UNSUPPORTED_ON_BACKEND,
   REQUIRES_HUMAN,
+  NO_PICK,
   RECENT_AGENT_WINDOW_MS,
   isAllowedOrigin,
   isLoopbackHostHeader,

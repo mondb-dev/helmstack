@@ -740,6 +740,25 @@ server.tool(
 );
 
 server.tool(
+  "browser_get_selected_element",
+  "Returns the element the user selected with 'Select for agent' in the HelmStack window — call this when the user says 'this element', 'the thing I selected', etc. Gives the element's CSS selector, tag, id, trimmed text, page URL, tab id and when it was picked. Pass tabId for that tab's latest selection, or omit it for the most recent selection in any tab. Does not wait for the human (use browser_pick_element to ask them to pick).",
+  { tabId: z.string().optional().describe("Tab ID (omit for the most recent selection in any tab)") },
+  async ({ tabId }) => {
+    const pick = tabId ? await browser.getLatestPick(tabId) : (await browser.listPicks())[0] ?? null;
+    if (!pick) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: "The user has not selected an element" + (tabId ? " in this tab" : "") +
+            " yet. Ask them to click 'Select for agent' in the HelmStack window and pick it."
+        }]
+      };
+    }
+    return jsonResult(pick);
+  }
+);
+
+server.tool(
   "browser_component_sources",
   "Map rendered DOM nodes back to the component + source file:line that produced them (React _debugSource, Svelte __svelte_meta, Vue __file). Requires a dev build with source metadata. Lets you reference '<PrimaryButton> at src/ui/Button.tsx:42' instead of a brittle CSS selector.",
   { tabId: z.string().describe("Tab ID") },

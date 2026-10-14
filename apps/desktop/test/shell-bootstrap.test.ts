@@ -100,12 +100,13 @@ describe("shell bootstrap (fake window.browserShell)", () => {
     expect(document.getElementById("intent-form")!.hidden).toBe(false);
   });
 
-  it("Select for agent runs the picker on the active tab and confirms via toast", async () => {
+  it("Select for agent runs the picker on the active tab and confirms the agent hand-off via toast", async () => {
     await boot();
     document.getElementById("pick-button")!.click();
     await flush();
     expect(fake.fn("pickElement")).toHaveBeenCalledWith("tab-1");
-    const toasts = Array.from(document.querySelectorAll(".toast--success")).map((t) => t.textContent);
-    expect(toasts.some((t) => t?.includes("button.cta"))).toBe(true);
+    const toasts = Array.from(document.querySelectorAll(".toast--success .toast__message")).map((t) => t.textContent);
+    expect(toasts).toContain("Selected <button>. Your agent can now read it.");
+    expect(toasts.some((t) => t?.includes("Buy"))).toBe(false);
   });
 });

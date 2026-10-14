@@ -39,6 +39,7 @@ import type {
   FrameworkReport,
   HarArchive,
   HealthReport,
+  HumanElementPick,
   HumanHandoffRecord,
   JsCoverageReport,
   LayoutIssuesReport,
@@ -286,4 +287,11 @@ export interface AgentApi extends TabsApi, PerceptionApi, CommandApi, Screenshot
   readonly backend?: BackendKind;
   /** Human inspect-and-click element picker. Needs a visible window → desktop only. */
   pickElement?(tabId: TabId): Promise<ElementPickResult>;
+  /**
+   * Elements the human selected with "Select for agent" in the shell. Optional:
+   * when absent (or on a backend without a picker) the routes report no picks.
+   */
+  getLatestPick?(tabId: TabId): HumanElementPick | null;
+  listPicks?(): HumanElementPick[];
+  onElementPicked?(listener: (pick: HumanElementPick) => void): () => void;
 }

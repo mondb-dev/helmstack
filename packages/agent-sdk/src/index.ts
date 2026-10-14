@@ -79,6 +79,8 @@ export type {
   ElementStyleInspectionReport,
   EventSourceMessageEntry,
   FileUploadTarget,
+  ElementPickResult,
+  HumanElementPick,
   HumanHandoffRecord,
   IndexedDbDatabase,
   IndexedDbObjectStore,
@@ -149,6 +151,7 @@ import type {
   DownloadEntry,
   ElementStyleAssertionReport,
   ElementStyleInspectionReport,
+  HumanElementPick,
   HumanHandoffRecord,
   LocationOverride,
   MediaEmulation,
@@ -213,8 +216,26 @@ export type StreamHandlers = {
   onIntentChanged?: (data: { intent: string }) => void;
   onAgentLog?: (data: { level: string; message: string; timestamp: number }) => void;
   onAssertionChanged?: (transition: AssertionTransition) => void;
+  /** The human selected an element with "Select for agent" in the HelmStack window. */
+  onElementPicked?: (pick: HumanElementPick) => void;
   onError?: (err: Error) => void;
 };
+
+/** A non-2xx response from the agent server. `code` is the JSON body's `code`, when present. */
+export class HelmstackHttpError extends Error {
+  readonly code: string | undefined;
+
+  constructor(readonly status: number, method: string, path: string, readonly body: string) {
+    super(`HTTP ${status} ${method} ${path}: ${body}`);
+    this.name = "HelmstackHttpError";
+    let code: string | undefined;
+    try {
+      const parsed = JSON.parse(body) as { code?: unknown };
+      if (typeof parsed.code === "string") code = parsed.code;
+    } catch { /* non-JSON error body */ }
+    this.code = code;
+  }
+}
 
 export type StreamHandle = {
   close(): void;
@@ -824,6 +845,26 @@ export class BrowserClient {
   }
 
   /**
+   * The element the human last selected with "Select for agent" in this tab
+   * (the "fix *this*" hand-off), or `null` when they haven't selected one.
+   * Unlike {@link pickElement} this never waits for the human. Subscribe to
+   * `stream({ onElementPicked })` to react as soon as they pick.
+   */
+  async getLatestPick(tabId: TabId): Promise<HumanElementPick | null> {
+    try {
+      return await this.get<HumanElementPick>(`/api/tabs/${tabId}/picks/latest`);
+    } catch (err) {
+      if (err instanceof HelmstackHttpError && err.status === 404 && err.code === "no_pick") return null;
+      throw err;
+    }
+  }
+
+  /** Recent elements the human selected with "Select for agent", newest first (all tabs this agent can see). */
+  async listPicks(): Promise<HumanElementPick[]> {
+    return this.get("/api/picks");
+  }
+
+  /**
    * Map rendered DOM nodes back to their authoring component + source `file:line`
    * (React `_debugSource`, Svelte `__svelte_meta`, Vue `__file`). Requires a dev
    * build with source metadata. Lets an agent reference components, not selectors.
@@ -1169,7 +1210,7 @@ export class BrowserClient {
           res.on("end", () => {
             const text = Buffer.concat(chunks).toString("utf8");
             if ((res.statusCode ?? 0) >= 400) {
-              return reject(new Error(`HTTP ${res.statusCode} ${method} ${path}: ${text}`));
+              return reject(new HelmstackHttpError(res.statusCode ?? 0, method, path, text));
             }
             try {
               resolve(JSON.parse(text) as T);
@@ -1231,6 +1272,9 @@ function dispatch(eventType: string, data: unknown, handlers: StreamHandlers) {
       break;
     case "assertion_changed":
       handlers.onAssertionChanged?.(data as AssertionTransition);
+      break;
+    case "element_picked":
+      handlers.onElementPicked?.(data as HumanElementPick);
       break;
   }
 }

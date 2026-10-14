@@ -32,6 +32,7 @@ import type {
   FrameworkReport,
   HarArchive,
   HealthReport,
+  HumanElementPick,
   HumanHandoffRecord,
   JsCoverageReport,
   LayoutIssuesReport,
@@ -83,6 +84,7 @@ import { ApprovalStore } from "./stores/approval-store.js";
 import { AssertionWatchStore } from "./stores/assertion-watch.js";
 import { PerceptionBaselineStore, type PerceptionBaselineEntry } from "./stores/baseline-store.js";
 import { HandoffStore } from "./stores/handoff-store.js";
+import { HumanPickStore } from "./stores/human-pick-store.js";
 import { SitePatternStore } from "./stores/site-pattern-store.js";
 import { VisualDiffStore } from "./stores/visual-diff-store.js";
 import { TabSession } from "./tab-session.js";
@@ -126,6 +128,7 @@ export class HelmstackCore implements AgentApi {
   private readonly perceptionStore: PerceptionBaselineStore;
   private readonly perceptionCache = new Map<string, PerceptionBaselineEntry>();
   private readonly assertionWatches = new AssertionWatchStore();
+  private readonly humanPicks = new HumanPickStore();
 
   private readonly tabsListeners = new Set<(tabs: TabSummary[]) => void>();
   private readonly observationListeners = new Set<(observation: PageObservation) => void>();
@@ -133,6 +136,7 @@ export class HelmstackCore implements AgentApi {
   private readonly approvalsChangedListeners = new Set<(pending: PendingApproval[]) => void>();
   private readonly overridesChangedListeners = new Set<(overrides: TabOverrides) => void>();
   private readonly assertionTransitionListeners = new Set<(transition: AssertionTransition) => void>();
+  private readonly elementPickedListeners = new Set<(pick: HumanElementPick) => void>();
   private readonly unsubscribers: Array<() => void> = [];
 
   constructor(private readonly browser: BrowserBackend, options: HelmstackCoreOptions) {
@@ -231,6 +235,7 @@ export class HelmstackCore implements AgentApi {
     session?.dispose();
     this.sessions.delete(tabId);
     this.assertionWatches.clearTab(tabId);
+    this.humanPicks.clearTab(tabId);
     // A closed tab's approvals can never run; drop them so the human isn't asked.
     this.approvals.clearTab(tabId);
     // Final event (once, even though closeTab and the `closed` lifecycle both
@@ -972,6 +977,39 @@ export class HelmstackCore implements AgentApi {
 
   onHandoffRequested(listener: (handoff: HumanHandoffRecord) => void): void {
     this.capabilityRegistry.onHandoffRequested(listener);
+  }
+
+  /** Fires after {@link recordHumanPick} stores a completed pick. Returns an unsubscribe function. */
+  onElementPicked(listener: (pick: HumanElementPick) => void): () => void {
+    this.elementPickedListeners.add(listener);
+    return () => this.elementPickedListeners.delete(listener);
+  }
+
+  // ── Human element picks ("Select for agent") ──────────────────────────────
+
+  /**
+   * Record an element the human picked in the shell so agents can read it.
+   * Cancelled picks are ignored (returns null). Picks an *agent* started via
+   * `pickElement` are returned to that agent directly and are not recorded.
+   */
+  recordHumanPick(tabId: TabId, result: ElementPickResult): HumanElementPick | null {
+    if (!this.sessions.has(tabId)) return null;
+    const entry = this.humanPicks.record(tabId, result);
+    if (!entry) return null;
+    for (const listener of this.elementPickedListeners) {
+      try { listener(entry); } catch { /* a listener must not break recording */ }
+    }
+    return entry;
+  }
+
+  /** The human's latest pick on a tab, or null. */
+  getLatestPick(tabId: TabId): HumanElementPick | null {
+    return this.humanPicks.latestFor(tabId);
+  }
+
+  /** Recent human picks across tabs, newest first (bounded). */
+  listPicks(): HumanElementPick[] {
+    return this.humanPicks.list();
   }
 }
 

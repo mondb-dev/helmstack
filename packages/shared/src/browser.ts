@@ -1212,3 +1212,15 @@ export type ElementPickResult = {
   text: string;
   id: string | null;
 };
+
+/**
+ * An element the human selected with "Select for agent" in the desktop shell,
+ * recorded so an agent can read it (`GET /api/tabs/:id/picks/latest`) or react
+ * to the `element_picked` SSE event. Only completed picks are recorded.
+ */
+export type HumanElementPick = {
+  tabId: TabId;
+  /** Epoch ms when the pick was recorded. */
+  pickedAt: number;
+  pick: ElementPickResult;
+};

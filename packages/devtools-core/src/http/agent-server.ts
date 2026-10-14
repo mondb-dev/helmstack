@@ -8,6 +8,7 @@ import type {
   BrowserOutputCommand,
   CookieEntry,
   DiffRegion,
+  HumanElementPick,
   HumanHandoffRecord,
   LocationOverride,
   MediaEmulation,
@@ -19,7 +20,15 @@ import type {
 } from "../../../shared/src/index.js";
 import type { AccountsApi, AgentApi, BackendKind, ExtensionsApi, OptionalCapability } from "../api.js";
 import { resolveProfile } from "../core/runtime-config.js";
-import { ActivityLog, clampAgentId, isActivityExcluded, matchActivityRoute, summarizeResponse } from "./activity.js";
+import {
+  ActivityLog,
+  clampAgentId,
+  isActivityExcluded,
+  matchActivityRoute,
+  pickTag,
+  SHELL_PICK_ACTIVITY,
+  summarizeResponse
+} from "./activity.js";
 import { parseAccountInput, parseNetworkMockRules, parseResourceBudget, parseViewportBody } from "./request-validation.js";
 
 type SseClient = { res: http.ServerResponse; agentId: string | null };
@@ -32,6 +41,9 @@ export const UNSUPPORTED_ON_BACKEND = "unsupported_on_backend";
 
 /** `code` of the 403 body when an agent tries to approve in `approvals: "human"` mode. */
 export const REQUIRES_HUMAN = "requires_human";
+
+/** `code` of the 404 body from `GET /api/tabs/:id/picks/latest` when the human has not picked. */
+export const NO_PICK = "no_pick";
 
 /** How long an agent id counts as "seen recently" in the connection status. */
 export const RECENT_AGENT_WINDOW_MS = 5 * 60_000;
@@ -189,6 +201,8 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/tabs/:id/trace              → TraceReport (?durationMs=, long tasks + categories)
  * GET  /api/tabs/:id/framework          → FrameworkReport (framework + dev server + HMR)
  * GET  /api/tabs/:id/pick                → ElementPickResult (human inspect-and-click; blocks)
+ * GET  /api/tabs/:id/picks/latest        → HumanElementPick (from "Select for agent"; 404 { code: "no_pick" })
+ * GET  /api/picks                        → HumanElementPick[] (recent human picks, newest first)
  * GET  /api/tabs/:id/component-sources  → ComponentSourceReport (click-to-component)
  * GET  /api/tabs/:id/layout-issues      → LayoutIssuesReport
  * GET  /api/tabs/:id/media-state        → MediaStateReport
@@ -238,7 +252,11 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * SSE stream
  * ----------
  * GET  /api/stream
- * Events: tabs_changed | page_observed | approval_queued | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed
+ * Events: tabs_changed | page_observed | approval_queued | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked
+ *
+ * `element_picked` carries `{ tabId, pickedAt, pick }` when the human selects
+ * an element with "Select for agent". Reading picks is never unsupported: a
+ * backend without the `pick` capability (the daemon) simply has none.
  */
 export class AgentServer {
   private readonly server: http.Server;
@@ -303,6 +321,25 @@ export class AgentServer {
     tabs.onAssertionTransition((t) => this.broadcastTabEvent("assertion_changed", t, t.tabId));
     tabs.onApprovalQueued((a) => this.broadcastTabEvent("approval_queued", a, a.tabId));
     tabs.onHandoffRequested((h: HumanHandoffRecord) => this.broadcastTabEvent("human_handoff_requested", h, h.tabId));
+    tabs.onElementPicked?.((pick) => this.handleHumanPick(pick));
+  }
+
+  /** A shell "Select for agent" pick: tell listening agents and note it in the feed. */
+  private handleHumanPick(pick: HumanElementPick): void {
+    this.broadcastTabEvent("element_picked", pick, pick.tabId);
+    const tag = pickTag(pick.pick.tagName);
+    this.pushActivity({
+      id: `act-${++this.activitySeq}`,
+      at: pick.pickedAt,
+      durationMs: 0,
+      method: SHELL_PICK_ACTIVITY.method,
+      route: SHELL_PICK_ACTIVITY.route,
+      label: SHELL_PICK_ACTIVITY.label,
+      tabId: pick.tabId,
+      status: 200,
+      ok: true,
+      ...(tag ? { summary: tag } : {})
+    });
   }
 
   /** The actual TCP port the server is bound to (useful when constructed with port 0). */
@@ -453,6 +490,10 @@ export class AgentServer {
       ok: res.statusCode < 400,
       ...(summary ? { summary } : {})
     };
+    this.pushActivity(entry);
+  }
+
+  private pushActivity(entry: AgentActivityEntry): void {
     this.activity.push(entry);
     for (const fn of this.activityListeners) {
       try { fn(entry); } catch { /* a listener must not break the server */ }
@@ -779,6 +820,12 @@ export class AgentServer {
       return json(res, { ok: true, width, height, mobile });
     }
 
+    if (method === "GET" && p === "/api/picks") {
+      const agentId = this.agentIdOf(req);
+      const all = this.tabs.listPicks?.() ?? [];
+      return json(res, agentId === null ? all : all.filter(pick => this.isTabAccessible(pick.tabId, agentId)));
+    }
+
     // ── Approvals ────────────────────────────────────────────────────────────
     if (method === "GET" && p === "/api/approvals") {
       const agentId = this.agentIdOf(req);
@@ -1092,6 +1139,18 @@ export class AgentServer {
     if (method === "GET" && pickMatch) {
       if (typeof this.tabs.pickElement !== "function") return unsupported(res, "pick", this.backend);
       return json(res, await this.tabs.pickElement(pickMatch[1] as TabId));
+    }
+
+    // ── Human picks from the shell's "Select for agent" (read-only) ─────────────
+    const latestPickMatch = p.match(/^\/api\/tabs\/([^/]+)\/picks\/latest$/);
+    if (method === "GET" && latestPickMatch) {
+      const latest = this.tabs.getLatestPick?.(latestPickMatch[1] as TabId) ?? null;
+      if (!latest) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "The user has not selected an element in this tab", code: NO_PICK }));
+        return;
+      }
+      return json(res, latest);
     }
 
     // ── Element → source mapping (click-to-component) ──────────────────────────

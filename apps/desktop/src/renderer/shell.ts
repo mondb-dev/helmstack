@@ -224,15 +224,8 @@ async function bootstrap(): Promise<void> {
         toast("Selection cancelled.");
         return;
       }
-      let copied = false;
-      try {
-        await navigator.clipboard.writeText(pick.selector);
-        copied = true;
-      } catch {
-        /* clipboard unavailable — the toast still shows the selector */
-      }
-      const text = pick.text ? ` “${pick.text.slice(0, 40)}”` : "";
-      toast(`Selected <${pick.tagName.toLowerCase()}>${text} → ${pick.selector}${copied ? " (copied)" : ""}`, "success");
+      // Main records the pick in the core; agents read it via the API / MCP.
+      toast(`Selected <${pick.tagName.toLowerCase()}>. Your agent can now read it.`, "success");
     } catch (error) {
       toast(`Couldn't select an element — ${error instanceof Error ? error.message : String(error)}`, "error");
     } finally {
