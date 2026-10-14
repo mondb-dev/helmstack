@@ -62,6 +62,7 @@ export type {
   AccountInput,
   AccountSummary,
   AccountUpdate,
+  ApprovalResolution,
   AssertionConfidence,
   AssertionEvidence,
   AssertionResult,
@@ -130,6 +131,7 @@ import type {
   AccountInput,
   AccountSummary,
   AccountUpdate,
+  ApprovalResolution,
   AssertionResult,
   AssertionTransition,
   AssertionWatch,
@@ -211,6 +213,12 @@ export type StreamHandlers = {
   onTabsChanged?: (tabs: TabSummary[]) => void;
   onPageObserved?: (observation: unknown) => void;
   onApprovalQueued?: (approval: unknown) => void;
+  /**
+   * A pending approval was approved, rejected, cancelled (the page navigated or
+   * the tab closed first) or expired. Cancelled and expired approvals mean the
+   * command did not run — ask again if it is still needed.
+   */
+  onApprovalResolved?: (resolution: ApprovalResolution) => void;
   onHandoffRequested?: (handoff: HumanHandoffRecord) => void;
   onHandoffResolved?: (data: { requestId: string; cancelled?: boolean }) => void;
   onIntentChanged?: (data: { intent: string }) => void;
@@ -1275,6 +1283,9 @@ function dispatch(eventType: string, data: unknown, handlers: StreamHandlers) {
       break;
     case "element_picked":
       handlers.onElementPicked?.(data as HumanElementPick);
+      break;
+    case "approval_resolved":
+      handlers.onApprovalResolved?.(data as ApprovalResolution);
       break;
   }
 }

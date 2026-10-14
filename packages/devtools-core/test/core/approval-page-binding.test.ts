@@ -11,6 +11,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ApprovalResolution, PendingApproval, TabId } from "../../../shared/src/index.js";
+import { BrowserClient } from "../../../agent-sdk/src/index.js";
 import { HelmstackCore } from "../../src/core/helmstack-core.js";
 import { ApprovalStore, DEFAULT_APPROVAL_TTL_MS, isSameApprovalPage } from "../../src/core/stores/approval-store.js";
 import { createAgentServer, type AgentServer } from "../../src/http/agent-server.js";
@@ -181,5 +182,22 @@ describe("approval_resolved SSE event", () => {
     req.destroy();
     expect(text).toContain(approval.requestId);
     expect(text).toContain("cancelled");
+  });
+
+  it("is delivered to the SDK stream as onApprovalResolved", async () => {
+    const tabId = await openTab();
+    server = createAgentServer({ api: core, backend: "desktop", port: 0, authToken: null });
+    await server.start();
+    const seen: ApprovalResolution[] = [];
+    const stream = new BrowserClient({ port: server.boundPort! }).stream({ onApprovalResolved: (r) => seen.push(r) });
+    try {
+      for (let i = 0; i < 200 && server.getConnectionStatus().sseClients !== 1; i++) await new Promise((r) => setTimeout(r, 10));
+      const approval = queue(tabId, "https://a.test/form");
+      navigate(tabId, "https://x.test/");
+      for (let i = 0; i < 200 && seen.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(seen).toEqual([expect.objectContaining({ requestId: approval.requestId, tabId, outcome: "cancelled" })]);
+    } finally {
+      stream.close();
+    }
   });
 });
