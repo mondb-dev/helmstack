@@ -206,6 +206,8 @@ export class HelmstackCore implements AgentApi {
         break;
       case "main-frame-navigation":
         this.sessions.get(event.tabId)?.clearLogBuffers();
+        // A fill approval covers one document's form; a new document asks again.
+        this.capabilityRegistry.clearApprovalGrants(event.tabId);
         break;
       case "load-finished":
         void this.sessions.get(event.tabId)?.reapplyOverrides();
@@ -238,6 +240,7 @@ export class HelmstackCore implements AgentApi {
     this.humanPicks.clearTab(tabId);
     // A closed tab's approvals can never run; drop them so the human isn't asked.
     this.approvals.clearTab(tabId);
+    this.capabilityRegistry.clearApprovalGrants(tabId);
     // Final event (once, even though closeTab and the `closed` lifecycle both
     // land here) so the shell can drop the tab's override chips.
     if (session) this.emitOverridesChanged(emptyOverrides(tabId));

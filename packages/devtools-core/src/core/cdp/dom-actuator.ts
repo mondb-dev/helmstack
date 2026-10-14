@@ -4,6 +4,7 @@ import type {
   BrowserAction,
   LiteralValue,
   ObservedAction,
+  ObservedField,
   ObservedForm,
   SecretRef,
   ProposedEffect
@@ -49,7 +50,7 @@ export async function executeDomTool(
 
     await fillObservedForm(target, form, command.args, resolveValue);
     return {
-      effects: collectFormFillEffects(form)
+      effects: collectFormFillEffects(form, command.args)
     } satisfies DomActuationEffects;
   }
 
@@ -187,9 +188,49 @@ function serializeTextValue(value: unknown, source: LiteralValue | SecretRef) {
   return value;
 }
 
-export function collectFormFillEffects(form: ObservedForm): ProposedEffect[] | undefined {
+const PERSONAL_FIELD_TYPES = new Set(["email", "tel", "address-line1", "password"]);
+/** `autocomplete` tokens that identify contact / identity / credential data. */
+const PERSONAL_AUTOCOMPLETE = new Set([
+  "name", "given-name", "additional-name", "family-name", "nickname", "email", "username",
+  "current-password", "new-password", "one-time-code", "tel", "tel-national", "street-address",
+  "address-line1", "address-line2", "address-line3", "postal-code", "bday", "sex", "organization"
+]);
+
+function hasPersonalAutocomplete(autocomplete: string | undefined): boolean {
+  if (!autocomplete) return false;
+  return autocomplete.toLowerCase().split(/\s+/).some((token) => PERSONAL_AUTOCOMPLETE.has(token) || token.startsWith("cc-"));
+}
+
+/** True when a field carries contact, identity, credential or card data. */
+export function isPersonalField(field: Pick<ObservedField, "fieldType" | "autocomplete">): boolean {
+  return PERSONAL_FIELD_TYPES.has(field.fieldType) || hasPersonalAutocomplete(field.autocomplete);
+}
+
+/**
+ * Same classification for a live element, from its DOM attributes
+ * (`type`, `autocomplete`) — used for low-level `type` actions.
+ */
+export function isPersonalInputAttributes(attributes: Record<string, string>): boolean {
+  const type = (attributes.type ?? "").toLowerCase();
+  return PERSONAL_FIELD_TYPES.has(type) || hasPersonalAutocomplete(attributes.autocomplete);
+}
+
+/** Vault / account refs are the user's stored identity or credential data by definition. */
+export function isSecretRefValue(value: unknown): boolean {
+  return Boolean(value && typeof value === "object" && "kind" in value && (value.kind === "vault" || value.kind === "account"));
+}
+
+/**
+ * Effects of filling `form`. With `args`, only the fields actually being
+ * assigned count (filling just a search box on a form that also has an email
+ * field shares nothing personal), plus any field fed from a vault/account ref.
+ */
+export function collectFormFillEffects(form: ObservedForm, args?: Record<string, unknown>): ProposedEffect[] | undefined {
   const fields = form.fields
-    .filter((field) => ["email", "tel", "address-line1", "password"].includes(field.fieldType))
+    .filter((field) => {
+      if (!args) return isPersonalField(field);
+      return Object.hasOwn(args, field.id) && (isPersonalField(field) || isSecretRefValue(args[field.id]));
+    })
     .map((field) => field.label);
 
   return fields.length > 0 ? [{ type: "share_personal_data", fields } satisfies ProposedEffect] : undefined;

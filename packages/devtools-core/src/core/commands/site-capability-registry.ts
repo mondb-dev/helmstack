@@ -1,5 +1,14 @@
 import { ApprovalPolicyStore } from "../stores/approval-policy-store.js";
-import { executeBrowserAction as runBrowserAction, executeDomTool, waitForPageSettled } from "../cdp/dom-actuator.js";
+import {
+  collectFormFillEffects,
+  executeBrowserAction as runBrowserAction,
+  executeDomTool,
+  isPersonalField,
+  isPersonalInputAttributes,
+  isSecretRefValue,
+  waitForPageSettled
+} from "../cdp/dom-actuator.js";
+import { ApprovalGrantStore } from "../stores/approval-grant-store.js";
 import { ApprovalStore } from "../stores/approval-store.js";
 import { HandoffStore } from "../stores/handoff-store.js";
 import type { PageHandle, SecretResolver } from "./types.js";
@@ -9,6 +18,7 @@ import type {
   BrowserOutputCommand,
   BrowserPerceptionPacket,
   HumanHandoffRecord,
+  NodeRef,
   ObservedAction,
   ObservedField,
   ObservedForm,
@@ -35,6 +45,18 @@ type WebMcpHeuristicProbe = {
 
 type HandoffListener = (handoff: HumanHandoffRecord) => void;
 
+/**
+ * What a command would do, decided before it runs. `formId` is set when the
+ * command can be tied to an observed form (used for fill → submit grants).
+ */
+type ApprovalPlan = {
+  kind: "fill" | "submit" | "other";
+  effects: ProposedEffect[];
+  formId?: string;
+};
+
+const PERSONAL_SUBMIT_FIELD_TYPES = ["email", "tel", "address-line1", "password", "date"];
+
 export class SiteCapabilityRegistry {
   private readonly handoffListeners = new Set<HandoffListener>();
 
@@ -43,8 +65,14 @@ export class SiteCapabilityRegistry {
     private readonly approvals: ApprovalStore,
     private readonly handoffs: HandoffStore,
     private readonly policies: ApprovalPolicyStore,
-    private readonly getHandoffContext: (tabId: TabId) => Pick<HumanHandoffRecord, "relatedTabIds" | "groupId" | "origin" | "title">
+    private readonly getHandoffContext: (tabId: TabId) => Pick<HumanHandoffRecord, "relatedTabIds" | "groupId" | "origin" | "title">,
+    private readonly grants: ApprovalGrantStore = new ApprovalGrantStore()
   ) {}
+
+  /** Void fill → submit grants for a tab (call on main-frame navigation and close). */
+  clearApprovalGrants(tabId: TabId) {
+    this.grants.clearTab(tabId);
+  }
 
   onHandoffRequested(listener: HandoffListener) {
     this.handoffListeners.add(listener);
@@ -94,7 +122,7 @@ export class SiteCapabilityRegistry {
     options: { skipApproval?: boolean } = {}
   ): Promise<BrowserCommandResult> {
     if (!options.skipApproval) {
-      const approval = this.maybeQueueApproval(tabId, command, result);
+      const approval = await this.maybeQueueApproval(tabId, command, result, page);
       if (approval) {
         return approval;
       }
@@ -153,7 +181,18 @@ export class SiteCapabilityRegistry {
       };
     }
 
-    return this.executeCommand(pending.tabId, pending.command, observation, result, page, { skipApproval: true });
+    // Plan before executing: a fill changes the page the plan is read from.
+    const plan = await this.planApproval(pending.command, result, page);
+    const execution = await this.executeCommand(pending.tabId, pending.command, observation, result, page, { skipApproval: true });
+    if (execution.status === "completed" && plan.kind === "fill" && plan.formId) {
+      this.grants.record(
+        pending.tabId,
+        plan.formId,
+        result.graph.url,
+        pending.effects.map((effect) => effect.type)
+      );
+    }
+    return execution;
   }
 
   rejectCommand(requestId: string): BrowserCommandResult {
@@ -557,8 +596,14 @@ export class SiteCapabilityRegistry {
     };
   }
 
-  private maybeQueueApproval(tabId: TabId, command: BrowserOutputCommand, result: PerceptionResult): BrowserCommandResult | null {
-    const effects = this.collectEffectsForCommand(command, result);
+  private async maybeQueueApproval(
+    tabId: TabId,
+    command: BrowserOutputCommand,
+    result: PerceptionResult,
+    page: PageHandle
+  ): Promise<BrowserCommandResult | null> {
+    const plan = await this.planApproval(command, result, page);
+    const { effects } = plan;
     if (effects.length === 0) {
       return null;
     }
@@ -576,6 +621,15 @@ export class SiteCapabilityRegistry {
       return null;
     }
 
+    // An approved fill of this form already covered these effect kinds.
+    if (
+      plan.kind === "submit" &&
+      plan.formId &&
+      this.grants.consume(tabId, plan.formId, result.graph.url, effects.map((effect) => effect.type))
+    ) {
+      return null;
+    }
+
     const summary = summarizeEffects(effects);
     const pending = this.approvals.create(tabId, command, effects, summary);
     return {
@@ -587,35 +641,125 @@ export class SiteCapabilityRegistry {
     };
   }
 
-  private collectEffectsForCommand(command: BrowserOutputCommand, result: PerceptionResult): ProposedEffect[] {
+  private async planApproval(command: BrowserOutputCommand, result: PerceptionResult, page: PageHandle): Promise<ApprovalPlan> {
+    const forms = result.graph.forms;
+
     if (command.type === "submit") {
-      return [{ type: "share_personal_data", fields: ["form submission"] }];
+      const form = resolveSubmitForm(command.node, forms);
+      return form
+        ? { kind: "submit", formId: form.id, effects: submitEffects(form) }
+        : { kind: "submit", effects: [{ type: "share_personal_data", fields: ["form submission"] }] };
+    }
+
+    if (command.type === "type") {
+      return this.planTypeApproval(command, forms, page);
     }
 
     if (command.type !== "invoke_site_tool" || command.provider !== "dom") {
-      return [];
+      return { kind: "other", effects: [] };
     }
 
     if (command.toolName.startsWith("dom.submit.")) {
       const formId = command.toolName.slice("dom.submit.".length);
-      const form = result.graph.forms.find((entry) => entry.id === formId);
+      const form = forms.find((entry) => entry.id === formId);
       if (!form) {
-        return [{ type: "share_personal_data", fields: ["form submission"] }];
+        return { kind: "submit", effects: [{ type: "share_personal_data", fields: ["form submission"] }] };
       }
-
-      const sensitiveFields = form.fields
-        .filter((field) => ["email", "tel", "address-line1", "password", "date"].includes(field.fieldType))
-        .map((field) => field.label);
-
-      return [
-        {
-          type: "share_personal_data",
-          fields: sensitiveFields.length > 0 ? sensitiveFields : form.fields.map((field) => field.label)
-        }
-      ];
+      return { kind: "submit", formId, effects: submitEffects(form) };
     }
 
-    return [];
+    if (command.toolName.startsWith("dom.fill.")) {
+      const formId = command.toolName.slice("dom.fill.".length);
+      const form = forms.find((entry) => entry.id === formId);
+      // Unknown form: the actuator rejects it, nothing is typed.
+      if (!form) {
+        return { kind: "fill", effects: [] };
+      }
+      return { kind: "fill", formId, effects: collectFormFillEffects(form, command.args ?? {}) ?? [] };
+    }
+
+    return { kind: "other", effects: [] };
+  }
+
+  /**
+   * A `type` shares personal data when the target is a personal field (matched
+   * to an observed field by accessible name, else by its live `type` /
+   * `autocomplete` attributes) or when the value is a vault/account ref.
+   */
+  private async planTypeApproval(
+    command: Extract<BrowserOutputCommand, { type: "type" }>,
+    forms: ObservedForm[],
+    page: PageHandle
+  ): Promise<ApprovalPlan> {
+    const match = resolveObservedField(command.node, forms);
+    let personal = isSecretRefValue(command.value) || (match ? isPersonalField(match.field) : false);
+    let attributeLabel: string | undefined;
+    if (!personal) {
+      const attributes = await describeNodeAttributes(page, command.node.backendNodeId);
+      personal = isPersonalInputAttributes(attributes);
+      attributeLabel = attributes["aria-label"] || attributes.name || attributes.id;
+    }
+    if (!personal) {
+      return { kind: "fill", effects: [] };
+    }
+    const label = match?.field.label || command.node.name || attributeLabel || "text field";
+    return {
+      kind: "fill",
+      ...(match ? { formId: match.form.id } : {}),
+      effects: [{ type: "share_personal_data", fields: [label] }]
+    };
+  }
+}
+
+function submitEffects(form: ObservedForm): ProposedEffect[] {
+  const sensitiveFields = form.fields
+    .filter((field) => PERSONAL_SUBMIT_FIELD_TYPES.includes(field.fieldType) || isPersonalField(field))
+    .map((field) => field.label);
+  const effects: ProposedEffect[] = [
+    {
+      type: "share_personal_data",
+      fields: sensitiveFields.length > 0 ? sensitiveFields : form.fields.map((field) => field.label)
+    }
+  ];
+  if (form.purpose === "signup") {
+    effects.push({ type: "create_account", label: form.name || form.purpose });
+  }
+  return effects;
+}
+
+function normalizeLabel(value: string | undefined) {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function resolveObservedField(node: NodeRef, forms: ObservedForm[]): { form: ObservedForm; field: ObservedField } | null {
+  const name = normalizeLabel(node.name);
+  if (!name) return null;
+  for (const form of forms) {
+    const field = form.fields.find((entry) => normalizeLabel(entry.label) === name);
+    if (field) return { form, field };
+  }
+  return null;
+}
+
+/** The form a raw `submit` targets: by submit-button label, else the page's only form. */
+function resolveSubmitForm(node: NodeRef, forms: ObservedForm[]): ObservedForm | null {
+  const name = normalizeLabel(node.name);
+  if (name) {
+    const byAction = forms.find((form) => form.submitActions.some((action) => normalizeLabel(action.label) === name));
+    if (byAction) return byAction;
+  }
+  return forms.length === 1 ? forms[0] : null;
+}
+
+async function describeNodeAttributes(page: PageHandle, backendNodeId: number): Promise<Record<string, string>> {
+  try {
+    const described = await page.cdp.send<{ node?: { attributes?: string[] } }>("DOM.describeNode", { backendNodeId });
+    const flat = described?.node?.attributes ?? [];
+    const attributes: Record<string, string> = {};
+    for (let i = 0; i + 1 < flat.length; i += 2) attributes[flat[i].toLowerCase()] = flat[i + 1];
+    return attributes;
+  } catch {
+    return {};
   }
 }
 

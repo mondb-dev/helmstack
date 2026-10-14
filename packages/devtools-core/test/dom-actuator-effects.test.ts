@@ -17,6 +17,16 @@ describe("collectFormFillEffects", () => {
     expect(effects).toEqual([{ type: "share_personal_data", fields: ["Email", "Password"] }]);
   });
 
+  it("with args, counts only assigned fields, plus autocomplete hints and secret refs", () => {
+    const f = form({
+      fields: [field("email", "Email"), { ...field("text", "Name"), autocomplete: "given-name" }, field("text", "Bio"), field("text", "Note")]
+    });
+    expect(collectFormFillEffects(f, { Note: "x" })).toBeUndefined();
+    expect(collectFormFillEffects(f, { Name: "Ada", Bio: { kind: "vault", id: "vault.identity.bio" }, Note: "x" })).toEqual([
+      { type: "share_personal_data", fields: ["Name", "Bio"] }
+    ]);
+  });
+
   it("returns undefined when no sensitive fields are present", () => {
     expect(collectFormFillEffects(form({ fields: [field("text", "Search")] }))).toBeUndefined();
   });

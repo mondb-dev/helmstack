@@ -477,7 +477,7 @@ export function defineContractSuite(factory: BackendFactory): void {
       });
     }, SLOW);
 
-    it("commands: a read completes; a form submit is queued for approval and can be rejected", async () => {
+    it("commands: a read completes; a form submit and a personal-data fill are queued for approval and can be rejected", async () => {
       await withTab(pages.contactForm, async (tabId) => {
         const packet = await perceive(tabId, hasForm);
         const read = await ok("POST", `/api/tabs/${tabId}/command`, {
@@ -497,6 +497,14 @@ export function defineContractSuite(factory: BackendFactory): void {
         const rejected = await ok("POST", `/api/approvals/${queued.requestId}/reject`);
         expect(rejected).toMatchObject({ status: "blocked", reason: expect.stringContaining("rejected") });
         expect(((await ok("GET", "/api/approvals")) as Json[]).some((a) => a.requestId === queued.requestId)).toBe(false);
+
+        // Filling a personal field is gated too: it leaks to the page before any submit.
+        const emailField = (packet.result.graph.forms[0].fields as Json[]).find((f) => f.fieldType === "email");
+        expect(emailField).toBeTruthy();
+        const fill = { type: "invoke_site_tool", provider: "dom", toolName: `dom.fill.${formId}`, args: { [emailField.id]: { kind: "literal", value: "qa@example.com" } } };
+        const fillQueued = await ok("POST", `/api/tabs/${tabId}/command`, { command: fill });
+        expect(fillQueued).toMatchObject({ status: "awaiting_approval", requestId: isString, effects: [expect.objectContaining({ type: "share_personal_data" })] });
+        await ok("POST", `/api/approvals/${fillQueued.requestId}/reject`);
 
         expect((await call("POST", `/api/tabs/${tabId}/command`, {})).status).toBe(400);
       });

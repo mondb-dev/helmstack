@@ -100,9 +100,46 @@ Sensitive effects are gated by per-effect policies
   checkpoint; use `block` policies for effects that must never happen
   unattended.
 
-> Note: effect classification currently fires for form submits; broadening it to
-> cover low-level click/type and payment/consent detection is tracked in the
-> agent-substrate backlog.
+### What is gated
+
+Effects are classified **before** a command runs, so `ask` / `block` stop it
+before anything reaches the page:
+
+- **Submits** (`submit`, `dom.submit.<form>`): `share_personal_data` (the
+  form's personal fields), plus `create_account` for signup forms.
+- **Fills** (`dom.fill.<form>`) and **`type`** actions: `share_personal_data`
+  when a value goes into a personal field — `email` / `tel` / `password` /
+  address inputs, or a personal `autocomplete` hint (`name`, `email`, `tel`,
+  `street-address`, `postal-code`, `bday`, `cc-*`, …) — or when the value is a
+  vault / account ref. A `type` is matched to an observed field by accessible
+  name, else classified from the live element's `type` / `autocomplete`.
+  Typing is gated because input listeners, autosave and analytics can read a
+  value long before any submit. Filling only non-personal fields is not gated.
+
+Policies apply the same everywhere, including `localhost` test fixtures: there
+is no host special-casing — set `share_personal_data` to `auto` in a test
+profile if you want unattended fills.
+
+### No double prompt: fill → submit grants
+
+Approving a fill / `type` into form F on tab T records a single-use grant. The
+next submit of F on T runs without a second approval when **all** hold:
+
+- the tab is still on the same document URL — any main-frame navigation (or
+  closing the tab) voids the grant;
+- the submit's effect kinds are a subset of the approved ones (a signup submit
+  adds `create_account`, so it still asks);
+- it happens within 5 minutes of the approval.
+
+The grant is consumed by that submit; `block` always wins; a rejected fill
+grants nothing, and fills never consume grants (each personal fill asks — use
+one `dom.fill` rather than several `type`s for a single prompt). A raw `type` /
+`submit` is tied to a form only when it can be resolved (field / submit-button
+label, or the page's only form); unresolved ones never share a grant.
+
+> Note: payment and consent detection (`submit_payment`, `accept_legal_terms`)
+> and `click` / `select` classification are tracked in the agent-substrate
+> backlog.
 
 ## Anti-detection / stealth
 
