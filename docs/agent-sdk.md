@@ -554,9 +554,30 @@ await browser.assert(tabId, "the submit button is disabled");
 const r = await browser.assert(tabId, "the total is correct", { throw: false });
 if (!r.pass) {
   console.log(`FAIL (${r.confidence}): ${r.explanation}`);
+  // r.matched — page items that decided the verdict, e.g. 'button "Export" (disabled)'
+  // r.unsupported — true when the assertion is outside the grammar below
   // r.evidence — compact page-graph bundle for LLM forwarding
 }
 ```
+
+The evaluator is deterministic (no LLM). It understands these forms; quoted text
+matches case-insensitively with whitespace normalised:
+
+| Form | Examples |
+| --- | --- |
+| Existence / counts | `the page has a heading`, `there is a "Sign in" button`, `exactly 2 forms`, `at least 3 links`, `no error messages`, `a heading containing "Recent"` |
+| Visibility | `the Save button is visible`, `"Payment failed" is not shown`, `a modal is open` |
+| State | `the Export button is disabled`, `the email field is required`, `the bio field is optional` |
+| Element text | `the main heading is "Dashboard"`, `the error says "Invalid password"` |
+| Scoped to a form | `the login form has 2 fields`, `the form has a required password field` |
+| Page text | `the page shows "Welcome back"`, `the page does not contain "Error"` |
+| Title / URL | `the title contains "Acme"`, `the URL ends with /login`, `the user is on /dashboard` |
+| Page kind / a11y | `this is a login page`, `all buttons have accessible names` |
+
+- **Elements:** heading (h1–h6, header), button (submit, cta), link, field (input, textbox, textarea, checkbox, dropdown), form, alert / error / warning / message / toast, dialog / modal / popup, image, video, navigation. Plurals and synonyms such as "sign in" ↔ "login" are normalised.
+- **Quantifiers:** `a`/`an`/`any`, a bare number or `one`…`twenty` (exact), `exactly`, `at least`, `at most`, `more than`, `fewer than`, `no`/`none`, `multiple`. Negation: `no X`, `does not show X`, `X is not visible`. Clauses joined with `and` must all hold.
+- **Limits:** only text the page graph captures is searched: title, headings, button/link labels, field labels, alerts. Body copy is not. Hidden elements are not captured, so "visible" means "present". Heading levels are not distinguished (`h1` means the top heading).
+- **Unsupported assertions** (e.g. "the layout feels balanced") return `pass: false`, `unsupported: true` and a list of supported forms, so `assert()` throws and watches report them as failing rather than passing.
 
 ### Storage Inspector
 

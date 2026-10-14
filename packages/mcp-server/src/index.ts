@@ -798,7 +798,18 @@ server.tool(
 
 server.tool(
   "browser_assert",
-  "Evaluate a natural-language assertion against the current page graph and return evidence.",
+  `Evaluate a natural-language assertion against the current page graph (deterministic, no LLM) and return pass/fail, an explanation, the matched page items and evidence.
+
+Supported forms (quote exact text; matching is case-insensitive):
+- existence/counts: "the page has a heading", "there is a 'Sign in' button", "exactly 2 forms", "at least 3 links", "no error messages"
+- visibility: "the Save button is visible", "'Payment failed' is not shown", "a modal is open"
+- state: "the Export button is disabled", "the email field is required"
+- element text: "the main heading is 'Dashboard'", "the error says 'Invalid password'"
+- scoped: "the login form has 2 fields"
+- page text: "the page shows 'Welcome back'" (title, headings, labels and alerts only; not body copy)
+- title/URL: "the title contains 'Acme'", "the URL ends with /login"
+Elements: heading/h1, button, link, field/input, form, alert/error, dialog/modal, image, video. Quantifiers: a/an, exactly/at least/at most/more than/fewer than N, no/none. Join clauses with "and".
+Anything else returns pass=false with unsupported=true.`,
   {
     tabId: z.string().describe("Tab ID"),
     assertion: z.string().describe("Assertion to evaluate, e.g. 'the cart shows 3 items'"),

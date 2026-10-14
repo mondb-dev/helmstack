@@ -948,6 +948,16 @@ export type AssertionResult = {
    * Feed this to an LLM for a second opinion when `confidence` is "low".
    */
   evidence: AssertionEvidence;
+  /**
+   * Page items that decided the verdict, e.g. `heading "Welcome back"` or
+   * `button "Export" (disabled)`. Empty when nothing matched.
+   */
+  matched?: string[];
+  /**
+   * True when the evaluator could not map the assertion to anything it can
+   * check. `pass` is then always false and `explanation` lists supported forms.
+   */
+  unsupported?: boolean;
 };
 
 // Storage Inspector
