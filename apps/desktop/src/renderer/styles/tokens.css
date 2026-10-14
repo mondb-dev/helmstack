@@ -16,7 +16,7 @@
 
   /* Primitives — accent (green) & status */
   --green-300: #6bdba8; --green-400: #3ecf8e; --green-500: #34b87e; --green-600: #2da06d;
-  --amber-400: #e8a43a; --red-400: #ef4444; --blue-400: #60a5fa; --violet-400: #a78bfa;
+  --amber-400: #e8a43a; --red-300: #fca5a5; --red-400: #ef4444; --blue-400: #60a5fa; --violet-400: #a78bfa;
 
   /* Spacing scale (4px base) */
   --space-0: 0; --space-1: 2px; --space-2: 4px; --space-3: 6px; --space-4: 8px;
@@ -88,6 +88,11 @@
   --color-success: var(--green-400); --color-success-subtle: rgba(62, 207, 142, 0.10);
   --color-warning: var(--amber-400); --color-warning-subtle: rgba(232, 164, 58, 0.10); --color-warning-border: rgba(232, 164, 58, 0.16); --color-on-warning: #1a1206;
   --color-danger: var(--red-400); --color-danger-subtle: rgba(239, 68, 68, 0.10); --color-on-danger: #ffffff;
+  /* Status text on tinted (-subtle) or neutral surfaces: chips, banners, inline
+     status. --color-warning/--color-danger stay for fills, dots, borders, icons.
+     Contrast is asserted in apps/desktop/test/token-contrast.test.ts. */
+  --color-warning-text: var(--amber-400);
+  --color-danger-text: var(--red-300);
   --color-info: var(--blue-400); --color-info-subtle: rgba(96, 165, 250, 0.10);
 
   --color-overlay: rgba(0, 0, 0, 0.6);
@@ -111,7 +116,7 @@
 
   --color-text: #15191f;
   --color-text-secondary: #4b5563;
-  --color-text-tertiary: #69707c;
+  --color-text-tertiary: #5f6672; /* ≥4.5:1 on --color-surface-sunken too */
   --color-text-disabled: #aab0ba;
 
   --color-accent: var(--green-600);
@@ -124,6 +129,8 @@
   --color-success: var(--green-600); --color-success-subtle: rgba(45, 160, 109, 0.12);
   --color-warning: #b97e16; --color-warning-subtle: rgba(185, 126, 22, 0.12); --color-warning-border: rgba(185, 126, 22, 0.24); --color-on-warning: #ffffff;
   --color-danger: #d32f2f; --color-danger-subtle: rgba(211, 47, 47, 0.10); --color-on-danger: #ffffff;
+  --color-warning-text: #7f5200;
+  --color-danger-text: #b42318;
   --color-info: #2563eb; --color-info-subtle: rgba(37, 99, 235, 0.10);
 
   --color-overlay: rgba(15, 20, 30, 0.45);

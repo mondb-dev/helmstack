@@ -6,7 +6,7 @@
  * live updates.
  */
 
-import type { BrowserShellBridge, TabId, TabOverrideKind, TabOverrides } from "../../../../../packages/shared/src/index.js";
+import type { BrowserShellBridge, TabId, TabOverrideKind, TabOverrides, ViewportOverride } from "../../../../../packages/shared/src/index.js";
 import { icon } from "../ui/icons.js";
 import { createPopover, type PopoverController } from "../ui/popover.js";
 import { plural } from "../ui/format.js";
@@ -193,6 +193,8 @@ export interface OverridesStrip {
   /** Live update from `onTabOverridesChanged`; ignored for other tabs. */
   update(overrides: TabOverrides): void;
   chips(): OverrideChip[];
+  /** The active tab's agent-applied viewport size, or null. */
+  viewportOverride(): ViewportOverride | null;
 }
 
 export function mountOverridesStrip(options: OverridesStripOptions): OverridesStrip {
@@ -206,6 +208,7 @@ export function mountOverridesStrip(options: OverridesStripOptions): OverridesSt
 
   let activeTabId: TabId | undefined;
   let current: OverrideChip[] = [];
+  let viewport: ViewportOverride | null = null;
   const views = new Map<TabOverrideKind, ChipView>();
 
   const clear = async (kind: TabOverrideKind | "all"): Promise<void> => {
@@ -333,6 +336,7 @@ export function mountOverridesStrip(options: OverridesStripOptions): OverridesSt
 
   const update = (overrides: TabOverrides): void => {
     if (overrides.tabId !== activeTabId) return;
+    viewport = overrides.viewport;
     current = describeOverrides(overrides);
     render();
   };
@@ -342,6 +346,7 @@ export function mountOverridesStrip(options: OverridesStripOptions): OverridesSt
   return {
     async setActiveTab(tabId) {
       activeTabId = tabId;
+      viewport = null;
       if (!tabId) {
         current = [];
         render();
@@ -356,5 +361,6 @@ export function mountOverridesStrip(options: OverridesStripOptions): OverridesSt
     },
     update,
     chips: () => current,
+    viewportOverride: () => viewport,
   };
 }

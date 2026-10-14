@@ -9,14 +9,16 @@
 
 import type {
   AgentActivityEntry,
+  AgentConnectionStatus,
   AgentLogEntry,
   BrowserShellBridge,
   TabId,
 } from "../../../../../packages/shared/src/index.js";
 import { buildEmptyState } from "../ui/states.js";
-import { icon } from "../ui/icons.js";
+import { icon, type IconName } from "../ui/icons.js";
 import { relativeTime } from "../ui/format.js";
 import { toast } from "../ui/toast.js";
+import { livePort } from "./connection.js";
 
 export type ActivityBridge = Pick<BrowserShellBridge, "setIntent" | "getIntent">;
 
@@ -67,6 +69,46 @@ export function selectFeed(
   return { rows: sorted.slice(0, cap), total: sorted.length };
 }
 
+/** Empty-state hint, using the live port — or explaining the API is off. */
+export function connectHint(status: AgentConnectionStatus | null): string {
+  if (status && livePort(status) === null) {
+    return "The agent API is off — open the connection status in the title bar to see why. Once it's listening, copy the MCP config into your agent.";
+  }
+  const port = livePort(status);
+  const where = port === null ? "the title bar" : `the title bar (:${port})`;
+  return `Connect your coding agent: open the connection status in ${where}, copy the MCP config into your agent, then ask it to check your page.`;
+}
+
+export type CallTone = "ok" | "pending" | "fail";
+
+/** How an API call row looks: icon, colour tone and screen-reader prefix. */
+export interface CallState {
+  icon: IconName;
+  tone: CallTone;
+  srLabel: string;
+}
+
+/**
+ * Command outcomes the agent server puts in `summary` (see
+ * devtools-core `commandStatus`), mapped to row state. A 2xx response can
+ * still be a pending or refused command, so the summary wins over `ok`.
+ */
+export const CALL_STATES: Record<string, CallState> = {
+  completed: { icon: "check", tone: "ok", srLabel: "Succeeded: " },
+  "awaiting approval": { icon: "clock", tone: "pending", srLabel: "Awaiting approval: " },
+  "awaiting human": { icon: "clock", tone: "pending", srLabel: "Waiting for you: " },
+  blocked: { icon: "circle-x", tone: "fail", srLabel: "Blocked: " },
+  failed: { icon: "circle-x", tone: "fail", srLabel: "Failed: " },
+};
+
+const CALL_OK: CallState = CALL_STATES.completed;
+const CALL_FAILED: CallState = CALL_STATES.failed;
+
+export function callState(entry: AgentActivityEntry): CallState {
+  if (!entry.ok) return CALL_FAILED;
+  return (entry.summary && CALL_STATES[entry.summary]) || CALL_OK;
+}
+
 export interface ActivityOptions {
   root?: ParentNode;
   bridge: ActivityBridge;
@@ -89,6 +131,8 @@ export interface ActivityController {
   refreshForTab(): void;
   setFilter(filter: ActivityFilter): void;
   setIntentListeners(count: number): void;
+  /** Connection status, for the empty-state hint. */
+  setConnection(status: AgentConnectionStatus | null): void;
   setCollapsed(collapsed: boolean): void;
   isCollapsed(): boolean;
   agentsByTab(): Map<TabId, Set<string>>;
@@ -120,6 +164,7 @@ export function mountActivity(options: ActivityOptions): ActivityController {
   let collapsed = readStorage(COLLAPSED_STORAGE_KEY) === "1";
   let intentListeners = 0;
   let intentLoaded = false;
+  let connection: AgentConnectionStatus | null = null;
 
   const trackAgent = (entry: AgentActivityEntry): boolean => {
     if (!entry.tabId) return false;
@@ -138,16 +183,17 @@ export function mountActivity(options: ActivityOptions): ActivityController {
   };
 
   const buildCallRow = (entry: AgentActivityEntry): HTMLLIElement => {
+    const state = callState(entry);
     const row = document.createElement("li");
-    row.className = `activity-row activity-row--${entry.ok ? "ok" : "fail"}`;
+    row.className = `activity-row activity-row--${state.tone}`;
     row.title = `${entry.method} ${entry.route} → ${entry.status}`;
 
     const status = document.createElement("span");
     status.className = "activity-row__status";
     const statusText = document.createElement("span");
     statusText.className = "sr-only";
-    statusText.textContent = entry.ok ? "Succeeded: " : "Failed: ";
-    status.append(icon(entry.ok ? "check" : "circle-x", { size: 14 }), statusText);
+    statusText.textContent = state.srLabel;
+    status.append(icon(state.icon, { size: 14 }), statusText);
 
     const main = document.createElement("div");
     main.className = "activity-row__main";
@@ -168,7 +214,7 @@ export function mountActivity(options: ActivityOptions): ActivityController {
     meta.className = "activity-row__meta";
     meta.append(buildTime(entry.at));
     const parts: string[] = [];
-    if (entry.tabId) parts.push(options.tabLabel?.(entry.tabId) ?? `Tab ${entry.tabId}`);
+    if (entry.tabId) parts.push(options.tabLabel?.(entry.tabId) ?? "Closed tab");
     if (entry.agentId) parts.push(entry.agentId);
     if (!entry.ok) parts.push(`HTTP ${entry.status}`);
     parts.push(`${Math.round(entry.durationMs)} ms`);
@@ -216,7 +262,7 @@ export function mountActivity(options: ActivityOptions): ActivityController {
     if (items.length === 0) {
       const empty = buildEmptyState({
         title: "No agent activity yet",
-        hint: "Connect your coding agent: open the connection status in the title bar (:7070), copy the MCP config into your agent, then ask it to check your page.",
+        hint: connectHint(connection),
       });
       if (options.onShowConnection) {
         const action = document.createElement("button");
@@ -376,6 +422,10 @@ export function mountActivity(options: ActivityOptions): ActivityController {
       render();
     },
     setIntentListeners,
+    setConnection(status) {
+      connection = status;
+      if (selectFeed(items, filter, options.activeTabId()).rows.length === 0) render();
+    },
     setCollapsed,
     isCollapsed: () => collapsed,
     agentsByTab: () => agents,

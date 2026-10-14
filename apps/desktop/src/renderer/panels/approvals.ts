@@ -32,6 +32,18 @@ export function describeEffect(effect: ProposedEffect): string {
   }
 }
 
+/**
+ * Effect lines worth listing under the summary: none when there are no
+ * effects, or when the only thing they'd say is the summary again.
+ */
+export function effectLines(approval: Pick<PendingApproval, "summary" | "effects">): string[] {
+  const norm = (value: string): string => value.trim().replace(/\s+/g, " ").toLowerCase();
+  const summary = norm(approval.summary);
+  const lines = [...new Set(approval.effects.map(describeEffect))];
+  if (lines.every((line) => norm(line) === summary)) return [];
+  return lines;
+}
+
 export interface ApprovalsOptions {
   root?: ParentNode;
   bridge: ApprovalsBridge;
@@ -122,11 +134,13 @@ export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
     const tab = options.tabLabel?.(approval.tabId);
     const when = new Date(approval.createdAt).toLocaleTimeString();
     meta.textContent = tab ? `Tab ${tab} · requested ${when}` : `Requested ${when}`;
+    const lines = effectLines(approval);
+    effects.hidden = lines.length === 0;
     effects.replaceChildren(
-      ...approval.effects.map((effect) => {
+      ...lines.map((line) => {
         const item = document.createElement("li");
         item.className = "approval-effect";
-        item.textContent = describeEffect(effect);
+        item.textContent = line;
         return item;
       })
     );

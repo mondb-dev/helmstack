@@ -11,6 +11,7 @@ import { attachRovingKeys } from "./ui/roving.js";
 import { initTheme } from "./ui/theme.js";
 import { icon } from "./ui/icons.js";
 import { normalizeNavigationTarget, safeHostLabel } from "./ui/format.js";
+import { createTabLabelCache } from "./ui/tab-labels.js";
 import { createViewportSync } from "./panels/viewport-sync.js";
 import { renderTabStrip } from "./panels/tabs.js";
 import { mountConnection } from "./panels/connection.js";
@@ -49,10 +50,9 @@ async function bootstrap(): Promise<void> {
   let pendingAddressValue: string | null = null;
 
   const activeTab = (): TabSummary | undefined => tabs.find((tab) => tab.isActive);
-  const tabLabel = (tabId: string): string | undefined => {
-    const tab = tabs.find((t) => t.id === tabId);
-    return tab ? safeHostLabel(tab.url) || tab.title : undefined;
-  };
+  // Remembers labels of closed tabs too, so the feed never shows a raw tab id.
+  const tabLabels = createTabLabelCache();
+  const tabLabel = (tabId: string): string | undefined => tabLabels.label(tabId);
 
   // ── viewport sync ─────────────────────────────────────────────────────────
   const viewport = createViewportSync({
@@ -60,6 +60,7 @@ async function bootstrap(): Promise<void> {
     freeze: document.getElementById("viewport-freeze") as HTMLImageElement | null,
     bridge,
     activeTabId: () => activeTab()?.id,
+    emulatedSize: () => overrides.viewportOverride(),
   });
   const overlayOpened = (key: string) => () => void viewport.occlude(key);
   const overlayClosed = (key: string) => () => viewport.release(key);
@@ -110,6 +111,7 @@ async function bootstrap(): Promise<void> {
   const renderTabs = (next: TabSummary[]): void => {
     const previousActive = activeTab()?.id;
     tabs = next;
+    tabLabels.remember(next);
     renderTabStrip(tabsNode, tabs, activity.agentsByTab(), {
       onActivate: (tab) => void bridge.focusTab(tab.id).then(renderTabs),
       onClose: (tab) => void bridge.closeTab(tab.id).then(renderTabs),
@@ -146,6 +148,7 @@ async function bootstrap(): Promise<void> {
 
   const applyConnectionStatus = (status: AgentConnectionStatus): void => {
     connection.update(status);
+    activity.setConnection(status);
     activity.setIntentListeners(status.intentListeners);
     settings.setProfile(status.profile);
   };

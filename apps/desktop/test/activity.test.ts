@@ -2,12 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ACTIVITY_RENDER_CAP,
+  CALL_STATES,
   COLLAPSED_STORAGE_KEY,
+  callState,
+  connectHint,
   mountActivity,
   selectFeed,
   type ActivityController,
 } from "../src/renderer/panels/activity.js";
-import { activityEntry, flush, loadShellDom } from "./helpers/shell-fixtures.js";
+import { activityEntry, flush, loadShellDom, status } from "./helpers/shell-fixtures.js";
 
 let activeTab = "tab-1";
 let controller: ActivityController | null = null;
@@ -53,7 +56,7 @@ describe("agent activity panel", () => {
     const { onShowConnection } = setup();
     const empty = document.querySelector("#activity-list .empty-state")!;
     expect(empty.textContent).toContain("No agent activity yet");
-    expect(empty.textContent).toContain(":7070");
+    expect(empty.textContent).not.toContain(":7070"); // port unknown until status arrives
     const button = Array.from(empty.querySelectorAll("button")).find((b) => b.textContent === "Show connection details")!;
     button.click();
     expect(onShowConnection).toHaveBeenCalled();
@@ -206,5 +209,71 @@ describe("selectFeed", () => {
     const { rows: out, total } = selectFeed(items, "all", undefined, 2);
     expect(out.map((i) => i.at)).toEqual([3, 2]);
     expect(total).toBe(3);
+  });
+
+});
+
+describe("agent activity panel — connection hint, row states, closed tabs", () => {
+  beforeEach(() => {
+    loadShellDom();
+    activeTab = "tab-1";
+    try {
+      localStorage.clear();
+    } catch {
+      /* ignore */
+    }
+  });
+
+  afterEach(() => {
+    controller?.destroy();
+    controller = null;
+  });
+
+  it("empty-state hint uses the live port, or explains the API is off", () => {
+    const { controller } = setup();
+    const empty = () => document.querySelector("#activity-list .empty-state")!.textContent!;
+    controller.setConnection(status({ port: 7171 }));
+    expect(empty()).toContain("(:7171)");
+    expect(empty()).not.toContain(":7070");
+    controller.setConnection(status({ listening: false, port: null, error: "port in use" }));
+    expect(empty()).toContain("agent API is off");
+    expect(empty()).not.toMatch(/:\d{4}/);
+  });
+
+  it("awaiting approval / human rows get a pending clock icon in the warning tone, not a success check", () => {
+    const { controller } = setup();
+    controller.setActivity([
+      activityEntry({ label: "Run page command", summary: "awaiting approval", at: 1_700_000_090_000 }),
+      activityEntry({ label: "Approve action", summary: "completed", at: 1_700_000_080_000 }),
+      activityEntry({ label: "Run page command", summary: "blocked", at: 1_700_000_070_000 }),
+    ]);
+    const [pending, done, blocked] = rows();
+    expect(pending.className).toContain("activity-row--pending");
+    expect(pending.textContent).toContain("Awaiting approval:");
+    expect(pending.querySelector(".activity-row__status svg circle")).not.toBeNull(); // clock face
+    expect(pending.textContent).not.toContain("Succeeded:");
+    expect(done.className).toContain("activity-row--ok");
+    expect(blocked.className).toContain("activity-row--fail");
+  });
+
+  it("maps summary states to icons in one table", () => {
+    expect(CALL_STATES["awaiting approval"]).toMatchObject({ icon: "clock", tone: "pending" });
+    expect(CALL_STATES["awaiting human"]).toMatchObject({ icon: "clock", tone: "pending" });
+    expect(CALL_STATES.completed).toMatchObject({ icon: "check", tone: "ok" });
+    expect(callState(activityEntry({ summary: "4 issues" }))).toBe(CALL_STATES.completed);
+    expect(callState(activityEntry({ ok: false, summary: "awaiting approval" }))).toBe(CALL_STATES.failed);
+  });
+
+  it("shows 'Closed tab' instead of a raw tab id when the tab is unknown", () => {
+    const { controller } = setup();
+    controller.setActivity([activityEntry({ tabId: "9f1c2d3e-0000-4000-8000-abcdefabcdef" })]);
+    const meta = rows()[0].querySelector(".activity-row__meta")!.textContent!;
+    expect(meta).toContain("Closed tab");
+    expect(meta).not.toContain("9f1c2d3e");
+  });
+
+  it("connectHint never invents a port", () => {
+    expect(connectHint(null)).not.toMatch(/:\d+/);
+    expect(connectHint(status({ port: 7070 }))).toContain("(:7070)");
   });
 });

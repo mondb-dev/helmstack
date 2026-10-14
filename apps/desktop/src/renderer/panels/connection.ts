@@ -1,5 +1,6 @@
 /**
- * Titlebar connection indicator ("● :7070 · 2 clients") and its popover:
+ * Titlebar connection indicator ("● :7070 · 2 clients" / "● Agent API off")
+ * and its popover:
  * status, token file, active profile, and a "Copy MCP config" button that
  * produces a ready-to-paste `mcpServers` entry for `@helmstack/mcp-server`.
  */
@@ -10,22 +11,36 @@ import { createPopover, type PopoverController } from "../ui/popover.js";
 import { plural } from "../ui/format.js";
 import { toast } from "../ui/toast.js";
 
-export const DEFAULT_AGENT_PORT = 7070;
-
 /** Clients shown in the indicator: open SSE streams or distinct agent ids, whichever is larger. */
 export function clientCount(status: AgentConnectionStatus): number {
   return Math.max(status.sseClients, status.agentIds.length);
 }
 
-/** Indicator text, e.g. ":7070 · 2 clients" or ":7070 · port in use". */
+/**
+ * The port agents can actually reach, or null. Never guessed: when the server
+ * isn't listening (e.g. its port was taken) there is no port to hand out.
+ */
+export function livePort(status: AgentConnectionStatus | null): number | null {
+  if (!status || !status.listening || typeof status.port !== "number") return null;
+  return status.port;
+}
+
+/** Compact label shown in the titlebar when the agent API is down. */
+export const AGENT_API_OFF_LABEL = "Agent API off";
+
+/**
+ * Indicator text, e.g. ":7070 · 2 clients", or "Agent API off" when not
+ * listening (the full error lives in the popover, never in the titlebar).
+ */
 export function connectionLabel(status: AgentConnectionStatus | null): string {
   if (!status) return "Checking…";
-  const port = `:${status.port ?? DEFAULT_AGENT_PORT}`;
-  if (!status.listening) {
-    return `${port} · ${status.error ?? "not listening"}`;
-  }
-  return `${port} · ${plural(clientCount(status), "client")}`;
+  const port = livePort(status);
+  if (port === null) return AGENT_API_OFF_LABEL;
+  return `:${port} · ${plural(clientCount(status), "client")}`;
 }
+
+/** Placeholder for an env-provided token. The shell never sees the real one. */
+export const AUTH_TOKEN_PLACEHOLDER = "<paste your token>";
 
 export const PROFILE_LABEL: Record<AgentConnectionStatus["profile"], string> = {
   "fe-dev": "Frontend dev (fe-dev)",
@@ -36,16 +51,21 @@ export const PROFILE_LABEL: Record<AgentConnectionStatus["profile"], string> = {
 /**
  * JSON for an MCP client config (Claude Code `.mcp.json`, Claude Desktop,
  * Cursor…). Mirrors the env vars `@helmstack/mcp-server` / agent-sdk read:
- * `HELMSTACK_PORT`, `HELMSTACK_TOKEN_FILE`, `HELMSTACK_PROFILE`.
+ * `HELMSTACK_PORT`, `HELMSTACK_TOKEN_FILE` | `HELMSTACK_AUTH_TOKEN`,
+ * `HELMSTACK_PROFILE`. Returns null while the agent API isn't listening — a
+ * config pointing at a port the server isn't on would just fail silently.
  */
-export function buildMcpConfig(status: AgentConnectionStatus | null): string {
-  const env: Record<string, string> = {
-    HELMSTACK_PORT: String(status?.port ?? DEFAULT_AGENT_PORT),
-  };
-  if (status?.tokenPath) {
+export function buildMcpConfig(status: AgentConnectionStatus | null): string | null {
+  const port = livePort(status);
+  if (!status || port === null) return null;
+  const env: Record<string, string> = { HELMSTACK_PORT: String(port) };
+  if (status.tokenPath) {
     env.HELMSTACK_TOKEN_FILE = status.tokenPath;
+  } else {
+    // Token came from the app's HELMSTACK_AUTH_TOKEN; the user pastes it themselves.
+    env.HELMSTACK_AUTH_TOKEN = AUTH_TOKEN_PLACEHOLDER;
   }
-  if (status && status.profile !== "fe-dev") {
+  if (status.profile !== "fe-dev") {
     env.HELMSTACK_PROFILE = status.profile;
   }
   const config = {
@@ -58,6 +78,19 @@ export function buildMcpConfig(status: AgentConnectionStatus | null): string {
     },
   };
   return JSON.stringify(config, null, 2);
+}
+
+/** One-line note on where the snippet's auth token comes from. */
+export function tokenSourceNote(status: AgentConnectionStatus): string {
+  return status.tokenPath
+    ? "The agent reads its auth token from the token file above."
+    : "Auth token comes from the HELMSTACK_AUTH_TOKEN env var HelmStack was started with — paste that value in place of the placeholder.";
+}
+
+/** Why there's no MCP config to copy right now. */
+export function mcpUnavailableReason(status: AgentConnectionStatus | null): string {
+  if (!status) return "Waiting for the agent API status…";
+  return "The agent API isn't listening, so there's no port to point an agent at. Fix the error above (e.g. free the port) and restart HelmStack.";
 }
 
 export interface ConnectionOptions {
@@ -109,31 +142,28 @@ export function mountConnection(options: ConnectionOptions = {}): ConnectionCont
     if (!current) {
       kvRow(kv, "Status", "Checking…");
     } else {
+      const port = livePort(current);
       const statusValue = document.createElement("span");
-      statusValue.className = `status-inline status-inline--${current.listening ? "ok" : "fail"}`;
+      statusValue.className = `status-inline status-inline--${port !== null ? "ok" : "fail"}`;
       statusValue.append(
-        icon(current.listening ? "check" : "circle-x", { size: 14 }),
+        icon(port !== null ? "check" : "circle-x", { size: 14 }),
         document.createTextNode(
-          current.listening
-            ? `Listening on 127.0.0.1:${current.port ?? DEFAULT_AGENT_PORT}`
+          port !== null
+            ? `Listening on 127.0.0.1:${port}`
             : `Not listening${current.error ? ` — ${current.error}` : ""}`
         )
       );
       kvRow(kv, "Status", statusValue);
       kvRow(kv, "Event streams", String(current.sseClients));
       kvRow(kv, "Agents seen", current.agentIds.length > 0 ? current.agentIds.join(", ") : "None yet");
-      kvRow(kv, "Token file", current.tokenPath ?? "Not file-based", Boolean(current.tokenPath));
+      kvRow(kv, "Auth token", current.tokenPath ?? "From HELMSTACK_AUTH_TOKEN", Boolean(current.tokenPath));
       kvRow(kv, "Profile", PROFILE_LABEL[current.profile] ?? current.profile);
     }
 
     const hint = document.createElement("p");
     hint.className = "popover__hint";
-    hint.textContent = "Add this to your coding agent's MCP config (e.g. .mcp.json) to let it drive HelmStack.";
-
-    const code = document.createElement("pre");
-    code.className = "code code--compact";
-    code.id = "mcp-config-snippet";
-    code.textContent = buildMcpConfig(current);
+    const snippet = buildMcpConfig(current);
+    const nodes: HTMLElement[] = [heading, kv, hint];
 
     const actions = document.createElement("div");
     actions.className = "popover__actions";
@@ -142,17 +172,38 @@ export function mountConnection(options: ConnectionOptions = {}): ConnectionCont
     copy.className = "btn btn--sm btn--ghost";
     copy.id = "copy-mcp-config";
     copy.append(icon("copy", { size: 14 }), document.createTextNode("Copy MCP config"));
-    copy.addEventListener("click", async () => {
-      try {
-        await writeClipboard(buildMcpConfig(current));
-        toast("MCP config copied to the clipboard.", "success");
-      } catch (error) {
-        toast(`Couldn't copy — ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-    });
-    actions.append(copy);
 
-    panel.replaceChildren(heading, kv, hint, code, actions);
+    if (snippet === null || !current) {
+      hint.id = "mcp-config-unavailable";
+      hint.textContent = mcpUnavailableReason(current);
+      copy.disabled = true;
+      copy.setAttribute("aria-describedby", hint.id);
+    } else {
+      hint.textContent = "Add this to your coding agent's MCP config (e.g. .mcp.json) to let it drive HelmStack.";
+      const code = document.createElement("pre");
+      code.className = "code code--compact";
+      code.id = "mcp-config-snippet";
+      code.textContent = snippet;
+      const note = document.createElement("p");
+      note.className = "popover__hint";
+      note.id = "mcp-token-note";
+      note.textContent = tokenSourceNote(current);
+      nodes.push(code, note);
+      copy.addEventListener("click", async () => {
+        const text = buildMcpConfig(current);
+        if (text === null) return;
+        try {
+          await writeClipboard(text);
+          toast("MCP config copied to the clipboard.", "success");
+        } catch (error) {
+          toast(`Couldn't copy — ${error instanceof Error ? error.message : String(error)}`, "error");
+        }
+      });
+    }
+    actions.append(copy);
+    nodes.push(actions);
+
+    panel.replaceChildren(...nodes);
   };
 
   const popover = createPopover(button, panel, {
@@ -164,9 +215,12 @@ export function mountConnection(options: ConnectionOptions = {}): ConnectionCont
 
   const update = (status: AgentConnectionStatus): void => {
     current = status;
-    button.dataset.state = status.listening ? "listening" : "error";
+    const up = livePort(status) !== null;
+    button.dataset.state = up ? "listening" : "error";
     text.textContent = connectionLabel(status);
-    button.title = status.listening ? "Agent API listening — show connection details" : "Agent API not listening — show details";
+    button.title = up
+      ? "Agent API listening — show connection details"
+      : `Agent API not listening${status.error ? ` (${status.error})` : ""} — show details`;
     // Keep focus stable: only rebuild an open panel when focus isn't inside it.
     if (!popover.isOpen() || !panel.contains(document.activeElement)) {
       renderPanel();

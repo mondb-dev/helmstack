@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PendingApproval } from "../../../packages/shared/src/index.js";
-import { describeEffect, mountApprovals } from "../src/renderer/panels/approvals.js";
+import { describeEffect, effectLines, mountApprovals } from "../src/renderer/panels/approvals.js";
 import { approval, flush, loadShellDom } from "./helpers/shell-fixtures.js";
 
 const banner = () => document.getElementById("approval-banner")!;
@@ -157,5 +157,41 @@ describe("approval banner", () => {
   it("describes payment effects with amounts", () => {
     expect(describeEffect({ type: "submit_payment", amount: "12.00", currency: "USD" })).toBe("Submit payment: 12.00 USD");
     expect(describeEffect({ type: "submit_payment" })).toBe("Submit payment");
+  });
+});
+
+describe("approval dialog effects", () => {
+  beforeEach(() => {
+    loadShellDom();
+  });
+
+  it("effectLines drops effects that only repeat the summary, and empty lists", () => {
+    expect(effectLines({ summary: "Submit payment", effects: [{ type: "submit_payment" }] })).toEqual([]);
+    expect(effectLines({ summary: "  submit   PAYMENT ", effects: [{ type: "submit_payment" }] })).toEqual([]);
+    expect(effectLines({ summary: "Pay", effects: [] })).toEqual([]);
+    expect(effectLines({ summary: "Sign up", effects: [{ type: "create_account", label: "Acme" }] })).toEqual([
+      "Create account: Acme",
+    ]);
+  });
+
+  it("hides the list when effects are empty or identical to the summary", () => {
+    const { controller } = setup();
+    controller.update([approval({ summary: "Share personal data: email", effects: [{ type: "share_personal_data", fields: ["email"] }] })]);
+    controller.review();
+    const list = document.getElementById("approval-effects")!;
+    expect(list.hidden).toBe(true);
+    expect(list.children).toHaveLength(0);
+
+    controller.update([approval({ summary: "Do it", effects: [] })]);
+    expect(document.getElementById("approval-effects")!.hidden).toBe(true);
+  });
+
+  it("shows the list when effects add information", () => {
+    const { controller } = setup();
+    controller.update([approval({ summary: "Submit the form" })]);
+    controller.review();
+    const list = document.getElementById("approval-effects")!;
+    expect(list.hidden).toBe(false);
+    expect(list.textContent).toBe("Share personal data: email");
   });
 });

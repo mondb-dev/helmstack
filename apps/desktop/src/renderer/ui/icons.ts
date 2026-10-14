@@ -81,6 +81,10 @@ const ICONS = {
     ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
     ["path", { d: "M15 3v18" }],
   ],
+  clock: [
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "M12 6v6l4 2" }],
+  ],
   terminal: [
     ["path", { d: "m4 17 6-6-6-6" }],
     ["path", { d: "M12 19h8" }],

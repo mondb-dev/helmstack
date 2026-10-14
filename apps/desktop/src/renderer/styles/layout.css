@@ -84,8 +84,11 @@
   display: none;
 }
 
+/* Shrinks before the tab rail does; the indicator ellipsizes inside it. */
 .titlebar-connection {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: var(--control-sm);
+  max-width: 240px;
   position: relative;
   z-index: 1;
   -webkit-app-region: no-drag;
@@ -93,12 +96,14 @@
 
 /* ── Tab Rail ────────────────────────────────────────────────── */
 
+/* Floor keeps the new-tab button and at least part of a tab on screen, so
+   nothing to the right (theme / settings / connection) can overlap them. */
 .tab-rail {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 0;
+  min-width: 120px;
   position: relative;
   z-index: 1;
   -webkit-app-region: no-drag;
@@ -150,7 +155,7 @@
 }
 
 .tab-pill.is-error {
-  color: var(--color-danger);
+  color: var(--color-danger-text);
 }
 
 .tab-pill.is-error .tab-status {
@@ -288,13 +293,20 @@
   background: var(--color-surface);
   color: var(--color-text);
   font-size: var(--text-sm);
-  outline: none;
   transition: border-color 100ms, background 100ms;
 }
 
 .nav-input:focus {
-  border-color: var(--color-accent-muted);
+  border-color: var(--color-accent);
   background: var(--color-surface-raised);
+}
+
+/* Styleguide focus spec (base.css :focus-visible): 2px accent outline, 2px
+   offset. Text inputs match :focus-visible on any focus, so the address bar
+   always shows where typing goes. */
+.nav-input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .nav-input::placeholder {
@@ -470,6 +482,7 @@
 .viewport-frame {
   height: 100%;
   min-height: 0;
+  overflow: hidden;
   background: var(--color-surface);
 }
 
@@ -482,6 +495,14 @@
   object-position: top left;
 }
 
+/* Emulated viewport: the live page sits at its CSS size in the top-left, so
+   the still frame does too (size set inline from the override). */
+.viewport-freeze[data-fit="natural"] {
+  max-width: none;
+  max-height: none;
+  object-fit: fill;
+}
+
 .viewport-freeze[hidden] {
   display: none;
 }
@@ -491,6 +512,11 @@
 @media (max-width: 900px) {
   .titlebar {
     padding-left: var(--space-6);
+    gap: var(--space-4);
+  }
+
+  .brand-name {
+    display: none;
   }
 
   .workspace {
