@@ -2,6 +2,8 @@ import http from "node:http";
 
 import type {
   AccountUpdate,
+  AgentActivityEntry,
+  AgentConnectionStatus,
   AgentLogEntry,
   BrowserOutputCommand,
   CookieEntry,
@@ -16,6 +18,8 @@ import type {
   ViewportPresetName,
 } from "../../../shared/src/index.js";
 import type { AccountsApi, AgentApi, BackendKind, ExtensionsApi, OptionalCapability } from "../api.js";
+import { resolveProfile } from "../core/runtime-config.js";
+import { ActivityLog, clampAgentId, isActivityExcluded, matchActivityRoute, summarizeResponse } from "./activity.js";
 import { parseAccountInput, parseNetworkMockRules, parseResourceBudget, parseViewportBody } from "./request-validation.js";
 
 type SseClient = { res: http.ServerResponse; agentId: string | null };
@@ -25,6 +29,13 @@ export const DEFAULT_AGENT_PORT = 7070;
 
 /** `code` of the 501 body returned when an optional slice is missing. */
 export const UNSUPPORTED_ON_BACKEND = "unsupported_on_backend";
+
+/** `code` of the 403 body when an agent tries to approve in `approvals: "human"` mode. */
+export const REQUIRES_HUMAN = "requires_human";
+
+/** How long an agent id counts as "seen recently" in the connection status. */
+export const RECENT_AGENT_WINDOW_MS = 5 * 60_000;
+const RECENT_AGENT_PRUNE_MS = 30_000;
 
 export interface AgentServerOptions {
   /** The browser the server drives. */
@@ -44,6 +55,17 @@ export interface AgentServerOptions {
   authToken?: string | null;
   /** Bind address. Loopback only — the control plane is never network-exposed. */
   host?: "127.0.0.1";
+  /**
+   * Who may approve queued actions over `POST /api/approvals/:id/approve`.
+   * `"agent"` (default; daemon): any token holder. `"human"` (desktop): the
+   * route answers `403 { code: "requires_human" }` and only the shell UI can
+   * approve. Reject stays allowed in both modes (an agent may withdraw).
+   */
+  approvals?: "human" | "agent";
+  /** Where local agents read the auth token from; reported in the connection status. */
+  tokenPath?: string | null;
+  /** Activity ring-buffer size (default 500). */
+  activityCapacity?: number;
 }
 
 /** Thrown by {@link AgentServer.start} when the port is already bound. */
@@ -232,6 +254,18 @@ export class AgentServer {
   private readonly accounts: AccountsApi | undefined;
   private readonly extensions: ExtensionsApi | undefined;
   private readonly authToken: string | null;
+  private readonly approvalsMode: "human" | "agent";
+  private readonly tokenPath: string | null;
+  private readonly activity: ActivityLog;
+  private readonly activityListeners = new Set<(entry: AgentActivityEntry) => void>();
+  private readonly statusListeners = new Set<(status: AgentConnectionStatus) => void>();
+  /** agentId → last time it was seen on an authorized request. */
+  private readonly recentAgents = new Map<string, number>();
+  private activitySeq = 0;
+  private listening = false;
+  private startError: string | undefined;
+  private lastStatusKey = "";
+  private pruneTimer: NodeJS.Timeout | null = null;
   readonly port: number;
   readonly host: "127.0.0.1";
   readonly backend: BackendKind;
@@ -246,6 +280,9 @@ export class AgentServer {
     this.host = opts.host ?? "127.0.0.1";
     this.backend = backend;
     this.authToken = opts.authToken === undefined ? (process.env.HELMSTACK_AUTH_TOKEN || null) : opts.authToken;
+    this.approvalsMode = opts.approvals ?? "agent";
+    this.tokenPath = opts.tokenPath ?? null;
+    this.activity = new ActivityLog(opts.activityCapacity ?? 500);
     this.server = http.createServer(this.handle.bind(this));
     const tabs = this.tabs;
 
@@ -292,11 +329,19 @@ export class AgentServer {
     return new Promise((resolve, reject) => {
       const onError = (err: NodeJS.ErrnoException) => {
         this.server.off("listening", onListening);
-        reject(err.code === "EADDRINUSE" ? new AgentServerPortInUseError(this.host, this.port, err) : err);
+        const failure = err.code === "EADDRINUSE" ? new AgentServerPortInUseError(this.host, this.port, err) : err;
+        this.listening = false;
+        this.startError = failure.message;
+        this.emitStatus();
+        reject(failure);
       };
       const onListening = () => {
         this.server.off("error", onError);
         console.log(`[AgentServer] listening on http://${this.host}:${this.boundPort ?? this.port} (backend: ${this.backend})`);
+        this.listening = true;
+        this.startError = undefined;
+        this.startPruneTimer();
+        this.emitStatus();
         resolve();
       };
       this.server.once("error", onError);
@@ -310,8 +355,108 @@ export class AgentServer {
       for (const client of this.clients) {
         client.res.end();
       }
-      this.server.close(() => resolve());
+      if (this.pruneTimer) clearInterval(this.pruneTimer);
+      this.pruneTimer = null;
+      this.server.close(() => {
+        this.listening = false;
+        this.emitStatus();
+        resolve();
+      });
     });
+  }
+
+  // ── Activity feed / connection status (desktop shell) ────────────────────
+
+  /** Recorded agent API calls, oldest first (bounded ring buffer). */
+  listActivity(): AgentActivityEntry[] {
+    return this.activity.list();
+  }
+
+  /** Fires once per recorded call, after its response finished. Returns an unsubscribe function. */
+  onActivity(fn: (entry: AgentActivityEntry) => void): () => void {
+    this.activityListeners.add(fn);
+    return () => this.activityListeners.delete(fn);
+  }
+
+  getConnectionStatus(): AgentConnectionStatus {
+    this.pruneRecentAgents();
+    const agentIds = new Set(this.recentAgents.keys());
+    for (const client of this.clients) {
+      const id = clampAgentId(client.agentId);
+      if (id) agentIds.add(id);
+    }
+    return {
+      listening: this.listening,
+      port: this.boundPort ?? (this.listening ? this.port : null),
+      ...(this.startError ? { error: this.startError } : {}),
+      sseClients: this.clients.size,
+      agentIds: [...agentIds].sort(),
+      tokenPath: this.tokenPath,
+      // SSE clients cannot filter events: every client receives `intent_changed`.
+      intentListeners: this.clients.size,
+      profile: resolveProfile()
+    };
+  }
+
+  /** Fires with the full status whenever any field changes. Returns an unsubscribe function. */
+  onConnectionStatusChanged(fn: (status: AgentConnectionStatus) => void): () => void {
+    this.statusListeners.add(fn);
+    return () => this.statusListeners.delete(fn);
+  }
+
+  private emitStatus(): void {
+    const status = this.getConnectionStatus();
+    const key = JSON.stringify(status);
+    if (key === this.lastStatusKey) return;
+    this.lastStatusKey = key;
+    for (const fn of this.statusListeners) fn(status);
+  }
+
+  private noteAgent(agentId: string | null): void {
+    const id = clampAgentId(agentId);
+    if (!id) return;
+    const isNew = !this.recentAgents.has(id);
+    this.recentAgents.set(id, Date.now());
+    if (isNew) this.emitStatus();
+  }
+
+  private pruneRecentAgents(): void {
+    const cutoff = Date.now() - RECENT_AGENT_WINDOW_MS;
+    for (const [id, seenAt] of this.recentAgents) {
+      if (seenAt < cutoff) this.recentAgents.delete(id);
+    }
+  }
+
+  private startPruneTimer(): void {
+    if (this.pruneTimer) return;
+    // emitStatus prunes and only fires when an agent actually aged out.
+    this.pruneTimer = setInterval(() => this.emitStatus(), RECENT_AGENT_PRUNE_MS);
+    this.pruneTimer.unref?.();
+  }
+
+  /** Record a finished request (see `activity.ts` for what is and isn't kept). */
+  private recordActivity(req: http.IncomingMessage, res: http.ServerResponse, method: string, pathname: string, at: number): void {
+    const match = matchActivityRoute(method, pathname);
+    const agentId = clampAgentId(this.agentIdOf(req));
+    const summary = res.statusCode < 400 ? summarizeResponse(match.summarize, responseData.get(res)) : undefined;
+    responseData.delete(res);
+    const entry: AgentActivityEntry = {
+      id: `act-${++this.activitySeq}`,
+      at,
+      durationMs: Date.now() - at,
+      method,
+      route: match.route,
+      label: match.label,
+      ...(match.tabId ? { tabId: match.tabId as TabId } : {}),
+      ...(agentId ? { agentId } : {}),
+      status: res.statusCode,
+      ok: res.statusCode < 400,
+      ...(summary ? { summary } : {})
+    };
+    this.activity.push(entry);
+    for (const fn of this.activityListeners) {
+      try { fn(entry); } catch { /* a listener must not break the server */ }
+    }
   }
 
   setIntent(value: string, agentId: string | null = null): void {
@@ -453,6 +598,17 @@ export class AgentServer {
       return;
     }
 
+    // Only authorized requests reach the feed / agent list: requests rejected
+    // above come from parties without the token (e.g. a web page) and would
+    // let anyone spam the shell.
+    this.noteAgent(this.agentIdOf(req));
+    const method = req.method?.toUpperCase() ?? "GET";
+    const pathname = safePathname(req.url);
+    if (!isActivityExcluded(method, pathname)) {
+      const at = Date.now();
+      res.once("finish", () => this.recordActivity(req, res, method, pathname, at));
+    }
+
     this.route(req, res).catch((err: unknown) => {
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "application/json" });
@@ -478,6 +634,7 @@ export class AgentServer {
       const agentId = this.agentIdOf(req);
       const client: SseClient = { res, agentId };
       this.clients.add(client);
+      this.emitStatus();
 
       // Heartbeat: a comment frame every 25s keeps idle connections alive
       // through proxies/load balancers and lets us detect dead sockets.
@@ -494,6 +651,7 @@ export class AgentServer {
       req.on("close", () => {
         clearInterval(heartbeat);
         this.clients.delete(client);
+        this.emitStatus();
       });
       return;
     }
@@ -630,6 +788,15 @@ export class AgentServer {
 
     const approveMatch = p.match(/^\/api\/approvals\/([^/]+)\/approve$/);
     if (method === "POST" && approveMatch) {
+      if (this.approvalsMode === "human") {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          error: "Approvals on this instance are decided by the human in the HelmStack window. " +
+            "The agent may reject (withdraw) its request, but not approve it.",
+          code: REQUIRES_HUMAN
+        }));
+        return;
+      }
       const agentId = this.agentIdOf(req);
       const pending = this.tabs.listPendingApprovals();
       const approval = pending.find(a => a.requestId === approveMatch[1]);
@@ -1290,7 +1457,19 @@ function headerValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/** Last JSON payload per response, read once by the activity summarizer on finish. */
+const responseData = new WeakMap<http.ServerResponse, unknown>();
+
+function safePathname(raw: string | undefined): string {
+  try {
+    return new URL(raw ?? "/", "http://localhost").pathname;
+  } catch {
+    return "/";
+  }
+}
+
 function json(res: http.ServerResponse, data: unknown) {
+  responseData.set(res, data);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
 }

@@ -6,6 +6,9 @@
  * - `scriptedBackend` HelmstackCore over the scripted in-memory backend (no browser; subset of scenarios).
  * - `externalBackend` an already-running instance (e.g. the desktop app), opt-in via
  *                     HELMSTACK_CONTRACT_URL + HELMSTACK_CONTRACT_TOKEN. Never defaults to 7070.
+ *                     The desktop only lets the human approve queued actions (`POST …/approve`
+ *                     → 403 requires_human); scenarios only reject, but start the desktop with
+ *                     HELMSTACK_AGENT_APPROVALS=1 for any scenario that approves.
  */
 import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";

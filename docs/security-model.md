@@ -79,7 +79,26 @@ mistaken for a security boundary.
 Sensitive effects are gated by per-effect policies
 (`helmstack-approval-policies.json`): `share_personal_data`, `create_account`,
 `accept_legal_terms`, `submit_payment`. Each policy is `auto` / `ask` / `block`;
-`ask` queues a `PendingApproval` surfaced over SSE for a human decision.
+`ask` queues a `PendingApproval`. Who may then decide depends on the runtime:
+
+- **Desktop (default): only the human.** Every queued approval — whether the
+  agent API or the shell itself triggered it — is pushed to the HelmStack
+  window (`browser-shell:approvals-changed`), where the human approves or
+  rejects it. The agent server runs with `approvals: "human"`, so
+  `POST /api/approvals/:id/approve` answers
+  `403 { code: "requires_human" }`: holding the token is not enough to approve
+  your own sensitive action. An agent may still `POST …/reject` to withdraw
+  its request, and it still receives `approval_queued` over SSE so it knows to
+  wait. Approvals for a tab are dropped when the tab closes.
+- **Escape hatch: `HELMSTACK_AGENT_APPROVALS=1`** (desktop only) restores
+  agent approval, e.g. to run the contract suite against a desktop
+  (`HELMSTACK_CONTRACT_URL`) or for unattended automation. With it set, any
+  token holder can approve — treat it like running the daemon.
+- **Daemon: the agent decides.** The headless daemon has no human window, so it
+  runs with `approvals: "agent"` and any token holder can approve. The gate
+  there is a pause-and-confirm step for the calling agent, not a human
+  checkpoint; use `block` policies for effects that must never happen
+  unattended.
 
 > Note: effect classification currently fires for form submits; broadening it to
 > cover low-level click/type and payment/consent detection is tracked in the

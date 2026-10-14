@@ -292,7 +292,7 @@ function registerAgentSubstrateTools(): void {
 
   server.tool(
     "browser_approve",
-    "Approve a pending command that requires human confirmation.",
+    "Approve a pending command that requires human confirmation. On the HelmStack desktop app approvals are human-only by default: this returns code \"requires_human\" and the person at the browser window must approve it there. In that case tell the user and poll browser_list_approvals until the request leaves the queue.",
     { requestId: z.string().describe("Approval request ID") },
     async ({ requestId }) => {
       const result = await browser.approveCommand(requestId);

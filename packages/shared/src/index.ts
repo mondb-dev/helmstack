@@ -5,6 +5,7 @@ export * from "./cdp.js";
 export * from "./ipc.js";
 export * from "./perception.js";
 export * from "./policy.js";
+export * from "./shell-status.js";
 export * from "./substrate.js";
 export * from "./vault.js";
 export * from "./webmcp.js";

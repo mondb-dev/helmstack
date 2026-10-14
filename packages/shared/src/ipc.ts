@@ -1,8 +1,9 @@
 import type { AccountInput, AccountSummary, AccountUpdate, TotpResult } from "./account.js";
-import type { BrowserCommandResult, BrowserOutputCommand, BrowserPerceptionPacket, HumanHandoffRecord, SiteCapabilityManifest } from "./substrate.js";
+import type { BrowserCommandResult, BrowserOutputCommand, BrowserPerceptionPacket, HumanHandoffRecord, PendingApproval, SiteCapabilityManifest } from "./substrate.js";
 import type { PageObservation, PerceptionResult } from "./perception.js";
 import type { ElementPickResult, PageScreenshot, PageSnapshot, TabId, TabSummary, ViewportRect } from "./browser.js";
 import type { ApprovalPolicyRecord } from "./policy.js";
+import type { AgentActivityEntry, AgentConnectionStatus, TabOverrideKind, TabOverrides } from "./shell-status.js";
 import type { FixturePageName, VaultSecretInput, VaultSecretSummary, VaultStatus } from "./vault.js";
 
 export const BrowserShellChannel = {
@@ -44,11 +45,21 @@ export const BrowserShellChannel = {
   // Intent
   SetIntent: "browser-shell:set-intent",
   GetIntent: "browser-shell:get-intent",
+  // Agent status surfaces
+  ListPendingApprovals: "browser-shell:list-pending-approvals",
+  GetTabOverrides: "browser-shell:get-tab-overrides",
+  ClearTabOverrides: "browser-shell:clear-tab-overrides",
+  ListAgentActivity: "browser-shell:list-agent-activity",
+  GetConnectionStatus: "browser-shell:get-connection-status",
 
   TabsChanged: "browser-shell:tabs-changed",
   PageObserved: "browser-shell:page-observed",
   HandoffRequested: "browser-shell:handoff-requested",
-  AgentLog: "browser-shell:agent-log"
+  AgentLog: "browser-shell:agent-log",
+  ApprovalsChanged: "browser-shell:approvals-changed",
+  TabOverridesChanged: "browser-shell:tab-overrides-changed",
+  AgentActivity: "browser-shell:agent-activity",
+  ConnectionStatusChanged: "browser-shell:connection-status-changed"
 } as const;
 
 export type BrowserShellApi = {
@@ -90,6 +101,15 @@ export type BrowserShellApi = {
   // Intent
   setIntent(intent: string): Promise<void>;
   getIntent(): Promise<string>;
+  // Agent status surfaces
+  /** Approvals waiting for a human decision, oldest first. */
+  listPendingApprovals(): Promise<PendingApproval[]>;
+  getTabOverrides(tabId: TabId): Promise<TabOverrides>;
+  /** Clears one override kind, or every agent override on the tab. Returns the new state. */
+  clearTabOverrides(tabId: TabId, kind: TabOverrideKind | "all"): Promise<TabOverrides>;
+  /** Most recent agent API calls, oldest first (bounded buffer). */
+  listAgentActivity(): Promise<AgentActivityEntry[]>;
+  getConnectionStatus(): Promise<AgentConnectionStatus>;
 };
 
 export type AgentLogEntry = {
@@ -103,4 +123,9 @@ export type BrowserShellBridge = BrowserShellApi & {
   onPageObserved(callback: (observation: PageObservation) => void): () => void;
   onHandoffRequested(callback: (handoff: HumanHandoffRecord) => void): () => void;
   onAgentLog(callback: (entry: AgentLogEntry) => void): () => void;
+  /** Fires with the full pending list whenever an approval is queued or resolved. */
+  onApprovalsChanged(callback: (pending: PendingApproval[]) => void): () => void;
+  onTabOverridesChanged(callback: (overrides: TabOverrides) => void): () => void;
+  onAgentActivity(callback: (entry: AgentActivityEntry) => void): () => void;
+  onConnectionStatusChanged(callback: (status: AgentConnectionStatus) => void): () => void;
 };

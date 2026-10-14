@@ -2,10 +2,15 @@ import { contextBridge, ipcRenderer } from "electron";
 
 import {
   BrowserShellChannel,
+  type AgentActivityEntry,
+  type AgentConnectionStatus,
   type AgentLogEntry,
   type BrowserShellBridge,
   type HumanHandoffRecord,
+  type PendingApproval,
   type TabId,
+  type TabOverrideKind,
+  type TabOverrides,
   type ViewportRect
 } from "../../../../packages/shared/src/index.js";
 
@@ -48,6 +53,13 @@ const browserShell: BrowserShellBridge = {
   // Intent
   setIntent: (intent: string) => ipcRenderer.invoke(BrowserShellChannel.SetIntent, intent),
   getIntent: () => ipcRenderer.invoke(BrowserShellChannel.GetIntent),
+  // Agent status surfaces
+  listPendingApprovals: () => ipcRenderer.invoke(BrowserShellChannel.ListPendingApprovals),
+  getTabOverrides: (tabId: TabId) => ipcRenderer.invoke(BrowserShellChannel.GetTabOverrides, tabId),
+  clearTabOverrides: (tabId: TabId, kind: TabOverrideKind | "all") =>
+    ipcRenderer.invoke(BrowserShellChannel.ClearTabOverrides, tabId, kind),
+  listAgentActivity: () => ipcRenderer.invoke(BrowserShellChannel.ListAgentActivity),
+  getConnectionStatus: () => ipcRenderer.invoke(BrowserShellChannel.GetConnectionStatus),
   onTabsChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, tabs: Awaited<ReturnType<BrowserShellBridge["listTabs"]>>) => {
       callback(tabs);
@@ -80,7 +92,21 @@ const browserShell: BrowserShellBridge = {
     };
     ipcRenderer.on(BrowserShellChannel.AgentLog, listener);
     return () => ipcRenderer.removeListener(BrowserShellChannel.AgentLog, listener);
-  }
+  },
+  onApprovalsChanged: (callback) => subscribe<PendingApproval[]>(BrowserShellChannel.ApprovalsChanged, callback),
+  onTabOverridesChanged: (callback) => subscribe<TabOverrides>(BrowserShellChannel.TabOverridesChanged, callback),
+  onAgentActivity: (callback) => subscribe<AgentActivityEntry>(BrowserShellChannel.AgentActivity, callback),
+  onConnectionStatusChanged: (callback) =>
+    subscribe<AgentConnectionStatus>(BrowserShellChannel.ConnectionStatusChanged, callback)
 };
+
+/** Forward one main-process event channel to `callback`; returns the unsubscribe. */
+function subscribe<T>(channel: string, callback: (payload: T) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, payload: T) => callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
 
 contextBridge.exposeInMainWorld("browserShell", browserShell);

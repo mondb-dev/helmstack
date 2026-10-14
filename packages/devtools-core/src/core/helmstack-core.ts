@@ -61,6 +61,8 @@ import type {
   StyleAssertion,
   TabId,
   TabLogSnapshot,
+  TabOverrideKind,
+  TabOverrides,
   TabSummary,
   ThreeSceneReport,
   TraceReport,
@@ -128,6 +130,8 @@ export class HelmstackCore implements AgentApi {
   private readonly tabsListeners = new Set<(tabs: TabSummary[]) => void>();
   private readonly observationListeners = new Set<(observation: PageObservation) => void>();
   private readonly approvalQueuedListeners = new Set<(approval: PendingApproval) => void>();
+  private readonly approvalsChangedListeners = new Set<(pending: PendingApproval[]) => void>();
+  private readonly overridesChangedListeners = new Set<(overrides: TabOverrides) => void>();
   private readonly assertionTransitionListeners = new Set<(transition: AssertionTransition) => void>();
   private readonly unsubscribers: Array<() => void> = [];
 
@@ -155,6 +159,9 @@ export class HelmstackCore implements AgentApi {
 
     this.approvals.onCreated((approval) => {
       for (const listener of this.approvalQueuedListeners) listener(approval);
+    });
+    this.approvals.onChanged((pending) => {
+      for (const listener of this.approvalsChangedListeners) listener(pending);
     });
 
     if (browser.pickElement) {
@@ -220,9 +227,15 @@ export class HelmstackCore implements AgentApi {
   }
 
   private removeSession(tabId: TabId): void {
-    this.sessions.get(tabId)?.dispose();
+    const session = this.sessions.get(tabId);
+    session?.dispose();
     this.sessions.delete(tabId);
     this.assertionWatches.clearTab(tabId);
+    // A closed tab's approvals can never run; drop them so the human isn't asked.
+    this.approvals.clearTab(tabId);
+    // Final event (once, even though closeTab and the `closed` lifecycle both
+    // land here) so the shell can drop the tab's override chips.
+    if (session) this.emitOverridesChanged(emptyOverrides(tabId));
   }
 
   private requireSession(tabId: TabId): TabSession {
@@ -483,7 +496,8 @@ export class HelmstackCore implements AgentApi {
   }
 
   async setEmulatedViewport(tabId: TabId, width: number, height: number, mobile: boolean): Promise<void> {
-    return this.requireSession(tabId).setEmulatedViewport(width, height, mobile);
+    await this.requireSession(tabId).setEmulatedViewport(width, height, mobile);
+    this.notifyOverrides(tabId);
   }
 
   /** Persisted to disk by default; `persist: false` keeps transient captures in memory only. */
@@ -706,12 +720,12 @@ export class HelmstackCore implements AgentApi {
     return this.requireSession(tabId).getNetworkMockRules();
   }
 
-  enableNetworkMock(tabId: TabId, rules: NetworkInterceptRule[]): Promise<void> {
-    return this.requireSession(tabId).enableNetworkMock(rules);
+  async enableNetworkMock(tabId: TabId, rules: NetworkInterceptRule[]): Promise<void> {
+    await this.mutateOverride(tabId, (s) => s.enableNetworkMock(rules));
   }
 
-  disableNetworkMock(tabId: TabId): Promise<void> {
-    return this.requireSession(tabId).disableNetworkMock();
+  async disableNetworkMock(tabId: TabId): Promise<void> {
+    await this.mutateOverride(tabId, (s) => s.disableNetworkMock());
   }
 
   // ── Overrides ─────────────────────────────────────────────────────────────
@@ -721,11 +735,11 @@ export class HelmstackCore implements AgentApi {
   }
 
   setResourceBudget(tabId: TabId, budget: ResourceBudget): Promise<ResourceBudget> {
-    return this.requireSession(tabId).setResourceBudget(budget);
+    return this.mutateOverride(tabId, (s) => s.setResourceBudget(budget));
   }
 
   clearResourceBudget(tabId: TabId): Promise<void> {
-    return this.requireSession(tabId).clearResourceBudget();
+    return this.mutateOverride(tabId, (s) => s.clearResourceBudget());
   }
 
   getLocationOverride(tabId: TabId): LocationOverride | null {
@@ -733,11 +747,11 @@ export class HelmstackCore implements AgentApi {
   }
 
   setLocationOverride(tabId: TabId, location: LocationOverride): Promise<LocationOverride> {
-    return this.requireSession(tabId).setLocationOverride(location);
+    return this.mutateOverride(tabId, (s) => s.setLocationOverride(location));
   }
 
   clearLocationOverride(tabId: TabId): Promise<void> {
-    return this.requireSession(tabId).clearLocationOverride();
+    return this.mutateOverride(tabId, (s) => s.clearLocationOverride());
   }
 
   getMediaEmulation(tabId: TabId): MediaEmulation | null {
@@ -745,11 +759,89 @@ export class HelmstackCore implements AgentApi {
   }
 
   setMediaEmulation(tabId: TabId, emulation: MediaEmulation): Promise<MediaEmulation> {
-    return this.requireSession(tabId).setMediaEmulation(emulation);
+    return this.mutateOverride(tabId, (s) => s.setMediaEmulation(emulation));
   }
 
   clearMediaEmulation(tabId: TabId): Promise<void> {
-    return this.requireSession(tabId).clearMediaEmulation();
+    return this.mutateOverride(tabId, (s) => s.clearMediaEmulation());
+  }
+
+  /** Every agent-applied override on a tab, for the shell's override chips. */
+  getTabOverrides(tabId: TabId): TabOverrides {
+    const session = this.requireSession(tabId);
+    const watches = this.assertionWatches.list(tabId);
+    return {
+      tabId,
+      viewport: session.getEmulatedViewport(),
+      media: session.getMediaEmulation(),
+      resourceBudget: session.getResourceBudget(),
+      location: session.getLocationOverride(),
+      networkMockRuleCount: session.getNetworkMockRules()?.length ?? 0,
+      recording: session.getRecording() !== null,
+      watches: {
+        total: watches.length,
+        passing: watches.filter((w) => w.lastPass === true).length,
+        failing: watches.filter((w) => w.lastPass === false).length
+      }
+    };
+  }
+
+  /**
+   * Undo one override kind (or all of them) on a tab, including its CDP state,
+   * via the same clear methods the agent API uses. A stopped recording is
+   * discarded. Emits one overrides-changed event and returns the new state.
+   */
+  async clearTabOverrides(tabId: TabId, kind: TabOverrideKind | "all"): Promise<TabOverrides> {
+    const session = this.requireSession(tabId);
+    const kinds: TabOverrideKind[] = kind === "all" ? [...TAB_OVERRIDE_KINDS] : [kind];
+    for (const k of kinds) {
+      switch (k) {
+        case "viewport":
+          if (session.getEmulatedViewport()) await session.clearEmulatedViewport();
+          break;
+        case "media":
+          if (session.getMediaEmulation()) await session.clearMediaEmulation();
+          break;
+        case "resourceBudget":
+          if (session.getResourceBudget()) await session.clearResourceBudget();
+          break;
+        case "location":
+          if (session.getLocationOverride()) await session.clearLocationOverride();
+          break;
+        case "networkMock":
+          if (session.getNetworkMockRules()) await session.disableNetworkMock();
+          break;
+        case "recording":
+          if (session.getRecording()) session.stopRecording();
+          break;
+        case "watches":
+          this.assertionWatches.clearTab(tabId);
+          break;
+        default:
+          throw new Error(`Unknown override kind: ${String(k)}`);
+      }
+    }
+    return this.notifyOverrides(tabId);
+  }
+
+  /** Run a session mutation, then emit the tab's new overrides (also on failure). */
+  private async mutateOverride<T>(tabId: TabId, mutate: (session: TabSession) => Promise<T> | T): Promise<T> {
+    const session = this.requireSession(tabId);
+    try {
+      return await mutate(session);
+    } finally {
+      this.notifyOverrides(tabId);
+    }
+  }
+
+  private notifyOverrides(tabId: TabId): TabOverrides {
+    const overrides = this.getTabOverrides(tabId);
+    this.emitOverridesChanged(overrides);
+    return overrides;
+  }
+
+  private emitOverridesChanged(overrides: TabOverrides): void {
+    for (const listener of this.overridesChangedListeners) listener(overrides);
   }
 
   // ── Storage ───────────────────────────────────────────────────────────────
@@ -789,11 +881,15 @@ export class HelmstackCore implements AgentApi {
   }
 
   startRecording(tabId: TabId): RecordingSession {
-    return this.requireSession(tabId).startRecording();
+    const recording = this.requireSession(tabId).startRecording();
+    this.notifyOverrides(tabId);
+    return recording;
   }
 
   stopRecording(tabId: TabId): RecordingStopResult {
-    return this.requireSession(tabId).stopRecording();
+    const result = this.requireSession(tabId).stopRecording();
+    this.notifyOverrides(tabId);
+    return result;
   }
 
   // ── Assertions / watches ──────────────────────────────────────────────────
@@ -804,11 +900,16 @@ export class HelmstackCore implements AgentApi {
   }
 
   addAssertionWatch(tabId: TabId, assertion: string): AssertionWatch {
-    return this.assertionWatches.add(tabId, assertion, Date.now());
+    const watch = this.assertionWatches.add(tabId, assertion, Date.now());
+    if (this.sessions.has(tabId)) this.notifyOverrides(tabId);
+    return watch;
   }
 
   removeAssertionWatch(id: string): boolean {
-    return this.assertionWatches.remove(id);
+    const tabId = this.assertionWatches.list().find((w) => w.id === id)?.tabId;
+    const removed = this.assertionWatches.remove(id);
+    if (removed && tabId && this.sessions.has(tabId)) this.notifyOverrides(tabId);
+    return removed;
   }
 
   listAssertionWatches(tabId?: TabId): AssertionWatch[] {
@@ -828,6 +929,7 @@ export class HelmstackCore implements AgentApi {
     for (const transition of transitions) {
       for (const listener of this.assertionTransitionListeners) listener(transition);
     }
+    if (transitions.length && this.sessions.has(tabId)) this.notifyOverrides(tabId);
   }
 
   // ── Events ────────────────────────────────────────────────────────────────
@@ -848,9 +950,46 @@ export class HelmstackCore implements AgentApi {
     this.approvalQueuedListeners.add(listener);
   }
 
+  /**
+   * Full pending list whenever it changes: queued (after `onApprovalQueued`),
+   * approved, rejected, or dropped because its tab closed. Any source counts
+   * (agent API, shell IPC). Returns an unsubscribe function.
+   */
+  onApprovalsChanged(listener: (pending: PendingApproval[]) => void): () => void {
+    this.approvalsChangedListeners.add(listener);
+    return () => this.approvalsChangedListeners.delete(listener);
+  }
+
+  /**
+   * A tab's overrides after any change: set/clear via the API or
+   * `clearTabOverrides`, recording start/stop, watch add/remove and pass/fail
+   * transitions. On tab close fires once with an all-empty `TabOverrides`.
+   */
+  onTabOverridesChanged(listener: (overrides: TabOverrides) => void): () => void {
+    this.overridesChangedListeners.add(listener);
+    return () => this.overridesChangedListeners.delete(listener);
+  }
+
   onHandoffRequested(listener: (handoff: HumanHandoffRecord) => void): void {
     this.capabilityRegistry.onHandoffRequested(listener);
   }
+}
+
+const TAB_OVERRIDE_KINDS: readonly TabOverrideKind[] = [
+  "viewport", "media", "resourceBudget", "location", "networkMock", "recording", "watches"
+];
+
+function emptyOverrides(tabId: TabId): TabOverrides {
+  return {
+    tabId,
+    viewport: null,
+    media: null,
+    resourceBudget: null,
+    location: null,
+    networkMockRuleCount: 0,
+    recording: false,
+    watches: { total: 0, passing: 0, failing: 0 }
+  };
 }
 
 function originFromUrl(url: string): string {

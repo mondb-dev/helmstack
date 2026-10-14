@@ -369,6 +369,11 @@ export class TabSession {
     this.state.emulatedViewport = undefined;
   }
 
+  /** Agent-applied viewport override, or null. */
+  getEmulatedViewport(): { width: number; height: number; mobile: boolean } | null {
+    return this.state.emulatedViewport ? { ...this.state.emulatedViewport } : null;
+  }
+
   /**
    * Map changed pixel regions (e.g. from `diffScreenshots`) to the DOM elements
    * that occupy them. Captures live element bounds, so call it while the page
@@ -858,7 +863,10 @@ export class TabSession {
   async clearLocationOverride(): Promise<void> {
     this.state.locationOverride = null;
     await this.cdp.send("Emulation.clearGeolocationOverride").catch(() => {});
-    await this.cdp.send("Emulation.setTimezoneOverride", { timezoneId: "UTC" }).catch(() => {});
+    // An empty id/locale disables the override and restores the host default
+    // (forcing "UTC" here would leave a timezone override in place).
+    await this.cdp.send("Emulation.setTimezoneOverride", { timezoneId: "" }).catch(() => {});
+    await this.cdp.send("Emulation.setLocaleOverride", {}).catch(() => {});
   }
 
   async setMediaEmulation(emulation: MediaEmulation): Promise<MediaEmulation> {

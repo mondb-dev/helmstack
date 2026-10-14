@@ -148,7 +148,8 @@ export async function startDaemon(config: DaemonConfig, env: NodeJS.ProcessEnv =
       : { executablePath: config.chromePath, headless: !config.headful }
   });
   const core = new HelmstackCore(backend, { dataDir: config.dataDir });
-  const server = createAgentServer({ api: core, backend: "daemon", authToken, port: config.port, host });
+  // Headless: there is no human window, so the agent (token holder) approves.
+  const server = createAgentServer({ api: core, backend: "daemon", authToken, port: config.port, host, approvals: "agent" });
   try {
     await server.start();
   } catch (error) {

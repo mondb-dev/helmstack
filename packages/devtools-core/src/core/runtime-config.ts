@@ -55,3 +55,22 @@ export function isStealthEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
 export function isSocialPerceptionEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return resolveAgentFlag(env, "HELMSTACK_SOCIAL");
 }
+
+/**
+ * The active `HELMSTACK_PROFILE`, normalised. Unset or unrecognised values
+ * resolve to `fe-dev` (the default lean instrument).
+ */
+export function resolveProfile(env: NodeJS.ProcessEnv = process.env): HelmstackProfile {
+  const profile = (env.HELMSTACK_PROFILE ?? "").trim().toLowerCase();
+  return profile === "agent-substrate" || profile === "full" ? profile : "fe-dev";
+}
+
+/**
+ * Desktop escape hatch: `HELMSTACK_AGENT_APPROVALS=1` lets agents approve their
+ * own queued actions over the agent API (e.g. to run the contract suite
+ * against a desktop). Off by default: on the desktop only the human decides.
+ * Not affected by `HELMSTACK_PROFILE`.
+ */
+export function isAgentApprovalsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isFlagOn(env.HELMSTACK_AGENT_APPROVALS);
+}

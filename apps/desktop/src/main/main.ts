@@ -12,6 +12,7 @@ import {
   type HumanHandoffRecord,
   type PageObservation,
   type TabId,
+  type TabOverrideKind,
   type VaultSecretInput,
   type ViewportRect
 } from "../../../../packages/shared/src/index.js";
@@ -22,6 +23,7 @@ import { VaultStore } from "./vault-store.js";
 import { createDesktopSecrets } from "./desktop-secrets.js";
 import type { AccountsApi, ExtensionsApi } from "../../../../packages/devtools-core/src/api.js";
 import { HelmstackCore } from "../../../../packages/devtools-core/src/core/helmstack-core.js";
+import { isAgentApprovalsEnabled } from "../../../../packages/devtools-core/src/core/runtime-config.js";
 import {
   type AgentServer,
   agentTokenPath,
@@ -126,13 +128,14 @@ async function createMainWindow() {
     // The page preload already pushes fresh observations; skip the CDP pull.
     pullObservations: false
   });
-  registerIpcHandlers(core, browserBackend, vault, accountStore);
 
   // ── Agent server ──────────────────────────────────────────────────────────
   // Binds to 127.0.0.1 only.  External agents connect here.
   // Auth is on by default: use HELMSTACK_AUTH_TOKEN if provided, otherwise
   // generate a token and persist it so local agents can read it.
-  const authToken = process.env.HELMSTACK_AUTH_TOKEN || readOrCreateAgentToken(userDataPath);
+  const envToken = process.env.HELMSTACK_AUTH_TOKEN;
+  const authToken = envToken || readOrCreateAgentToken(userDataPath);
+  const tokenPath = envToken ? null : agentTokenPath(userDataPath);
   const accounts = accountsApi(accountStore);
   const extensionsApi: ExtensionsApi = extensions;
   agentServer = createAgentServer({
@@ -141,24 +144,19 @@ async function createMainWindow() {
     accounts,
     extensions: extensionsApi,
     port: agentServerPort,
-    authToken
+    authToken,
+    tokenPath,
+    // Only the human in this window approves queued actions; agents may still
+    // reject (withdraw). HELMSTACK_AGENT_APPROVALS=1 restores agent approval,
+    // e.g. to run the contract suite against the desktop.
+    approvals: isAgentApprovalsEnabled() ? "agent" : "human"
   });
   console.log(`[AgentServer] auth token: ${authToken}`);
   console.log(`[AgentServer] token file: ${agentTokenPath(userDataPath)}`);
+  registerIpcHandlers(core, browserBackend, vault, accountStore, agentServer);
   await agentServer.start().catch((err: unknown) => {
+    // The connection status carries the error (e.g. port in use) to the shell.
     console.error("[AgentServer] Failed to start:", err);
-  });
-
-  // Intent IPC — owned by the agent server, registered after it's created
-  ipcMain.handle(BrowserShellChannel.SetIntent, (_event, intent: string) => {
-    agentServer!.setIntent(intent);
-  });
-  ipcMain.handle(BrowserShellChannel.GetIntent, () => {
-    return agentServer!.getIntent();
-  });
-
-  agentServer.onAgentLog((entry) => {
-    sendToShell(BrowserShellChannel.AgentLog, entry);
   });
 
   await mainWindow.loadFile(path.join(appDir, "../renderer/index.html"));
@@ -177,7 +175,13 @@ function accountsApi(store: AccountStore): AccountsApi {
   };
 }
 
-function registerIpcHandlers(manager: HelmstackCore, shell: ElectronBackend, vault: VaultStore, accounts: AccountStore) {
+function registerIpcHandlers(
+  manager: HelmstackCore,
+  shell: ElectronBackend,
+  vault: VaultStore,
+  accounts: AccountStore,
+  server: AgentServer
+) {
   const handlers: BrowserShellApi = {
     openTab: async (url?: string) => manager.createTab(url),
     navigate: async (tabId: TabId, url: string) => manager.navigate(tabId, url),
@@ -213,9 +217,15 @@ function registerIpcHandlers(manager: HelmstackCore, shell: ElectronBackend, vau
     deleteAccount: async (id: string) => accounts.deleteAccount(id),
     lookupAccounts: async (origin: string) => accounts.lookupByOrigin(origin),
     generateTotp: async (accountId: string) => accounts.generateTotp(accountId),
-    // Intent — handled outside this function (needs agentServer reference)
-    setIntent: async () => {},
-    getIntent: async () => ""
+    // Intent
+    setIntent: async (intent: string) => server.setIntent(intent),
+    getIntent: async () => server.getIntent(),
+    // Agent status surfaces
+    listPendingApprovals: async () => manager.listPendingApprovals(),
+    getTabOverrides: async (tabId: TabId) => manager.getTabOverrides(tabId),
+    clearTabOverrides: async (tabId: TabId, kind: TabOverrideKind | "all") => manager.clearTabOverrides(tabId, kind),
+    listAgentActivity: async () => server.listActivity(),
+    getConnectionStatus: async () => server.getConnectionStatus()
   };
 
   ipcMain.handle(BrowserShellChannel.OpenTab, (_event, url?: string) => handlers.openTab(url));
@@ -254,6 +264,17 @@ function registerIpcHandlers(manager: HelmstackCore, shell: ElectronBackend, vau
   ipcMain.handle(BrowserShellChannel.DeleteAccount, (_event, id: string) => handlers.deleteAccount(id));
   ipcMain.handle(BrowserShellChannel.LookupAccounts, (_event, origin: string) => handlers.lookupAccounts(origin));
   ipcMain.handle(BrowserShellChannel.GenerateTotp, (_event, accountId: string) => handlers.generateTotp(accountId));
+  // Intent
+  ipcMain.handle(BrowserShellChannel.SetIntent, (_event, intent: string) => handlers.setIntent(intent));
+  ipcMain.handle(BrowserShellChannel.GetIntent, () => handlers.getIntent());
+  // Agent status surfaces
+  ipcMain.handle(BrowserShellChannel.ListPendingApprovals, () => handlers.listPendingApprovals());
+  ipcMain.handle(BrowserShellChannel.GetTabOverrides, (_event, tabId: TabId) => handlers.getTabOverrides(tabId));
+  ipcMain.handle(BrowserShellChannel.ClearTabOverrides, (_event, tabId: TabId, kind: TabOverrideKind | "all") =>
+    handlers.clearTabOverrides(tabId, kind)
+  );
+  ipcMain.handle(BrowserShellChannel.ListAgentActivity, () => handlers.listAgentActivity());
+  ipcMain.handle(BrowserShellChannel.GetConnectionStatus, () => handlers.getConnectionStatus());
 
   ipcMain.on(BrowserShellChannel.PageObserved, (_event, observation: PageObservation) => {
     shell.recordObservation(observation);
@@ -267,6 +288,22 @@ function registerIpcHandlers(manager: HelmstackCore, shell: ElectronBackend, vau
   });
   manager.onHandoffRequested((handoff: HumanHandoffRecord) => {
     sendToShell(BrowserShellChannel.HandoffRequested, handoff);
+  });
+  // Approvals queued from any source (agent API or this shell) reach the human.
+  manager.onApprovalsChanged((pending) => {
+    sendToShell(BrowserShellChannel.ApprovalsChanged, pending);
+  });
+  manager.onTabOverridesChanged((overrides) => {
+    sendToShell(BrowserShellChannel.TabOverridesChanged, overrides);
+  });
+  server.onAgentLog((entry) => {
+    sendToShell(BrowserShellChannel.AgentLog, entry);
+  });
+  server.onActivity((entry) => {
+    sendToShell(BrowserShellChannel.AgentActivity, entry);
+  });
+  server.onConnectionStatusChanged((status) => {
+    sendToShell(BrowserShellChannel.ConnectionStatusChanged, status);
   });
 }
 
