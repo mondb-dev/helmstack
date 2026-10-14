@@ -254,9 +254,9 @@ export class TabSession {
   }
 
   /** Snapshot + observation → normalized `PageGraph`. Watches are evaluated by the core. */
-  async capturePerception(): Promise<PerceptionResult> {
+  async capturePerception(options: { fresh?: boolean } = {}): Promise<PerceptionResult> {
     const snapshot = await this.captureSnapshot();
-    const observation = this.options.pullObservations === false
+    const observation = this.options.pullObservations === false && !options.fresh
       ? this.state.lastObservation
       : await this.refreshObservation();
     return normalizePerception(snapshot, observation);

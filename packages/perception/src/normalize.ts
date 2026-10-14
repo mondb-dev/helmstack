@@ -24,6 +24,7 @@ export function normalizePerception(snapshot: PageSnapshot, observation: PageObs
     forms: observation?.forms || [],
     actions: observation?.primaryActions || projectActions(accessibility),
     alerts: observation?.alerts || [],
+    ...(observation?.alertDetails ? { alertDetails: observation.alertDetails } : {}),
     media: observation?.media || [],
     ...(observation?.social ? { social: observation.social } : {}),
     oauthProviders: collectOAuthProviders(observation?.primaryActions || []),

@@ -89,7 +89,7 @@ Sensitive effects are gated by per-effect policies
   `403 { code: "requires_human" }`: holding the token is not enough to approve
   your own sensitive action. An agent may still `POST …/reject` to withdraw
   its request, and it still receives `approval_queued` over SSE so it knows to
-  wait. Approvals for a tab are dropped when the tab closes.
+  wait.
 - **Escape hatch: `HELMSTACK_AGENT_APPROVALS=1`** (desktop only) restores
   agent approval, e.g. to run the contract suite against a desktop
   (`HELMSTACK_CONTRACT_URL`) or for unattended automation. With it set, any
@@ -119,6 +119,31 @@ before anything reaches the page:
 Policies apply the same everywhere, including `localhost` test fixtures: there
 is no host special-casing — set `share_personal_data` to `auto` in a test
 profile if you want unattended fills.
+
+### Approvals are bound to the page they were asked on
+
+A `PendingApproval` records the tab's main-frame `url` and `origin` when it is
+queued, and the approval dialog shows that page, not whatever the tab is on
+now. It is cancelled — never executed — when:
+
+- **the tab navigates the main frame** (cross-origin or same-origin). A
+  fragment-only change (`#section`, same document) keeps it. A query-string
+  change counts as a different page and cancels, because it usually selects
+  different content;
+- **the tab closes**;
+- **it expires**: unanswered approvals lapse after 10 minutes
+  (`HELMSTACK_APPROVAL_TTL_MS` or the `approvalTtlMs` core option; `0`
+  disables);
+- **the approve-time check fails**: defense in depth in case a navigation
+  event was missed, `approve` compares the tab's live main-frame URL (fragment
+  ignored) with the approval's `url` and refuses and cancels on a mismatch.
+
+A cancelled or expired approval is removed from the pending list
+(`approvals-changed` fires), fill grants for the tab are reset, the waiting
+agent receives an `approval_resolved` SSE event
+(`outcome: cancelled | expired`, with a reason), and a later approve/reject of
+that id answers `blocked` with "Page changed before approval — ask again".
+The agent must re-issue the command against the new page.
 
 ### No double prompt: fill → submit grants
 

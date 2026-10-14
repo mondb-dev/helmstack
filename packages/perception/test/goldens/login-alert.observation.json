@@ -19,7 +19,9 @@
           "name": "email",
           "fieldType": "email",
           "required": false,
-          "selectorHint": "input#login-email"
+          "selectorHint": "input#login-email",
+          "filled": false,
+          "invalid": false
         },
         {
           "id": "field-2",
@@ -27,7 +29,9 @@
           "name": "password",
           "fieldType": "password",
           "required": false,
-          "selectorHint": "input#login-password"
+          "selectorHint": "input#login-password",
+          "filled": false,
+          "invalid": false
         }
       ],
       "submitActions": [
@@ -52,6 +56,17 @@
   ],
   "alerts": [
     "Incorrect email or password"
+  ],
+  "alertDetails": [
+    {
+      "text": "Incorrect email or password",
+      "tone": "error",
+      "signals": [
+        "role-alert",
+        "text-error"
+      ],
+      "selectorHint": "div[role=\"alert\"]"
+    }
   ],
   "media": []
 }

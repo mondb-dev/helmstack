@@ -51,6 +51,7 @@ import type {
   PageObservation,
   PageScreenshot,
   PendingApproval,
+  ApprovalResolution,
   PerceptionDiff,
   PerceptionSnapshotEntry,
   PerformanceReport,
@@ -242,6 +243,8 @@ export interface EventsApi {
   onPageObserved(listener: (observation: PageObservation) => void): void;
   onAssertionTransition(listener: (transition: AssertionTransition) => void): void;
   onApprovalQueued(listener: (approval: PendingApproval) => void): void;
+  /** A queued approval settled: approved, rejected, cancelled (page changed) or expired. */
+  onApprovalResolved?(listener: (resolution: ApprovalResolution) => void): void;
   onHandoffRequested(listener: (handoff: HumanHandoffRecord) => void): void;
 }
 

@@ -252,7 +252,11 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * SSE stream
  * ----------
  * GET  /api/stream
- * Events: tabs_changed | page_observed | approval_queued | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked
+ * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked
+ *
+ * `approval_resolved` carries an `ApprovalResolution` `{ requestId, tabId, outcome,
+ * reason?, status?, url?, origin?, resolvedAt }`; `outcome` is approved | rejected |
+ * cancelled (the tab navigated or closed before a decision) | expired.
  *
  * `element_picked` carries `{ tabId, pickedAt, pick }` when the human selects
  * an element with "Select for agent". Reading picks is never unsupported: a
@@ -320,6 +324,7 @@ export class AgentServer {
     tabs.onPageObserved((o) => this.broadcastTabEvent("page_observed", o, o.tabId));
     tabs.onAssertionTransition((t) => this.broadcastTabEvent("assertion_changed", t, t.tabId));
     tabs.onApprovalQueued((a) => this.broadcastTabEvent("approval_queued", a, a.tabId));
+    tabs.onApprovalResolved?.((r) => this.broadcastTabEvent("approval_resolved", r, r.tabId));
     tabs.onHandoffRequested((h: HumanHandoffRecord) => this.broadcastTabEvent("human_handoff_requested", h, h.tabId));
     tabs.onElementPicked?.((pick) => this.handleHumanPick(pick));
   }

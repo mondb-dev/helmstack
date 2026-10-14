@@ -10,6 +10,7 @@ import type {
   ApprovalDecision,
   ApprovalPolicyKey,
   ApprovalPolicyRecord,
+  ApprovalResolution,
   AssertionResult,
   AssertionTransition,
   AssertionWatch,
@@ -80,7 +81,7 @@ import { evaluateAssertionAgainstGraph } from "./perception/assertions.js";
 import { computePerceptionDiff } from "./perception/diff.js";
 import { buildHealthReport } from "./reports/health-report.js";
 import { ApprovalPolicyStore } from "./stores/approval-policy-store.js";
-import { ApprovalStore } from "./stores/approval-store.js";
+import { ApprovalStore, DEFAULT_APPROVAL_TTL_MS, PAGE_CHANGED_REASON, isSameApprovalPage } from "./stores/approval-store.js";
 import { AssertionWatchStore } from "./stores/assertion-watch.js";
 import { PerceptionBaselineStore, type PerceptionBaselineEntry } from "./stores/baseline-store.js";
 import { HandoffStore } from "./stores/handoff-store.js";
@@ -103,7 +104,18 @@ export type HelmstackCoreOptions = {
    * and a pull would ship the whole perception bundle on every capture.
    */
   pullObservations?: boolean;
+  /**
+   * How long a queued approval waits for a decision before it is cancelled as
+   * `expired` (ms; `0` disables). Default: `HELMSTACK_APPROVAL_TTL_MS`, else 10 min.
+   */
+  approvalTtlMs?: number;
 };
+
+function resolveApprovalTtl(option: number | undefined): number {
+  if (option !== undefined) return option;
+  const raw = Number((process.env.HELMSTACK_APPROVAL_TTL_MS ?? "").trim());
+  return (process.env.HELMSTACK_APPROVAL_TTL_MS ?? "").trim() !== "" && Number.isFinite(raw) ? raw : DEFAULT_APPROVAL_TTL_MS;
+}
 
 type ScreenshotListEntry = { id: string; tabId: string; url: string; width: number; height: number; capturedAt: number };
 type HandoffContext = Pick<HumanHandoffRecord, "relatedTabIds" | "groupId" | "origin" | "title">;
@@ -119,7 +131,7 @@ export class HelmstackCore implements AgentApi {
   private readonly includeSocial: boolean;
   private readonly pullObservations: boolean;
 
-  private readonly approvals = new ApprovalStore();
+  private readonly approvals: ApprovalStore;
   private readonly handoffs = new HandoffStore();
   private readonly policies: ApprovalPolicyStore;
   private readonly sitePatterns: SitePatternStore;
@@ -134,6 +146,7 @@ export class HelmstackCore implements AgentApi {
   private readonly observationListeners = new Set<(observation: PageObservation) => void>();
   private readonly approvalQueuedListeners = new Set<(approval: PendingApproval) => void>();
   private readonly approvalsChangedListeners = new Set<(pending: PendingApproval[]) => void>();
+  private readonly approvalResolvedListeners = new Set<(resolution: ApprovalResolution) => void>();
   private readonly overridesChangedListeners = new Set<(overrides: TabOverrides) => void>();
   private readonly assertionTransitionListeners = new Set<(transition: AssertionTransition) => void>();
   private readonly elementPickedListeners = new Set<(pick: HumanElementPick) => void>();
@@ -144,6 +157,7 @@ export class HelmstackCore implements AgentApi {
     this.includeSocial = options.includeSocial ?? false;
     this.pullObservations = options.pullObservations ?? true;
 
+    this.approvals = new ApprovalStore({ ttlMs: resolveApprovalTtl(options.approvalTtlMs) });
     this.policies = new ApprovalPolicyStore(options.dataDir);
     this.sitePatterns = new SitePatternStore(options.dataDir);
     // Disk-backed baselines: rehydrate so regression references survive a restart.
@@ -166,6 +180,9 @@ export class HelmstackCore implements AgentApi {
     });
     this.approvals.onChanged((pending) => {
       for (const listener of this.approvalsChangedListeners) listener(pending);
+    });
+    this.approvals.onResolved((resolution) => {
+      for (const listener of this.approvalResolvedListeners) listener(resolution);
     });
 
     if (browser.pickElement) {
@@ -208,6 +225,9 @@ export class HelmstackCore implements AgentApi {
         this.sessions.get(event.tabId)?.clearLogBuffers();
         // A fill approval covers one document's form; a new document asks again.
         this.capabilityRegistry.clearApprovalGrants(event.tabId);
+        // A pending approval was asked about the old page: never run it on the
+        // new one. Fragment-only changes (same document) keep it.
+        this.approvals.cancelTab(event.tabId, PAGE_CHANGED_REASON, event.url);
         break;
       case "load-finished":
         void this.sessions.get(event.tabId)?.reapplyOverrides();
@@ -239,7 +259,7 @@ export class HelmstackCore implements AgentApi {
     this.assertionWatches.clearTab(tabId);
     this.humanPicks.clearTab(tabId);
     // A closed tab's approvals can never run; drop them so the human isn't asked.
-    this.approvals.clearTab(tabId);
+    this.approvals.cancelTab(tabId, `${PAGE_CHANGED_REASON} (tab closed)`);
     this.capabilityRegistry.clearApprovalGrants(tabId);
     // Final event (once, even though closeTab and the `closed` lifecycle both
     // land here) so the shell can drop the tab's override chips.
@@ -305,8 +325,11 @@ export class HelmstackCore implements AgentApi {
     return this.requireSession(tabId).state.lastObservation;
   }
 
-  async capturePerception(tabId: TabId): Promise<PerceptionResult> {
-    const result = await this.requireSession(tabId).capturePerception();
+  async capturePerception(tabId: TabId, options: { fresh?: boolean } = {}): Promise<PerceptionResult> {
+    // Pull a fresh observation (even with `pullObservations: false`, as on desktop) when the
+    // caller asserts on the page or a watch must see the page as it is now, not the debounced push.
+    const fresh = options.fresh || this.assertionWatches.list(tabId).length > 0;
+    const result = await this.requireSession(tabId).capturePerception({ fresh });
     this.evaluateAssertionWatches(tabId, result.graph);
     return result;
   }
@@ -402,6 +425,14 @@ export class HelmstackCore implements AgentApi {
         };
       }
 
+      // The backend's view of the tab (desktop: includes a navigation still loading).
+      const tabUrl = session.tab.summary().url;
+      if (pending.url && tabUrl && !isSameApprovalPage(pending.url, tabUrl)) {
+        const reason = `${PAGE_CHANGED_REASON} (approved on ${pending.url}, tab is now on ${tabUrl})`;
+        this.approvals.cancel(requestId, reason);
+        return { status: "blocked", command: pending.command, reason };
+      }
+
       const result = await this.capturePerception(session.id);
       const execution = await this.capabilityRegistry.approveCommand(requestId, session.state.lastObservation, result, session.page);
 
@@ -418,15 +449,10 @@ export class HelmstackCore implements AgentApi {
       return execution;
     }
 
-    return {
-      status: "failed",
-      command: {
-        type: "request_perception_refresh",
-        tabId: this.listTabs().find((tab) => tab.isActive)?.id ?? "unknown"
-      },
-      reason: `Approval request ${requestId} was not found.`,
-      retryable: false
-    };
+    return this.capabilityRegistry.describeSettledApproval(
+      requestId,
+      this.listTabs().find((tab) => tab.isActive)?.id ?? "unknown"
+    );
   }
 
   rejectCommand(requestId: string): BrowserCommandResult {
@@ -903,7 +929,7 @@ export class HelmstackCore implements AgentApi {
   // ── Assertions / watches ──────────────────────────────────────────────────
 
   async evaluateAssertion(tabId: TabId, assertion: string): Promise<AssertionResult> {
-    const result = await this.capturePerception(tabId);
+    const result = await this.capturePerception(tabId, { fresh: true });
     return evaluateAssertionAgainstGraph(tabId, assertion, result.graph);
   }
 
@@ -960,12 +986,22 @@ export class HelmstackCore implements AgentApi {
 
   /**
    * Full pending list whenever it changes: queued (after `onApprovalQueued`),
-   * approved, rejected, or dropped because its tab closed. Any source counts
+   * approved, rejected, cancelled (navigation / tab closed) or expired. Any source counts
    * (agent API, shell IPC). Returns an unsubscribe function.
    */
   onApprovalsChanged(listener: (pending: PendingApproval[]) => void): () => void {
     this.approvalsChangedListeners.add(listener);
     return () => this.approvalsChangedListeners.delete(listener);
+  }
+
+  /**
+   * Every settled approval: approved (with the run's status), rejected,
+   * cancelled (page changed / tab closed) or expired. Drives the
+   * `approval_resolved` SSE event. Returns an unsubscribe function.
+   */
+  onApprovalResolved(listener: (resolution: ApprovalResolution) => void): () => void {
+    this.approvalResolvedListeners.add(listener);
+    return () => this.approvalResolvedListeners.delete(listener);
   }
 
   /**

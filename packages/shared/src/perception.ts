@@ -293,6 +293,14 @@ export type ObservedField = {
   placeholder?: string;
   required: boolean;
   selectorHint: string;
+  /**
+   * Whether the field holds a value (text length > 0, checkbox/radio checked,
+   * select with a non-empty value). Never the value itself. Absent on
+   * observations from older extractors.
+   */
+  filled?: boolean;
+  /** `aria-invalid="true"`, or `:user-invalid` constraint failure after user interaction. */
+  invalid?: boolean;
 };
 
 export type ObservedAction = {
@@ -314,6 +322,36 @@ export type ObservedForm = {
   submitActions: ObservedAction[];
 };
 
+/** Severity of a visible page message, decided from structural signals first. */
+export type ObservedAlertTone = "error" | "warning" | "success" | "unknown";
+
+/**
+ * Why a message was classified the way it was. Structural signals (ARIA roles,
+ * live regions, invalid-field associations) outweigh class-name hints; text
+ * signals come from whole-word matches against a vetted phrase list.
+ */
+export type ObservedAlertSignal =
+  | "role-alert"
+  | "role-alertdialog"
+  | "role-status"
+  | "aria-live-assertive"
+  | "aria-live-polite"
+  | "field-invalid"
+  | "class-error"
+  | "class-warning"
+  | "class-success"
+  | "text-error"
+  | "text-warning"
+  | "text-success";
+
+export type ObservedAlert = {
+  text: string;
+  /** Strongest signal wins; ties (or no decisive signal) resolve to "unknown", never both. */
+  tone: ObservedAlertTone;
+  signals: ObservedAlertSignal[];
+  selectorHint?: string;
+};
+
 export type PageObservation = {
   tabId: TabId;
   url: string;
@@ -324,6 +362,8 @@ export type PageObservation = {
   forms: ObservedForm[];
   primaryActions: ObservedAction[];
   alerts: string[];
+  /** `alerts` with tone and the signals behind it (same order, same texts). */
+  alertDetails?: ObservedAlert[];
   media: ObservedMedia[];
   social?: SocialSurface;
 };
@@ -348,6 +388,8 @@ export type PageGraph = {
   forms: ObservedForm[];
   actions: ObservedAction[];
   alerts: string[];
+  /** See `PageObservation.alertDetails`. */
+  alertDetails?: ObservedAlert[];
   media: ObservedMedia[];
   social?: SocialSurface;
   oauthProviders: string[];

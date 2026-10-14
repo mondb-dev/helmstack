@@ -21,9 +21,11 @@ import type {
   AssertionConfidence,
   AssertionEvidence,
   AssertionResult,
+  ObservedAlertTone,
   PageGraph,
   TabId
 } from "../../../../shared/src/index.js";
+import { classifyAlertText } from "../../../../perception/src/alert-tone.js";
 import {
   canonicalize,
   describeQuantifier,
@@ -45,7 +47,7 @@ export const SUPPORTED_ASSERTION_FORMS = [
   "the page has a heading",
   "there is a \"Sign in\" button",
   "exactly 2 forms / at least 3 links / no error messages",
-  "the email field is required",
+  "the email field is required / the name field is empty",
   "the Export button is disabled",
   "the main heading is \"Dashboard\"",
   "the login form has 2 fields",
@@ -74,11 +76,11 @@ type Item = {
   required?: boolean;
   fieldType?: string;
   formIndex?: number;
+  /** Alerts: severity decided page-side from structure (see `perception/src/alert-tone.ts`). */
+  tone?: ObservedAlertTone;
+  /** Fields: whether a value is present (never the value). Undefined = not captured. */
+  filled?: boolean;
 };
-
-const ERROR_RE = /error|invalid|fail|incorrect|wrong|unable|could not|couldn't|denied|not found|required|missing|try again|problem|expired|rejected/i;
-const WARNING_RE = /warn|caution|attention/i;
-const SUCCESS_RE = /success|saved|complete|done|thank|confirmed|updated|created|sent/i;
 
 /** Labels the DOM/AX extractors invent when an element has no accessible name. */
 const FALLBACK_LABEL_RE = /^[a-z]+-\d+$/i;
@@ -136,7 +138,7 @@ function collectItems(graph: PageGraph, type: EntityType, formIndexes?: number[]
       if (fields.length > 0 || formIndexes) {
         return fields.map(({ field, i }) => makeItem("field", "field", field.label || field.name || field.id,
           [field.name ?? "", field.placeholder ?? "", field.fieldType, field.autocomplete ?? "", field.id],
-          { required: field.required, fieldType: field.fieldType, formIndex: i }));
+          { required: field.required, fieldType: field.fieldType, formIndex: i, filled: field.filled }));
       }
       return interactive(graph, ["textbox", "checkbox", "comboBox", "radioButton", "searchbox"])
         .map(n => makeItem("field", "field", n.name ?? "", [n.role]));
@@ -145,7 +147,7 @@ function collectItems(graph: PageGraph, type: EntityType, formIndexes?: number[]
       return graph.forms.map((f, i) => makeItem("form", "form", f.name ?? f.purpose,
         [f.purpose, f.purpose === "auth" ? "login" : "", f.id], { formIndex: i }));
     case "alert":
-      return graph.alerts.map(a => makeItem("alert", "alert", a));
+      return alertItems(graph);
     case "dialog":
       return countItems("dialog", roleCount(graph, ["dialog", "alertdialog"]));
     case "image":
@@ -156,6 +158,19 @@ function collectItems(graph: PageGraph, type: EntityType, formIndexes?: number[]
     case "audio":
       return graph.media.filter(m => m.kind === type).map(m => makeItem(type, type, m.title ?? m.src ?? "", [m.src ?? ""]));
   }
+}
+
+/**
+ * Alerts with their tone. Prefers the extractor's structural classification
+ * (`alertDetails`); graphs from older extractors fall back to whole-word text
+ * classification, never substring matching.
+ */
+function alertItems(graph: PageGraph): Item[] {
+  const details = graph.alertDetails;
+  if (details && details.length > 0) {
+    return details.map(d => makeItem("alert", "alert", d.text, [], { tone: d.tone }));
+  }
+  return graph.alerts.map(a => makeItem("alert", "alert", a, [], { tone: classifyAlertText(a) }));
 }
 
 function countItems(type: EntityType, n: number): Item[] {
@@ -358,8 +373,12 @@ function resolveEntity(graph: PageGraph, t: EntityTarget, formIndexes?: number[]
   let items = collectItems(graph, t.noun.type, formIndexes);
   if (t.noun.fieldType) items = items.filter(i => i.fieldType === t.noun.fieldType || i.search.includes(t.noun.fieldType!));
   if (t.tone) {
-    const re = t.tone === "error" ? ERROR_RE : t.tone === "warning" ? WARNING_RE : SUCCESS_RE;
-    items = items.filter(i => re.test(i.label));
+    const undecided = items.filter(i => i.tone === "unknown").length;
+    items = items.filter(i => i.tone === t.tone);
+    if (undecided > 0) {
+      notes.push(`${undecided} message(s) could not be classified as error, warning or success and were not counted`);
+      if (items.length === 0) confidence = "medium";
+    }
   }
   if (t.first) {
     items = items.slice(0, 1);
@@ -676,6 +695,35 @@ const requiredHandler: Handler = (s, { graph, prep }) => {
   };
 };
 
+const emptinessHandler: Handler = (s, { graph, prep }) => {
+  const m = s.match(/^(.+?)\s+(?:is|has)\s+(not\s+|no\s+)?(empty|blank|filled(?:\s+in)?|a value|populated|unset)$/);
+  if (!m) return null;
+  const wantEmpty = (m[3] === "empty" || m[3] === "blank" || m[3] === "unset") !== !!m[2];
+  const t = subjectTarget(m[1], prep, "field");
+  if (!t || t.noun.type !== "field") return null;
+  const r = resolveEntity(graph, t);
+  const subjects = pickSubject(r, t);
+  if (subjects.length === 0) {
+    return { pass: false, confidence: "medium", explanation: `No ${describeTarget(t)} was found.`, matched: [] };
+  }
+  if (subjects.some(i => i.filled === undefined)) {
+    return {
+      pass: false,
+      confidence: "low",
+      explanation: `Whether ${describeTarget(t)} holds a value was not captured by this observation (older extractor); ` +
+        `use browser_evaluate on the field if you need it. Field values are never included in the page graph.`,
+      matched: subjects.map(describe)
+    };
+  }
+  const ok = subjects.every(i => i.filled === !wantEmpty);
+  return {
+    pass: ok,
+    confidence: r.confidence,
+    explanation: subjects.map(i => `${describe(i)} is ${i.filled ? "filled" : "empty"}`).join("; ") + `; expected ${wantEmpty ? "empty" : "filled"}.`,
+    matched: subjects.map(describe)
+  };
+};
+
 const VISIBLE = "visible|shown|displayed|present|rendered|showing|open|opened|available|in view|there|listed|on the page";
 const HIDDEN = "hidden|gone|absent|missing|closed|invisible|not there";
 const visibilityHandler: Handler = (s, { graph, prep }) => {
@@ -783,6 +831,7 @@ const HANDLERS: Handler[] = [
   accessibleNamesHandler,
   stateHandler,
   requiredHandler,
+  emptinessHandler,
   visibilityHandler,
   scopedFormHandler,
   containerTextHandler,

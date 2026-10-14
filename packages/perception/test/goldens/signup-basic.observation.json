@@ -22,7 +22,9 @@
           "autocomplete": "email",
           "placeholder": "Email",
           "required": true,
-          "selectorHint": "input#email"
+          "selectorHint": "input#email",
+          "filled": false,
+          "invalid": false
         },
         {
           "id": "field-2",
@@ -30,7 +32,9 @@
           "name": "password",
           "fieldType": "password",
           "required": true,
-          "selectorHint": "input#password"
+          "selectorHint": "input#password",
+          "filled": false,
+          "invalid": false
         }
       ],
       "submitActions": [
@@ -70,5 +74,6 @@
     }
   ],
   "alerts": [],
+  "alertDetails": [],
   "media": []
 }

@@ -567,11 +567,23 @@ matches case-insensitively with whitespace normalised:
 | --- | --- |
 | Existence / counts | `the page has a heading`, `there is a "Sign in" button`, `exactly 2 forms`, `at least 3 links`, `no error messages`, `a heading containing "Recent"` |
 | Visibility | `the Save button is visible`, `"Payment failed" is not shown`, `a modal is open` |
-| State | `the Export button is disabled`, `the email field is required`, `the bio field is optional` |
+| State | `the Export button is disabled`, `the email field is required`, `the bio field is optional`, `the name field is empty` / `is filled in` |
 | Element text | `the main heading is "Dashboard"`, `the error says "Invalid password"` |
 | Scoped to a form | `the login form has 2 fields`, `the form has a required password field` |
 | Page text | `the page shows "Welcome back"`, `the page does not contain "Error"` |
 | Title / URL | `the title contains "Acme"`, `the URL ends with /login`, `the user is on /dashboard` |
+
+**Error / warning / success messages** are classified by how the page marks them,
+not by substring matching: `role=alert|alertdialog`, `aria-live`, invalid fields
+pointing at their message (`aria-invalid` + `aria-errormessage`/`aria-describedby`,
+`:user-invalid`), `role=status` for success, class names only as weak hints, and
+whole-word phrases from a vetted list. Evidence that is weak or conflicting yields
+an `unknown` tone, which counts as neither an error nor a success message (the
+result's explanation says how many messages were left unclassified). Field
+emptiness uses a boolean `filled` flag; field values are never captured. On an
+observation without it the assertion fails with low confidence and a hint.
+Assertions and watches always evaluate a freshly pulled observation, so an
+assertion right after a page change sees the new state.
 | Page kind / a11y | `this is a login page`, `all buttons have accessible names` |
 
 - **Elements:** heading (h1–h6, header), button (submit, cta), link, field (input, textbox, textarea, checkbox, dropdown), form, alert / error / warning / message / toast, dialog / modal / popup, image, video, navigation. Plurals and synonyms such as "sign in" ↔ "login" are normalised.

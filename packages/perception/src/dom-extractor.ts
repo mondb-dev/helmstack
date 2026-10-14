@@ -1,5 +1,7 @@
 import type {
   FormPurpose,
+  ObservedAlert,
+  ObservedAlertSignal,
   MediaReadyState,
   ObservedAction,
   ObservedField,
@@ -17,6 +19,7 @@ import type {
   SocialSurfaceKind,
   TabId
 } from "../../shared/src/index.js";
+import { classToneSignals, decideAlertTone, textToneSignals } from "./alert-tone.js";
 import { collectQueryRoots } from "./page-dom-roots.js";
 
 const OAUTH_PROVIDERS = ["google", "github", "apple", "microsoft", "facebook", "x", "twitter"];
@@ -36,7 +39,8 @@ export function extractPageObservation(tabId: TabId, options: ExtractObservation
   const headings = collectHeadings();
   const forms = collectForms();
   const primaryActions = collectPrimaryActions();
-  const alerts = collectAlerts();
+  const alertDetails = collectAlertDetails();
+  const alerts = alertDetails.map((alert) => alert.text);
   const media = collectMedia();
   const social = includeSocial ? collectSocialSurface(primaryActions, headings) : undefined;
 
@@ -50,6 +54,7 @@ export function extractPageObservation(tabId: TabId, options: ExtractObservation
     forms,
     primaryActions,
     alerts,
+    alertDetails,
     media
   };
 
@@ -225,15 +230,106 @@ function collectScopedHeadings(element: Element): string[] {
   return dedupeStrings(labels.map(normalizeText).filter(Boolean)).slice(0, 3);
 }
 
-function collectAlerts(): string[] {
-  const candidates = collectElementsAcrossRoots("[role='alert'], [aria-live], .error, .errors, [data-error], [data-testid*='error']");
+const ALERT_SELECTOR =
+  "[role='alert'], [role='alertdialog'], [role='status'], [aria-live], .error, .errors, [data-error], [data-testid*='error']";
+const MAX_ALERTS = 8;
+const MAX_ALERT_TEXT = 300;
 
-  return dedupeStrings(
-    candidates
-      .filter((element) => isVisible(element))
-      .map((element) => normalizeText(element.textContent))
-      .filter(Boolean)
-  ).slice(0, 8);
+/**
+ * Visible page messages with a tone decided from structure first (ARIA roles,
+ * live regions, invalid fields pointing at the message), then whole-word text
+ * and class hints — see `alert-tone.ts`. The same text found in nested
+ * containers is merged (signals unioned) so it is reported once.
+ */
+function collectAlertDetails(): ObservedAlert[] {
+  const fieldMessages = collectInvalidFieldMessages();
+  const candidates = [...collectElementsAcrossRoots(ALERT_SELECTOR), ...fieldMessages.filter((el) => !el.matches(ALERT_SELECTOR))];
+  const byText = new Map<string, { signals: Set<ObservedAlertSignal>; selectorHint: string }>();
+
+  for (const element of candidates) {
+    if (!isVisible(element)) {
+      continue;
+    }
+    const text = clipText(element.textContent || "", MAX_ALERT_TEXT);
+    if (!text) {
+      continue;
+    }
+    let entry = byText.get(text);
+    if (!entry) {
+      if (byText.size >= MAX_ALERTS) {
+        continue;
+      }
+      entry = { signals: new Set(textToneSignals(text)), selectorHint: buildSelectorHint(element) };
+      byText.set(text, entry);
+    }
+    for (const signal of structuralAlertSignals(element, fieldMessages)) {
+      entry.signals.add(signal);
+    }
+  }
+
+  return [...byText.entries()].map(([text, { signals, selectorHint }]) => {
+    const ordered = [...signals].sort();
+    return { text, tone: decideAlertTone(ordered), signals: ordered, selectorHint };
+  });
+}
+
+function structuralAlertSignals(element: Element, fieldMessages: Element[]): ObservedAlertSignal[] {
+  const signals: ObservedAlertSignal[] = [];
+  const role = (element.getAttribute("role") || "").toLowerCase();
+  if (role === "alert") signals.push("role-alert");
+  if (role === "alertdialog") signals.push("role-alertdialog");
+  if (role === "status") signals.push("role-status");
+  const live = (element.getAttribute("aria-live") || "").toLowerCase();
+  if (live === "assertive") signals.push("aria-live-assertive");
+  if (live === "polite") signals.push("aria-live-polite");
+  if (fieldMessages.includes(element)) signals.push("field-invalid");
+  const hints = [element.getAttribute("class") || "", element.getAttribute("data-testid") || ""];
+  if (element.hasAttribute("data-error")) hints.push("error");
+  signals.push(...classToneSignals(hints.join(" ")));
+  return signals;
+}
+
+/** Elements an invalid field names as its error message (`aria-errormessage`, else `aria-describedby`). */
+function collectInvalidFieldMessages(): Element[] {
+  const messages: Element[] = [];
+  for (const field of collectElementsAcrossRoots("input, select, textarea, [aria-invalid]")) {
+    if (!isFieldInvalid(field)) {
+      continue;
+    }
+    const root = field.getRootNode() as Document | ShadowRoot;
+    const ids = (field.getAttribute("aria-errormessage") || field.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    for (const id of ids) {
+      const target = typeof root.getElementById === "function" ? root.getElementById(id) : null;
+      if (target && !messages.includes(target)) {
+        messages.push(target);
+      }
+    }
+  }
+  return messages;
+}
+
+function isFieldInvalid(field: Element): boolean {
+  if ((field.getAttribute("aria-invalid") || "").toLowerCase() === "true") {
+    return true;
+  }
+  try {
+    // Constraint failure the user has already triggered (Chromium 119+); never the
+    // pristine required-but-empty state of a form nobody has touched.
+    return field.matches(":user-invalid");
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a field holds a value — a boolean only, never the value itself. */
+function isFieldFilled(field: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement): boolean {
+  if (field instanceof HTMLInputElement && (field.type === "checkbox" || field.type === "radio")) {
+    return field.checked;
+  }
+  if (field instanceof HTMLInputElement && field.type === "file") {
+    return (field.files?.length ?? 0) > 0;
+  }
+  return field.value.length > 0;
 }
 
 const READY_STATE_LABELS: MediaReadyState[] = [
@@ -502,7 +598,9 @@ function extractField(field: HTMLInputElement | HTMLSelectElement | HTMLTextArea
     autocomplete: field.getAttribute("autocomplete") || undefined,
     placeholder: field.getAttribute("placeholder") || undefined,
     required: field.matches(":required") || field.getAttribute("aria-required") === "true",
-    selectorHint: buildSelectorHint(field)
+    selectorHint: buildSelectorHint(field),
+    filled: isFieldFilled(field),
+    invalid: isFieldInvalid(field)
   };
 }
 

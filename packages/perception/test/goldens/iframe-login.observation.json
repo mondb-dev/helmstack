@@ -20,7 +20,9 @@
           "name": "email",
           "fieldType": "email",
           "required": false,
-          "selectorHint": "input#frame-email"
+          "selectorHint": "input#frame-email",
+          "filled": false,
+          "invalid": false
         },
         {
           "id": "field-2",
@@ -28,7 +30,9 @@
           "name": "password",
           "fieldType": "password",
           "required": false,
-          "selectorHint": "input#frame-password"
+          "selectorHint": "input#frame-password",
+          "filled": false,
+          "invalid": false
         }
       ],
       "submitActions": [
@@ -52,5 +56,6 @@
     }
   ],
   "alerts": [],
+  "alertDetails": [],
   "media": []
 }

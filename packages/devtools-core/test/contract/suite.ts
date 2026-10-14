@@ -509,5 +509,25 @@ export function defineContractSuite(factory: BackendFactory): void {
         expect((await call("POST", `/api/tabs/${tabId}/command`, {})).status).toBe(400);
       });
     }, SLOW);
+
+    it("commands: navigating away cancels a pending approval; approving it later does not run it", async () => {
+      await withTab(pages.contactForm, async (tabId) => {
+        const packet = await perceive(tabId, hasForm);
+        const form = packet.result.graph.forms[0];
+        const emailField = (form.fields as Json[]).find((f) => f.fieldType === "email");
+        const fill = { type: "invoke_site_tool", provider: "dom", toolName: `dom.fill.${form.id}`, args: { [emailField.id]: { kind: "literal", value: "qa@example.com" } } };
+        const queued = await ok("POST", `/api/tabs/${tabId}/command`, { command: fill });
+        expect(queued).toMatchObject({ status: "awaiting_approval", requestId: isString });
+        const pending = (await ok("GET", "/api/approvals")) as Json[];
+        expect(pending.find((a) => a.requestId === queued.requestId)).toMatchObject({ url: pages.contactForm, origin: pages.origin });
+
+        await ok("POST", `/api/tabs/${tabId}/navigate`, { url: pages.styled });
+        await perceive(tabId, (p) => p.result.graph.url === pages.styled);
+
+        expect(((await ok("GET", "/api/approvals")) as Json[]).some((a) => a.requestId === queued.requestId)).toBe(false);
+        const late = await ok("POST", `/api/approvals/${queued.requestId}/approve`);
+        expect(late).toMatchObject({ status: "blocked", reason: expect.stringContaining("Page changed before approval") });
+      });
+    }, SLOW);
   });
 }

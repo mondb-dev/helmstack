@@ -3,7 +3,7 @@
  * each paired with a fixture `PageGraph` and the expected verdict. Drives the
  * table test in `assertion-corpus.test.ts` and measures evaluator accuracy.
  */
-import type { ObservedAction, PageGraph } from "../../../shared/src/index.js";
+import type { ObservedAction, ObservedAlertSignal, ObservedField, PageGraph } from "../../../shared/src/index.js";
 
 function graph(overrides: Partial<PageGraph> = {}): PageGraph {
   return {
@@ -138,7 +138,50 @@ const blank = graph({ title: "" });
 
 export type CorpusCase = { assertion: string; page: PageGraph; pageName: string; expected: boolean };
 
-const fixtures = { login, loginError, dashboard, settings, modal, unlabeled, cart, blank };
+// Contact form (apps/desktop/test-pages/contact-form.html): the error div is
+// <div class="error" role="alert" aria-live="polite">, the confirmation
+// <div class="success" role="status" aria-live="polite">.
+const contactFields = (filled: boolean): ObservedField[] => [
+  { id: "name", label: "Name", fieldType: "text", required: true, selectorHint: "#name", filled },
+  { id: "email", label: "Email", fieldType: "email", required: true, selectorHint: "#email", filled },
+  { id: "consent", label: "Consent", fieldType: "checkbox", required: true, selectorHint: "#consent", filled: false }
+];
+const contact = graph({
+  url: "http://localhost/contact-form.html",
+  title: "Contact",
+  kind: "form",
+  forms: [{ id: "c", name: "contact", purpose: "generic", selectorHint: "form", fields: contactFields(false), submitActions: [] }]
+});
+const contactAlert = (text: string, signals: string[], tone: "error" | "success" | "unknown") => ({
+  ...contact,
+  alerts: [text],
+  alertDetails: [{ text, tone, signals: signals as ObservedAlertSignal[] }]
+});
+const contactIncomplete = contactAlert("Please complete the name, email, and message fields.", ["class-error", "role-alert", "text-error"], "error");
+const contactBadEmail = contactAlert("Please enter a valid email address.", ["class-error", "role-alert", "text-error"], "error");
+const contactConsent = contactAlert("Consent is required before submitting the form.", ["class-error", "role-alert", "text-error"], "error");
+const contactSent = contactAlert("Thanks, your message was sent.", ["class-success", "role-status", "text-success"], "success");
+// A role=alert that announces success, and ordinary copy containing "consent" / "complete".
+const alertSuccess = contactAlert("Your changes have been saved.", ["role-alert", "text-success"], "success");
+const consentCopy = contactAlert("Review your consent preferences below.", ["role-status"], "unknown");
+const completeCopy = contactAlert("Your profile is 80% complete.", ["role-status"], "unknown");
+const contactFilled = {
+  ...contact,
+  forms: [{ ...contact.forms[0], fields: contactFields(true) }]
+};
+const contactLegacy = graph({
+  ...contact,
+  forms: [{ ...contact.forms[0], fields: contactFields(true).map(({ filled: _f, ...rest }) => rest) }]
+});
+
+const legacyConsent = graph({ ...contact, alerts: ["Consent is required before submitting the form."] });
+
+const fixtures = {
+  legacyConsent,
+  login, loginError, dashboard, settings, modal, unlabeled, cart, blank,
+  contact, contactIncomplete, contactBadEmail, contactConsent, contactSent, alertSuccess, consentCopy, completeCopy,
+  contactFilled, contactLegacy
+};
 type FixtureName = keyof typeof fixtures;
 
 const rows: Array<[string, FixtureName, boolean]> = [
@@ -225,6 +268,34 @@ const rows: Array<[string, FixtureName, boolean]> = [
   // Counts expressed in words / page text
   ["the dashboard shows three headings", "dashboard", true],
   ["the cart shows 3 items", "cart", true],
+  // QA: alert tone comes from structure + whole words, never substrings
+  ["there are no error messages", "contactIncomplete", false],
+  ["an error message is shown", "contactIncomplete", true],
+  ["the page shows a success message", "contactIncomplete", false],
+  ["an error message is shown", "contactBadEmail", true],
+  ["there are no error messages", "contactBadEmail", false],
+  ["there are no error messages", "contactConsent", false],
+  ["an error message is shown", "contactConsent", true],
+  ["the page shows a success message", "contactConsent", false],
+  ["the page shows a success message", "contactSent", true],
+  ["there are no error messages", "contactSent", true],
+  ["the page shows a success message", "alertSuccess", true],
+  ["there are no error messages", "alertSuccess", true],
+  ["there are no error messages", "consentCopy", true],
+  ["the page shows a success message", "consentCopy", false],
+  ["the page shows a success message", "completeCopy", false],
+  ["there are no error messages", "completeCopy", true],
+  ["there are no error messages", "contact", true],
+  // Legacy graph without alertDetails: whole-word text fallback
+  ["the page shows a success message", "legacyConsent", false],
+  ["there are no error messages", "legacyConsent", false],
+  // Field emptiness (boolean only)
+  ["the name field is empty", "contact", true],
+  ["the name field is not empty", "contact", false],
+  ["the name field is empty", "contactFilled", false],
+  ["the name field is filled in", "contactFilled", true],
+  ["the email field has a value", "contactFilled", true],
+  ["the name field is empty", "contactLegacy", false],
   // Not evaluable from a page graph: must not pass
   ["the layout feels balanced", "dashboard", false],
   ["the total is correct", "cart", false]
@@ -236,3 +307,4 @@ export const ASSERTION_CORPUS: CorpusCase[] = rows.map(([assertion, pageName, ex
 
 /** Corpus rows the evaluator cannot decide and must flag as unsupported. */
 export const UNSUPPORTED_ASSERTIONS = ["the layout feels balanced", "the total is correct"];
+

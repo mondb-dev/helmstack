@@ -80,6 +80,31 @@ export type PendingApproval = {
   effects: ProposedEffect[];
   summary: string;
   createdAt: number;
+  /** Page the request was made on. Navigating away cancels the approval. */
+  url?: string;
+  origin?: string;
+  /** When the approval lapses unanswered (epoch ms); it is then cancelled as `expired`. */
+  expiresAt?: number;
+};
+
+/**
+ * How a pending approval left the queue. `cancelled` = the page changed (main-frame
+ * navigation, tab closed, or the approve-time URL check failed); `expired` = nobody
+ * answered within the approval timeout. Fanned out as the `approval_resolved` SSE event.
+ */
+export type ApprovalOutcome = "approved" | "rejected" | "cancelled" | "expired";
+
+export type ApprovalResolution = {
+  requestId: string;
+  tabId: TabId;
+  outcome: ApprovalOutcome;
+  /** Human-readable reason (always set for `cancelled` / `expired`). */
+  reason?: string;
+  /** For `approved`: the status the executed command finished with. */
+  status?: BrowserCommandResult["status"];
+  url?: string;
+  origin?: string;
+  resolvedAt: number;
 };
 
 export type SiteToolInvocation = {

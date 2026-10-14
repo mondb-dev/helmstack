@@ -9,7 +9,7 @@ import {
   waitForPageSettled
 } from "../cdp/dom-actuator.js";
 import { ApprovalGrantStore } from "../stores/approval-grant-store.js";
-import { ApprovalStore } from "../stores/approval-store.js";
+import { ApprovalStore, PAGE_CHANGED_REASON, isSameApprovalPage } from "../stores/approval-store.js";
 import { HandoffStore } from "../stores/handoff-store.js";
 import type { PageHandle, SecretResolver } from "./types.js";
 import type {
@@ -168,47 +168,90 @@ export class SiteCapabilityRegistry {
     result: PerceptionResult,
     page: PageHandle
   ): Promise<BrowserCommandResult> {
+    const waiting = this.approvals.get(requestId);
+    if (!waiting) {
+      return this.describeSettledApproval(requestId, result.graph.tabId);
+    }
+
+    // Defense in depth: navigation already cancels a tab's approvals, but never
+    // run one against a page other than the one the human was shown.
+    const mismatch = approvalPageMismatch(waiting.url, [result.graph.url, page.cdp.url()]);
+    if (mismatch) {
+      const reason = `${PAGE_CHANGED_REASON} (approved on ${waiting.url ?? "an unknown page"}, tab is now on ${mismatch})`;
+      this.approvals.cancel(requestId, reason);
+      return { status: "blocked", command: waiting.command, reason };
+    }
+
     const pending = this.approvals.take(requestId);
     if (!pending) {
-      return {
-        status: "failed",
-        command: {
-          type: "request_perception_refresh",
-          tabId: result.graph.tabId
-        },
-        reason: `Approval request ${requestId} was not found.`,
-        retryable: false
-      };
+      return this.describeSettledApproval(requestId, result.graph.tabId);
     }
 
     // Plan before executing: a fill changes the page the plan is read from.
-    const plan = await this.planApproval(pending.command, result, page);
-    const execution = await this.executeCommand(pending.tabId, pending.command, observation, result, page, { skipApproval: true });
-    if (execution.status === "completed" && plan.kind === "fill" && plan.formId) {
-      this.grants.record(
-        pending.tabId,
-        plan.formId,
-        result.graph.url,
-        pending.effects.map((effect) => effect.type)
-      );
+    let execution: BrowserCommandResult;
+    try {
+      const plan = await this.planApproval(pending.command, result, page);
+      execution = await this.executeCommand(pending.tabId, pending.command, observation, result, page, { skipApproval: true });
+      if (execution.status === "completed" && plan.kind === "fill" && plan.formId) {
+        this.grants.record(
+          pending.tabId,
+          plan.formId,
+          result.graph.url,
+          pending.effects.map((effect) => effect.type)
+        );
+      }
+    } catch (error) {
+      this.approvals.settle(pending, "approved", { status: "failed", reason: error instanceof Error ? error.message : String(error) });
+      throw error;
     }
+    this.approvals.settle(pending, "approved", {
+      status: execution.status,
+      ...("reason" in execution && typeof execution.reason === "string" ? { reason: execution.reason } : {})
+    });
     return execution;
   }
 
   rejectCommand(requestId: string): BrowserCommandResult {
     const pending = this.approvals.reject(requestId);
-    const command =
-      pending?.command ??
-      ({
-        type: "request_perception_refresh",
-        tabId: "unknown"
-      } as BrowserOutputCommand);
-
+    if (!pending) {
+      if (this.approvals.resolution(requestId)) return this.describeSettledApproval(requestId, "unknown");
+      return {
+        status: "blocked",
+        command: { type: "request_perception_refresh", tabId: "unknown" },
+        reason: `Approval request ${requestId} was not found.`
+      };
+    }
     return {
       status: "blocked",
-      command,
-      reason: pending ? `Approval rejected: ${pending.summary}` : `Approval request ${requestId} was not found.`
+      command: pending.command,
+      reason: `Approval rejected: ${pending.summary}`
     };
+  }
+
+  /**
+   * Answer for a request that is no longer pending: `blocked` with the reason
+   * when it was cancelled or expired (so the agent knows to ask again), else
+   * `failed` / not found.
+   */
+  describeSettledApproval(requestId: string, tabId: TabId): BrowserCommandResult {
+    const command: BrowserOutputCommand = { type: "request_perception_refresh", tabId };
+    const settled = this.approvals.resolution(requestId);
+    if (settled && (settled.outcome === "cancelled" || settled.outcome === "expired")) {
+      return {
+        status: "blocked",
+        command: { type: "request_perception_refresh", tabId: settled.tabId },
+        reason: `Approval request ${requestId} ${settled.outcome}: ${settled.reason ?? PAGE_CHANGED_REASON}`
+      };
+    }
+    if (settled) {
+      return {
+        status: "failed",
+        command: { type: "request_perception_refresh", tabId: settled.tabId },
+        reason: `Approval request ${requestId} was already ${settled.outcome}.`,
+        retryable: false
+      };
+    }
+    return { status: "failed", command, reason: `Approval request ${requestId} was not found.`, retryable: false };
   }
 
   listHandoffs(): HumanHandoffRecord[] {
@@ -631,7 +674,8 @@ export class SiteCapabilityRegistry {
     }
 
     const summary = summarizeEffects(effects);
-    const pending = this.approvals.create(tabId, command, effects, summary);
+    // Bind the approval to the page it was asked on: navigating away cancels it.
+    const pending = this.approvals.create(tabId, command, effects, summary, { url: result.graph.url || page.cdp.url() });
     return {
       status: "awaiting_approval",
       command,
@@ -872,4 +916,17 @@ function pickPreferredProvider(domManifest: SiteCapabilityManifest, webMcpManife
   }
 
   return domManifest.tools.length > 0 ? "dom" : "webmcp";
+}
+
+/**
+ * The first live URL (non-empty) that is not the approval's page, or null when
+ * every known URL matches (fragment ignored). An approval without a recorded
+ * URL is not checked (legacy records; every new one has a URL).
+ */
+function approvalPageMismatch(approvalUrl: string | undefined, liveUrls: Array<string | undefined>): string | null {
+  if (!approvalUrl) return null;
+  for (const live of liveUrls) {
+    if (live && !isSameApprovalPage(approvalUrl, live)) return live;
+  }
+  return null;
 }
