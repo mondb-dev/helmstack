@@ -264,6 +264,22 @@ describe("agent activity panel — connection hint, row states, closed tabs", ()
     expect(callState(activityEntry({ ok: false, summary: "awaiting approval" }))).toBe(CALL_STATES.failed);
   });
 
+  it("a 200 assertion whose summary is 'Failed' shows the failure icon; 'Passed' shows success", () => {
+    expect(callState(activityEntry({ ok: true, status: 200, label: "Assertion", summary: "Failed" }))).toBe(CALL_STATES.failed);
+    expect(callState(activityEntry({ ok: true, status: 200, label: "Assertion", summary: "Passed" }))).toMatchObject({ icon: "check", tone: "ok" });
+    // Driven by the summary, never by the label text.
+    expect(callState(activityEntry({ ok: true, label: "Assertion failed", summary: "Passed" })).tone).toBe("ok");
+    // Prototype keys are not outcomes.
+    expect(callState(activityEntry({ ok: true, summary: "constructor" }))).toBe(CALL_STATES.completed);
+
+    const { controller } = setup();
+    controller.setActivity([activityEntry({ ok: true, status: 200, label: "Assertion", summary: "Failed" })]);
+    const [row] = rows();
+    expect(row.className).toContain("activity-row--fail");
+    expect(row.textContent).toContain("Failed:");
+    expect(row.textContent).not.toContain("Succeeded:");
+  });
+
   it("shows 'Closed tab' instead of a raw tab id when the tab is unknown", () => {
     const { controller } = setup();
     controller.setActivity([activityEntry({ tabId: "9f1c2d3e-0000-4000-8000-abcdefabcdef" })]);

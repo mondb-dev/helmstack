@@ -381,6 +381,12 @@
   background: var(--color-surface);
 }
 
+/* Programmatic focus target (tabindex=-1) after the approval dialog closes;
+   inset ring so the edge of the window doesn't clip it. */
+.activity:focus-visible {
+  outline-offset: -2px;
+}
+
 .activity[data-collapsed="true"] {
   width: auto;
 }

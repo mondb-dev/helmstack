@@ -134,6 +134,28 @@ describe("ElectronBackend", () => {
     await expect(backend.closeTab("missing" as TabId)).rejects.toThrow(/Unknown tab/);
   });
 
+  it("closing the active tab activates the previously active tab (MRU), not the first", async () => {
+    const { backend } = makeBackend();
+    const a = await backend.createTab("https://a.test/");
+    const b = await backend.createTab("https://b.test/");
+    const c = await backend.createTab("https://c.test/");
+    await backend.focusTab(b.id);
+    await backend.focusTab(c.id);
+
+    await backend.closeTab(c.id);
+    expect(b.summary().isActive).toBe(true);
+    expect(a.summary().isActive).toBe(false);
+
+    // Closing a background tab leaves the active one alone and drops it from history.
+    await backend.focusTab(a.id);
+    await backend.closeTab(b.id);
+    expect(a.summary().isActive).toBe(true);
+
+    const d = await backend.createTab("https://d.test/");
+    await backend.closeTab(d.id);
+    expect(a.summary().isActive).toBe(true);
+  });
+
   it("window.open creates a child tab", async () => {
     const { backend } = makeBackend();
     const parent = await backend.createTab("https://a.test/");

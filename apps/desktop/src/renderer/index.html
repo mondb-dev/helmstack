@@ -67,6 +67,7 @@
         <span class="approval-banner__icon" id="approval-banner-icon"></span>
         <p class="approval-banner__text">
           <span class="approval-banner__lead">Approval needed:</span>
+          <span class="approval-banner__site" id="approval-banner-site" hidden></span>
           <span id="approval-banner-summary"></span>
           <span class="approval-banner__more" id="approval-banner-more"></span>
         </p>
@@ -81,7 +82,7 @@
           </div>
         </section>
 
-        <aside class="activity" id="activity-panel" aria-label="Agent activity">
+        <aside class="activity" id="activity-panel" aria-label="Agent activity" tabindex="-1">
           <div class="activity__header">
             <h2 class="activity__title" id="activity-title">Agent activity</h2>
             <button class="btn btn--icon btn--sm btn--quiet" id="activity-collapse" type="button" aria-controls="activity-body" aria-expanded="true" aria-label="Collapse agent activity" title="Collapse"></button>
@@ -111,6 +112,11 @@
           <h2 id="approval-title" class="modal-title">Review sensitive action</h2>
         </div>
         <p class="modal-text" id="approval-copy">The agent is waiting for confirmation before performing a sensitive action.</p>
+        <p class="approval-site" id="approval-site" hidden>
+          <span class="approval-site__label">Requested on</span>
+          <span class="approval-site__url"><span class="approval-site__origin" id="approval-site-origin"></span><span class="approval-site__path" id="approval-site-path"></span></span>
+        </p>
+        <p class="approval-moved" id="approval-moved" role="alert" hidden></p>
         <p class="modal-meta" id="approval-meta"></p>
         <ul class="effects-list" id="approval-effects" aria-label="Effects of this action"></ul>
         <div class="modal-actions">

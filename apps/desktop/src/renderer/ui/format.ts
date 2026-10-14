@@ -42,3 +42,12 @@ export function relativeTime(at: number, now: number = Date.now()): string {
 export function plural(count: number, noun: string, pluralNoun = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : pluralNoun}`;
 }
+
+/** Shorten to at most `max` characters by replacing the middle with "…". */
+export function truncateMiddle(value: string, max: number): string {
+  if (value.length <= max) return value;
+  if (max <= 1) return "…".slice(0, max);
+  const keep = max - 1;
+  const head = Math.ceil(keep / 2);
+  return `${value.slice(0, head)}…${value.slice(value.length - (keep - head))}`;
+}

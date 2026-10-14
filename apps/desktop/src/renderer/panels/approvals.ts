@@ -16,6 +16,7 @@ import type {
 import { openDialog, type DialogHandle } from "../ui/dialog.js";
 import { icon } from "../ui/icons.js";
 import { toast } from "../ui/toast.js";
+import { truncateMiddle } from "../ui/format.js";
 
 export type ApprovalsBridge = Pick<BrowserShellBridge, "listPendingApprovals" | "approveCommand" | "rejectCommand">;
 
@@ -44,17 +45,71 @@ export function effectLines(approval: Pick<PendingApproval, "summary" | "effects
   return lines;
 }
 
+/** Longest path shown before it's truncated in the middle (full path in the tooltip). */
+export const APPROVAL_PATH_MAX = 40;
+
+/** Where an approval was requested, and whether its tab has since left that origin. */
+export interface RequestSite {
+  /** Origin the request was made on, e.g. "https://shop.test". */
+  origin: string;
+  /** Path (no query or fragment — they can carry tokens), truncated; "" for "/". */
+  path: string;
+  /** Untruncated path, for the tooltip. */
+  fullPath: string;
+  /** The tab's current origin when it differs from the request's, else null. */
+  movedTo: string | null;
+}
+
+function parseUrl(value: string | undefined): URL | null {
+  if (!value) return null;
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+/** Label for where a tab is now: its origin, or the bare URL for opaque origins (about:blank, data:). */
+function locationLabel(url: URL): string {
+  if (url.origin !== "null") return url.origin;
+  return truncateMiddle(`${url.protocol}${url.pathname}`, APPROVAL_PATH_MAX);
+}
+
+/**
+ * Pure: the request's own origin + path (from `PendingApproval.origin`/`url`,
+ * never the tab's current URL), and the tab's current origin if it no longer
+ * matches. Null when the approval carries neither field (older servers).
+ */
+export function requestSite(
+  approval: Pick<PendingApproval, "url" | "origin">,
+  currentUrl?: string
+): RequestSite | null {
+  const url = parseUrl(approval.url);
+  const origin = approval.origin ?? (url && url.origin !== "null" ? url.origin : undefined);
+  if (!origin) return null;
+  const fullPath = url && url.origin === origin && url.pathname !== "/" ? url.pathname : "";
+  const current = parseUrl(currentUrl);
+  return {
+    origin,
+    path: truncateMiddle(fullPath, APPROVAL_PATH_MAX),
+    fullPath,
+    movedTo: current && current.origin !== origin ? locationLabel(current) : null,
+  };
+}
+
 export interface ApprovalsOptions {
   root?: ParentNode;
   bridge: ApprovalsBridge;
   /** Human label for a tab id (e.g. its host), for the dialog's meta line. */
   tabLabel?: (tabId: TabId) => string | undefined;
+  /** The tab's current URL, to catch an approval whose tab has left the requesting origin. */
+  tabUrl?: (tabId: TabId) => string | undefined;
   onLayoutChange?: () => void;
   onDialogOpen?: () => void;
   onDialogClose?: () => void;
   /** A decision produced a follow-up (e.g. a human handoff). */
   onResult?: (result: BrowserCommandResult) => void;
-  /** Focus target when the dialog closes and the banner (its opener) is gone. */
+  /** Focus target when the dialog closes and its opener (the Review button) is gone or hidden. */
   fallbackFocus?: () => HTMLElement | null;
 }
 
@@ -65,6 +120,8 @@ export interface ApprovalsController {
   /** Open the Review dialog on the oldest pending approval. */
   review(): void;
   pending(): PendingApproval[];
+  /** Tabs changed (navigation, close) — re-check origins on screen. */
+  tabsChanged(): void;
 }
 
 export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
@@ -84,6 +141,11 @@ export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
   const position = q<HTMLElement>("approval-position");
   const copy = q<HTMLElement>("approval-copy");
   const meta = q<HTMLElement>("approval-meta");
+  const site = q<HTMLElement>("approval-site");
+  const siteOrigin = q<HTMLElement>("approval-site-origin");
+  const sitePath = q<HTMLElement>("approval-site-path");
+  const moved = q<HTMLElement>("approval-moved");
+  const bannerSite = q<HTMLElement>("approval-banner-site");
   const effects = q<HTMLElement>("approval-effects");
   const approveButton = q<HTMLButtonElement>("approval-approve-button");
   const rejectButton = q<HTMLButtonElement>("approval-reject-button");
@@ -97,6 +159,10 @@ export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
   let dialog: DialogHandle | null = null;
   let shownRequestId: string | null = null;
   let busy = false;
+  let opener: HTMLElement | null = null;
+
+  const siteOf = (approval: PendingApproval): RequestSite | null =>
+    requestSite(approval, options.tabUrl?.(approval.tabId));
 
   const renderBanner = (): void => {
     const wasHidden = banner.hidden;
@@ -105,6 +171,10 @@ export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
     } else {
       banner.hidden = false;
       bannerSummary.textContent = pending[0].summary;
+      const where = siteOf(pending[0]);
+      bannerSite.hidden = !where;
+      bannerSite.textContent = where ? `${where.origin}${where.path}` : "";
+      bannerSite.title = where ? `Requested on ${where.origin}${where.fullPath}` : "";
       bannerMore.textContent = pending.length > 1 ? `+${pending.length - 1} more` : "";
       reviewButton.textContent = pending.length > 1 ? `Review (${pending.length})` : "Review";
     }
@@ -134,6 +204,18 @@ export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
     const tab = options.tabLabel?.(approval.tabId);
     const when = new Date(approval.createdAt).toLocaleTimeString();
     meta.textContent = tab ? `Tab ${tab} · requested ${when}` : `Requested ${when}`;
+
+    const where = siteOf(approval);
+    site.hidden = !where;
+    siteOrigin.textContent = where?.origin ?? "";
+    sitePath.textContent = where?.path ?? "";
+    site.title = where ? `${where.origin}${where.fullPath}` : "";
+    const movedTo = where?.movedTo ?? null;
+    moved.hidden = movedTo === null;
+    moved.textContent = movedTo === null ? "" : `This tab has moved to ${movedTo}. Approving is disabled.`;
+    const approveHadFocus = document.activeElement === approveButton;
+    approveButton.disabled = movedTo !== null;
+    if (approveButton.disabled && approveHadFocus) rejectButton.focus();
     const lines = effectLines(approval);
     effects.hidden = lines.length === 0;
     effects.replaceChildren(
@@ -153,8 +235,21 @@ export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
     shownRequestId = null;
     modal.hidden = true;
     handle.close();
-    if (banner.hidden) options.fallbackFocus?.()?.focus();
+    restoreFocus();
     options.onDialogClose?.();
+  };
+
+  /** Back to the opener (normally the Review button) if it's still usable, else the fallback. */
+  const restoreFocus = (): void => {
+    const target = opener;
+    opener = null;
+    const usable =
+      target !== null &&
+      target.isConnected &&
+      target.closest("[hidden]") === null &&
+      !target.hasAttribute("disabled") &&
+      !modal.contains(target);
+    (usable ? target : options.fallbackFocus?.())?.focus();
   };
 
   const review = (): void => {
@@ -163,15 +258,17 @@ export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
     if (dialog) return;
     modal.hidden = false;
     options.onDialogOpen?.();
+    opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     dialog = openDialog(modal, {
       dismissable: true,
-      initialFocus: approveButton,
+      initialFocus: approveButton.disabled ? rejectButton : approveButton,
       onClose: () => {
         // Escape path: openDialog already restores focus.
         if (dialog) {
           dialog = null;
           shownRequestId = null;
           modal.hidden = true;
+          opener = null;
           options.onDialogClose?.();
         }
       },
@@ -202,6 +299,7 @@ export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
   const decide = async (decision: "approve" | "reject"): Promise<void> => {
     const requestId = shownRequestId;
     if (!requestId || busy) return;
+    if (decision === "approve" && approveButton.disabled) return;
     busy = true;
     const button = decision === "approve" ? approveButton : rejectButton;
     button.setAttribute("aria-busy", "true");
@@ -239,5 +337,13 @@ export function mountApprovals(options: ApprovalsOptions): ApprovalsController {
   laterButton.addEventListener("click", closeDialog);
   renderBanner();
 
-  return { update, refresh, review, pending: () => pending };
+  const tabsChanged = (): void => {
+    renderBanner();
+    if (dialog && shownRequestId) {
+      const shown = pending.find((p) => p.requestId === shownRequestId);
+      if (shown) paintDialog(shown);
+    }
+  };
+
+  return { update, refresh, review, pending: () => pending, tabsChanged };
 }

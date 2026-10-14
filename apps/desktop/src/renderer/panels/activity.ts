@@ -89,12 +89,19 @@ export interface CallState {
 }
 
 /**
- * Command outcomes the agent server puts in `summary` (see
- * devtools-core `commandStatus`), mapped to row state. A 2xx response can
- * still be a pending or refused command, so the summary wins over `ok`.
+ * Outcomes the agent server puts in `summary`, mapped to row state (keys are
+ * lower-case; lookup is case-insensitive). Two summarizers produce them in
+ * devtools-core `http/activity.ts`: `commandStatus` (completed / awaiting
+ * approval / awaiting human / blocked / failed) and `passFail` ("Passed" /
+ * "Failed", for assertions and style assertions). A 2xx response can still be
+ * a pending, refused or failed outcome, so the summary wins over `ok`.
+ *
+ * `AgentActivityEntry` has no logical-outcome field yet, so this table is the
+ * stop-gap: any new summarizer that reports failure must be added here.
  */
 export const CALL_STATES: Record<string, CallState> = {
   completed: { icon: "check", tone: "ok", srLabel: "Succeeded: " },
+  passed: { icon: "check", tone: "ok", srLabel: "Passed: " },
   "awaiting approval": { icon: "clock", tone: "pending", srLabel: "Awaiting approval: " },
   "awaiting human": { icon: "clock", tone: "pending", srLabel: "Waiting for you: " },
   blocked: { icon: "circle-x", tone: "fail", srLabel: "Blocked: " },
@@ -106,7 +113,8 @@ const CALL_FAILED: CallState = CALL_STATES.failed;
 
 export function callState(entry: AgentActivityEntry): CallState {
   if (!entry.ok) return CALL_FAILED;
-  return (entry.summary && CALL_STATES[entry.summary]) || CALL_OK;
+  const key = entry.summary?.trim().toLowerCase();
+  return (key && Object.hasOwn(CALL_STATES, key) ? CALL_STATES[key] : undefined) ?? CALL_OK;
 }
 
 export interface ActivityOptions {

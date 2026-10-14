@@ -131,6 +131,8 @@ export class ElectronBackend implements BrowserBackend {
   private readonly downloadListeners = new Set<DownloadListener>();
   private readonly downloadTrackingSessions = new WeakSet<Electron.Session>();
   private activeTabId: TabId | null = null;
+  /** Tab ids in activation order, most recent last — closing the active tab returns to the previous one. */
+  private activationOrder: TabId[] = [];
   private attachedTabId: TabId | null = null;
   private viewport: ViewportRect = DEFAULT_VIEWPORT;
 
@@ -205,10 +207,12 @@ export class ElectronBackend implements BrowserBackend {
     }
     tab.view.webContents.close();
     this.tabs.delete(tabId);
+    this.activationOrder = this.activationOrder.filter((id) => id !== tabId && this.tabs.has(id));
     this.emit({ type: "closed", tabId });
 
     if (this.activeTabId === tabId) {
-      const next = this.tabs.values().next().value as ElectronTab | undefined;
+      const previousId = this.activationOrder.at(-1);
+      const next = (previousId ? this.tabs.get(previousId) : undefined) ?? (this.tabs.values().next().value as ElectronTab | undefined);
       this.activeTabId = next?.id ?? null;
       if (next) {
         await this.focusTab(next.id);
@@ -264,6 +268,7 @@ export class ElectronBackend implements BrowserBackend {
     }
 
     this.activeTabId = tabId;
+    this.activationOrder = [...this.activationOrder.filter((id) => id !== tabId), tabId];
     if (this.attachedTabId !== tabId) {
       this.window.contentView.addChildView(tab.view);
       this.attachedTabId = tabId;

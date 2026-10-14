@@ -20,6 +20,7 @@ import { mountApprovals } from "./panels/approvals.js";
 import { mountActivity } from "./panels/activity.js";
 import { mountSettings } from "./panels/settings.js";
 import { mountHandoff } from "./panels/handoff.js";
+import { mountAddressBar } from "./panels/address-bar.js";
 
 // Apply the resolved theme as early as possible to minimise a flash of the
 // default (dark) chrome before the renderer paints.
@@ -46,13 +47,19 @@ async function bootstrap(): Promise<void> {
   const viewportFrame = must<HTMLElement>("viewport-frame");
 
   let tabs: TabSummary[] = [];
-  let isEditingAddress = false;
   let pendingAddressValue: string | null = null;
 
   const activeTab = (): TabSummary | undefined => tabs.find((tab) => tab.isActive);
   // Remembers labels of closed tabs too, so the feed never shows a raw tab id.
   const tabLabels = createTabLabelCache();
   const tabLabel = (tabId: string): string | undefined => tabLabels.label(tabId);
+  const addressBar = mountAddressBar({
+    input: addressInput,
+    currentValue: () => {
+      const tab = activeTab();
+      return tab ? (pendingAddressValue ?? tab.url) : undefined;
+    },
+  });
 
   // ── viewport sync ─────────────────────────────────────────────────────────
   const viewport = createViewportSync({
@@ -88,10 +95,12 @@ async function bootstrap(): Promise<void> {
   const approvals = mountApprovals({
     bridge,
     tabLabel,
+    tabUrl: (tabId) => tabs.find((tab) => tab.id === tabId)?.url,
     onLayoutChange: viewport.queue,
     onDialogOpen: overlayOpened("approval"),
     onDialogClose: overlayClosed("approval"),
-    fallbackFocus: () => addressInput,
+    // Never the address bar: focusing it would look like the human is about to type.
+    fallbackFocus: () => document.getElementById("activity-panel"),
     onResult: (result) => {
       if (result.status === "awaiting_human") {
         const tab = activeTab();
@@ -118,12 +127,11 @@ async function bootstrap(): Promise<void> {
     });
 
     const current = activeTab();
-    if (current && !isEditingAddress) {
-      addressInput.value = pendingAddressValue ?? current.url;
-    }
     if (current && current.status !== "loading") {
       pendingAddressValue = null;
     }
+    addressBar.sync();
+    approvals.tabsChanged();
     if (current?.id !== previousActive) {
       void overrides.setActiveTab(current?.id);
       activity.refreshForTab();
@@ -196,7 +204,7 @@ async function bootstrap(): Promise<void> {
     const target = normalizeNavigationTarget(addressInput.value);
     const tab = activeTab();
     if (!target || !tab) return;
-    isEditingAddress = false;
+    addressBar.markSubmitted();
     pendingAddressValue = target;
     addressInput.value = target;
     try {
@@ -205,14 +213,6 @@ async function bootstrap(): Promise<void> {
       toast(`Couldn't open ${target} — ${error instanceof Error ? error.message : String(error)}`, "error");
     }
     viewport.stabilize(1200, 120);
-  });
-  addressInput.addEventListener("focus", () => {
-    isEditingAddress = true;
-  });
-  addressInput.addEventListener("blur", () => {
-    isEditingAddress = false;
-    const tab = activeTab();
-    if (tab) addressInput.value = pendingAddressValue ?? tab.url;
   });
 
   // ── select for agent ──────────────────────────────────────────────────────
