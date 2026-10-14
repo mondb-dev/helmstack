@@ -1,22 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { meterLevel, terminalLineClass, TERMINAL_LEVEL_CLASS } from "../src/renderer/ui/dataview.js";
-
-describe("terminalLineClass", () => {
-  it("maps each level to its semantic class", () => {
-    expect(terminalLineClass("system")).toBe("terminal-line terminal-system");
-    expect(terminalLineClass("agent")).toBe("terminal-line terminal-agent");
-    expect(terminalLineClass("ai")).toBe("terminal-line terminal-ai");
-    expect(terminalLineClass("error")).toBe("terminal-line terminal-error");
-    expect(terminalLineClass("nav")).toBe("terminal-line terminal-nav");
-  });
-
-  it("covers every level in the map", () => {
-    for (const level of Object.keys(TERMINAL_LEVEL_CLASS)) {
-      expect(terminalLineClass(level as keyof typeof TERMINAL_LEVEL_CLASS)).toContain("terminal-line");
-    }
-  });
-});
+import { meterLevel } from "../src/renderer/ui/dataview.js";
 
 describe("meterLevel", () => {
   it("higher-is-better: ≥90 good, ≥70 warn, else bad", () => {

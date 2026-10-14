@@ -2,9 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- img-src data: — popovers/dialogs freeze-frame the page as a PNG while the native view is hidden. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HelmStack</title>
@@ -27,11 +28,21 @@
           <div class="tabs" id="tabs" role="tablist" aria-label="Open tabs"></div>
           <button class="tab-new" id="new-tab-button" type="button" aria-label="New tab"></button>
         </div>
+        <button class="titlebar-action" id="settings-button" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-sheet" hidden></button>
         <button class="titlebar-action" id="theme-toggle" type="button" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
+        <div class="titlebar-connection">
+          <button class="conn" id="connection-indicator" type="button" data-state="unknown">
+            <span class="conn__dot" aria-hidden="true"></span>
+            <span class="sr-only">Agent API </span>
+            <span class="conn__text" id="connection-text">Checking…</span>
+          </button>
+          <div class="popover popover--wide" id="connection-popover" hidden></div>
+        </div>
       </header>
 
-      <nav class="navbar" aria-label="Address bar and tools">
+      <nav class="navbar" aria-label="Address bar">
         <form class="nav-form" id="address-form">
+          <label class="sr-only" for="address-input">Address</label>
           <input
             class="nav-input"
             id="address-input"
@@ -39,106 +50,79 @@
             spellcheck="false"
             placeholder="Enter URL or search..."
           />
-          <button class="btn btn--primary" type="submit">Go</button>
+          <button class="btn btn--ghost" type="submit">Go</button>
         </form>
-        <div class="dropdown" id="toolbar-menu">
-          <button class="btn btn--ghost" id="toolbar-menu-trigger" type="button">Demos</button>
-          <div class="dropdown-menu" id="toolbar-menu-dropdown" role="menu" aria-label="Demos" hidden>
-            <button class="dropdown-item" id="fixture-open-button" type="button" role="menuitem">Open contact fixture</button>
-            <button class="dropdown-item" id="fixture-run-button" type="button" role="menuitem">Run contact fixture</button>
-            <div class="dropdown-divider" role="separator"></div>
-            <button class="dropdown-item" id="snapshot-button" type="button" role="menuitem">Capture page graph</button>
-            <button class="dropdown-item" id="inspect-button" type="button" role="menuitem">Inspect element</button>
-          </div>
-        </div>
+        <button class="btn btn--primary" id="pick-button" type="button" title="Click an element in the page to hand its selector to your agent">
+          <span>Select for agent</span>
+        </button>
       </nav>
 
+      <section class="override-strip" id="override-strip" role="region" aria-label="Agent overrides on this tab" hidden>
+        <span class="override-strip__title">Overrides</span>
+        <ul class="override-strip__chips" id="override-chips"></ul>
+        <button class="link-btn" id="override-clear-all" type="button">Clear all</button>
+      </section>
+
+      <section class="approval-banner" id="approval-banner" role="region" aria-label="Pending approvals" hidden>
+        <span class="approval-banner__icon" id="approval-banner-icon"></span>
+        <p class="approval-banner__text">
+          <span class="approval-banner__lead">Approval needed:</span>
+          <span id="approval-banner-summary"></span>
+          <span class="approval-banner__more" id="approval-banner-more"></span>
+        </p>
+        <button class="btn btn--sm btn--ghost" id="approval-review-button" type="button" aria-haspopup="dialog" aria-controls="approval-modal">Review</button>
+      </section>
+      <div class="sr-only" id="approval-announcer" role="status" aria-live="polite"></div>
+
       <main class="workspace">
-        <aside class="sidebar" aria-label="Agent and developer tools">
-          <details class="panel" open>
-            <summary class="panel-header">Agent</summary>
-            <div class="panel-body">
-              <textarea
-                class="intent-input intent-box"
-                id="intent-box"
-                rows="3"
-                placeholder="Describe what you'd like the agent to do..."
-              ></textarea>
-              <button class="btn btn--primary btn--sm" id="intent-run-button" type="button">Run</button>
-              <div class="terminal" id="terminal-output">
-                <div class="terminal-line terminal-system">Waiting for agent...</div>
-              </div>
-            </div>
-          </details>
-
-          <details class="panel">
-            <summary class="panel-header">Accounts</summary>
-            <div class="panel-body">
-              <div class="accounts-list" id="accounts-list"></div>
-              <form class="form-stack" id="account-form" novalidate>
-                <div class="field">
-                  <label class="field__label" for="account-label">Label</label>
-                  <input class="input" id="account-label" type="text" placeholder="e.g. Amplify dev" required aria-describedby="account-label-error" />
-                  <p class="field__error" id="account-label-error" hidden></p>
-                </div>
-                <div class="field">
-                  <label class="field__label" for="account-origin">Origin</label>
-                  <input class="input" id="account-origin" type="text" placeholder="https://example.com" required aria-describedby="account-origin-error" />
-                  <p class="field__error" id="account-origin-error" hidden></p>
-                </div>
-                <div class="field">
-                  <label class="field__label" for="account-username">Username</label>
-                  <input class="input" id="account-username" type="text" placeholder="you@example.com" required autocomplete="off" aria-describedby="account-username-error" />
-                  <p class="field__error" id="account-username-error" hidden></p>
-                </div>
-                <div class="field">
-                  <label class="field__label" for="account-password">Password</label>
-                  <input class="input" id="account-password" type="password" placeholder="••••••••" required autocomplete="new-password" aria-describedby="account-password-error" />
-                  <p class="field__error" id="account-password-error" hidden></p>
-                </div>
-                <div class="field">
-                  <label class="field__label" for="account-totp">TOTP seed (optional)</label>
-                  <input class="input" id="account-totp" type="text" placeholder="Base32 secret" autocomplete="off" />
-                </div>
-                <button class="btn btn--primary btn--sm" type="submit">Save account</button>
-              </form>
-            </div>
-          </details>
-
-          <details class="panel">
-            <summary class="panel-header">Developer</summary>
-            <div class="panel-body">
-              <p class="status-text" id="fixture-status">Run a demo or capture a page graph from the Demos menu.</p>
-              <div class="vault-list" id="vault-list"></div>
-              <pre class="code-block" id="snapshot-output">No snapshot captured yet.</pre>
-            </div>
-          </details>
-        </aside>
-
         <section class="viewport-stage">
-          <div class="viewport-frame" id="viewport-frame" tabindex="-1" role="tabpanel" aria-label="Page content"></div>
+          <div class="viewport-frame" id="viewport-frame" tabindex="-1" role="tabpanel" aria-label="Page content">
+            <img class="viewport-freeze" id="viewport-freeze" alt="" hidden />
+          </div>
         </section>
+
+        <aside class="activity" id="activity-panel" aria-label="Agent activity">
+          <div class="activity__header">
+            <h2 class="activity__title" id="activity-title">Agent activity</h2>
+            <button class="btn btn--icon btn--sm btn--quiet" id="activity-collapse" type="button" aria-controls="activity-body" aria-expanded="true" aria-label="Collapse agent activity" title="Collapse"></button>
+          </div>
+          <div class="activity__body" id="activity-body">
+            <form class="intent" id="intent-form" hidden>
+              <label class="field__label" for="intent-box">Intent for listening agents</label>
+              <textarea class="textarea intent__input" id="intent-box" rows="2" placeholder="Describe what you'd like the agent to do..."></textarea>
+              <button class="btn btn--sm btn--ghost" type="submit">Send intent</button>
+            </form>
+            <div class="segmented" role="group" aria-label="Activity filter">
+              <button class="segmented__btn" type="button" data-filter="tab" aria-pressed="false">This tab</button>
+              <button class="segmented__btn" type="button" data-filter="all" aria-pressed="true">All tabs</button>
+            </div>
+            <ol class="activity__list" id="activity-list" aria-labelledby="activity-title"></ol>
+            <p class="activity__footer" id="activity-footer" hidden></p>
+          </div>
+        </aside>
       </main>
     </div>
 
     <div class="modal-overlay" id="approval-modal" hidden>
-      <div class="modal-backdrop" id="approval-backdrop"></div>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="approval-title">
+      <div class="modal-backdrop"></div>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="approval-title" aria-describedby="approval-copy">
         <div class="modal-header">
-          <span class="badge badge-warning">Approval required</span>
+          <span class="badge badge-warning" id="approval-position">Approval required</span>
           <h2 id="approval-title" class="modal-title">Review sensitive action</h2>
         </div>
         <p class="modal-text" id="approval-copy">The agent is waiting for confirmation before performing a sensitive action.</p>
-        <div class="effects-list" id="approval-effects"></div>
+        <p class="modal-meta" id="approval-meta"></p>
+        <ul class="effects-list" id="approval-effects" aria-label="Effects of this action"></ul>
         <div class="modal-actions">
-          <button class="btn btn--ghost" id="approval-reject-button" type="button">Reject</button>
+          <button class="btn btn--ghost" id="approval-later-button" type="button">Decide later</button>
+          <button class="btn btn--danger" id="approval-reject-button" type="button">Reject</button>
           <button class="btn btn--primary" id="approval-approve-button" type="button">Approve</button>
         </div>
       </div>
     </div>
 
     <div class="modal-overlay" id="handoff-modal" hidden>
-      <div class="modal-backdrop" id="handoff-backdrop"></div>
+      <div class="modal-backdrop"></div>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="handoff-title">
         <div class="modal-header">
           <span class="badge badge-info">Human handoff</span>
@@ -149,6 +133,60 @@
         <div class="modal-actions">
           <button class="btn btn--ghost" id="handoff-cancel-button" type="button">Cancel agent</button>
           <button class="btn btn--primary" id="handoff-done-button" type="button">Done &mdash; resume agent</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay modal-overlay--sheet" id="settings-sheet" hidden>
+      <div class="modal-backdrop" id="settings-backdrop"></div>
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="sheet__header">
+          <h2 id="settings-title" class="modal-title">Settings</h2>
+          <button class="btn btn--icon btn--sm btn--quiet" id="settings-close" type="button" aria-label="Close settings"></button>
+        </div>
+        <div class="sheet__body">
+          <section class="sheet__section" aria-labelledby="settings-policies-title">
+            <h3 class="sheet__heading" id="settings-policies-title">Approval policies</h3>
+            <p class="sheet__hint">What happens when an agent attempts a sensitive action.</p>
+            <div class="policy-list" id="policy-list"></div>
+          </section>
+
+          <section class="sheet__section" aria-labelledby="settings-accounts-title">
+            <h3 class="sheet__heading" id="settings-accounts-title">Accounts</h3>
+            <div class="accounts-list" id="accounts-list"></div>
+            <form class="form-stack" id="account-form" novalidate>
+              <div class="field">
+                <label class="field__label" for="account-label">Label</label>
+                <input class="input" id="account-label" type="text" placeholder="e.g. Amplify dev" required aria-describedby="account-label-error" />
+                <p class="field__error" id="account-label-error" hidden></p>
+              </div>
+              <div class="field">
+                <label class="field__label" for="account-origin">Origin</label>
+                <input class="input" id="account-origin" type="text" placeholder="https://example.com" required aria-describedby="account-origin-error" />
+                <p class="field__error" id="account-origin-error" hidden></p>
+              </div>
+              <div class="field">
+                <label class="field__label" for="account-username">Username</label>
+                <input class="input" id="account-username" type="text" placeholder="you@example.com" required autocomplete="off" aria-describedby="account-username-error" />
+                <p class="field__error" id="account-username-error" hidden></p>
+              </div>
+              <div class="field">
+                <label class="field__label" for="account-password">Password</label>
+                <input class="input" id="account-password" type="password" placeholder="••••••••" required autocomplete="new-password" aria-describedby="account-password-error" />
+                <p class="field__error" id="account-password-error" hidden></p>
+              </div>
+              <div class="field">
+                <label class="field__label" for="account-totp">TOTP seed (optional)</label>
+                <input class="input" id="account-totp" type="text" placeholder="Base32 secret" autocomplete="off" />
+              </div>
+              <button class="btn btn--primary btn--sm" type="submit">Save account</button>
+            </form>
+          </section>
+
+          <section class="sheet__section" aria-labelledby="settings-vault-title">
+            <h3 class="sheet__heading" id="settings-vault-title">Vault</h3>
+            <div class="vault-list" id="vault-list"></div>
+          </section>
         </div>
       </div>
     </div>

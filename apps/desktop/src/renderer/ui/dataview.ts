@@ -1,23 +1,7 @@
 /**
  * Pure helpers for the data-display components (styleguide §3.8–3.12):
- * the terminal log level → CSS class map, and the score → semantic meter level
- * thresholds. Kept DOM-free so they unit-test directly.
+ * the score → semantic meter level thresholds. Kept DOM-free so they unit-test directly.
  */
-
-import type { AgentLogEntry } from "../../../../../packages/shared/src/index.js";
-
-export const TERMINAL_LEVEL_CLASS: Record<AgentLogEntry["level"], string> = {
-  system: "terminal-system",
-  agent: "terminal-agent",
-  ai: "terminal-ai",
-  error: "terminal-error",
-  nav: "terminal-nav",
-};
-
-/** Full className for a terminal line of the given level. */
-export function terminalLineClass(level: AgentLogEntry["level"]): string {
-  return `terminal-line ${TERMINAL_LEVEL_CLASS[level] ?? "terminal-system"}`;
-}
 
 export type MeterLevel = "good" | "warn" | "bad";
 
