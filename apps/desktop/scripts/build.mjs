@@ -14,6 +14,20 @@ cpSync(path.join(appRoot, "src/renderer/index.html"), path.join(outDir, "rendere
 cpSync(path.join(appRoot, "src/renderer/styles"), path.join(outDir, "renderer/styles"), { recursive: true });
 
 await Promise.all([
+  // HelmStack's own MCP server, bundled into one ESM file so the in-window agent
+  // chat can launch it from a packaged app (which ships only `dist/`, no
+  // node_modules). It runs under Node / Electron-as-node, never in the renderer.
+  build({
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node22",
+    outfile: path.join(outDir, "mcp/helmstack-mcp.mjs"),
+    entryPoints: [path.join(appRoot, "../../packages/mcp-server/src/index.ts")],
+    banner: {
+      js: "import { createRequire as __hsCreateRequire } from 'node:module'; const require = __hsCreateRequire(import.meta.url);"
+    }
+  }),
   build({
     bundle: true,
     platform: "node",

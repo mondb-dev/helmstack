@@ -1,4 +1,5 @@
 export * from "./account.js";
+export * from "./agent-chat.js";
 export * from "./ai.js";
 export * from "./browser.js";
 export * from "./cdp.js";

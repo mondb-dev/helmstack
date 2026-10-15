@@ -166,6 +166,62 @@ label, or the page's only form); unresolved ones never share a grant.
 > and `click` / `select` classification are tracked in the agent-substrate
 > backlog.
 
+## In-window agent chat (agent CLI runner)
+
+The Chat tab lets the human talk to an installed agent CLI (Claude Code, Gemini
+CLI) inside the HelmStack window. The desktop main process launches the CLI as
+a child process and gives it HelmStack's own MCP server so it can use the
+browser tools.
+
+**What starts it.** Only the human, through the shell IPC bridge
+(`browserShell.startAgentConversation` etc.). IPC handlers accept calls only
+from the shell window's own `webContents` and validate every argument (types,
+lengths, known conversation id). **There is no HTTP route** to start, control
+or read a conversation, so an agent talking to `127.0.0.1:7070` cannot launch
+another agent (a unit test asserts the agent server and daemon reference
+nothing from the runner).
+
+**What it runs.** Only allowlisted CLIs (`claude`, `gemini`) found by name on
+`PATH` and a few well-known install dirs (relative `PATH` entries ignored). The
+only other thing ever executed is `<found> --version` with a 5 s timeout. argv
+is a fixed template, `shell:false`; the user's text goes to the CLI on stdin.
+The model id must match `^[A-Za-z0-9._:/-]{1,80}$`; the working directory must
+be an existing directory (realpath) and defaults to an empty private directory
+under `<userData>`.
+
+**Confinement.** Claude Code runs with `--tools=` (no built-in tools),
+`--allowedTools=mcp__helmstack`, an explicit deny list for the built-ins,
+`--permission-mode dontAsk` (anything not pre-allowed is denied, never
+prompted) and `--strict-mcp-config`; `--dangerously-skip-permissions` /
+`bypassPermissions` / `--yolo` are never passed. Verified live: asked to run
+`ls` and write a file, the model reported it had neither tool, while HelmStack
+MCP calls worked. Gemini CLI is started with a policy file that denies every
+tool except the `helmstack` MCP server, `--approval-mode default` and
+`--allowed-mcp-server-names`, but this could not be verified end to end, so it
+is reported `confined:false, experimental:true` and a conversation needs an
+explicit per-conversation `allowUnconfined` acknowledgement.
+
+**Secrets.** The CLI's environment has every `HELMSTACK_*` / `ELECTRON_*`
+variable (notably `HELMSTACK_AUTH_TOKEN`) removed. The MCP server receives the
+agent-server port and a token **file path** (`HELMSTACK_TOKEN_FILE`), never the
+token. If the token came from the environment it is written to a 0600 file in
+a 0700 per-conversation temp dir that is deleted when the conversation closes.
+The MCP server runs with `HELMSTACK_AGENT_ID=chat:<cli>` (activity feed
+attribution) and without the opt-in accounts/TOTP/approval tool surface.
+
+**What the UI sees.** Text, tool name + a fixed short summary, and a sanitised
+outcome. Tool arguments, tool results and raw stderr are never forwarded.
+
+**Limits.** One running turn per conversation, 10 minute hard timeout, 16 MiB
+output cap, 400k characters of assistant text, 4 concurrent conversations, 500
+replayed events. Stop sends SIGTERM to the whole process group then SIGKILL
+after 3 s; closing the tab or conversation and quitting the app kill any
+remaining process group and delete the temp files.
+
+**Not guaranteed.** The CLI authenticates with the user's own login and sends
+page content the agent reads to that provider. HelmStack's approval gating
+still applies to risky actions the agent requests through MCP.
+
 ## Anti-detection / stealth
 
 Fingerprint hardening and human-like input timing are **opt-in** and **off by

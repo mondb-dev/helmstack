@@ -13,3 +13,4 @@ export * from "./perception/injector.js";
 export * from "./core/tab-state.js";
 export * from "./core/tab-session.js";
 export * from "./core/helmstack-core.js";
+export * from "./agent-runner/index.js";

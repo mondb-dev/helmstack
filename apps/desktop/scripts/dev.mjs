@@ -124,6 +124,17 @@ const rebuildPlugin = {
 
 const builds = [
   {
+    // HelmStack's MCP server, launched by the in-window agent chat.
+    entryPoints: [path.join(appRoot, "../../packages/mcp-server/src/index.ts")],
+    outfile: path.join(outDir, "mcp/helmstack-mcp.mjs"),
+    platform: "node",
+    format: "esm",
+    target: "node22",
+    banner: {
+      js: "import { createRequire as __hsCreateRequire } from 'node:module'; const require = __hsCreateRequire(import.meta.url);"
+    }
+  },
+  {
     entryPoints: [path.join(appRoot, "src/main/main.ts")],
     outfile: path.join(outDir, "main/main.cjs"),
     platform: "node",

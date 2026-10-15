@@ -1,9 +1,11 @@
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow, ipcMain, session, type IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 
 import {
   type AccountInput,
   type AccountUpdate,
+  type AgentCliId,
+  type StartAgentConversationInput,
   type ApprovalDecision,
   type ApprovalPolicyKey,
   BrowserShellChannel,
@@ -24,6 +26,7 @@ import { createDesktopSecrets } from "./desktop-secrets.js";
 import type { AccountsApi, ExtensionsApi } from "../../../../packages/devtools-core/src/api.js";
 import { HelmstackCore } from "../../../../packages/devtools-core/src/core/helmstack-core.js";
 import { isAgentApprovalsEnabled } from "../../../../packages/devtools-core/src/core/runtime-config.js";
+import { AgentRunner } from "../../../../packages/devtools-core/src/agent-runner/index.js";
 import {
   type AgentServer,
   agentTokenPath,
@@ -58,6 +61,7 @@ function resolveAgentServerPort(raw: string | undefined): number {
 let mainWindow: BrowserWindow | null = null;
 let core: HelmstackCore | null = null;
 let agentServer: AgentServer | null = null;
+let agentRunner: AgentRunner | null = null;
 
 /**
  * Send an event to the shell renderer, guarding against a destroyed window or
@@ -153,7 +157,32 @@ async function createMainWindow() {
   });
   console.log(`[AgentServer] auth token: ${authToken}`);
   console.log(`[AgentServer] token file: ${agentTokenPath(userDataPath)}`);
-  registerIpcHandlers(core, browserBackend, vault, accountStore, agentServer);
+  // ── In-window agent chat ──────────────────────────────────────────────────
+  // Owned here (not by the core/daemon) and reachable only through the shell
+  // IPC below: there is no HTTP route that starts or controls a conversation.
+  const chatCore = core;
+  agentRunner = new AgentRunner({
+    port: agentServerPort,
+    tokenFile: tokenPath,
+    authToken: tokenPath ? null : authToken,
+    mcpEntry: path.join(appDir, "../mcp/helmstack-mcp.mjs"),
+    disabledReason: "The HelmStack MCP server bundle is missing from this build, so agent chat is unavailable.",
+    defaultWorkingDirectory: path.join(userDataPath, "agent-chat-workspace"),
+    isTabAlive: (tabId) => chatCore.listTabs().some((tab) => tab.id === tabId),
+    electron: true
+  });
+  const runner = agentRunner;
+  void runner.refresh();
+  // End a tab's conversations when the tab goes away.
+  let knownTabIds = new Set<string>();
+  core.onTabsChanged((tabs) => {
+    const next = new Set(tabs.map((t) => t.id as string));
+    for (const id of knownTabIds) if (!next.has(id)) void runner.closeTab(id);
+    knownTabIds = next;
+  });
+  // Last resort: never leave CLI processes behind.
+  process.on("exit", () => runner.killAllSync());
+  registerIpcHandlers(core, browserBackend, vault, accountStore, agentServer, runner);
   await agentServer.start().catch((err: unknown) => {
     // The connection status carries the error (e.g. port in use) to the shell.
     console.error("[AgentServer] Failed to start:", err);
@@ -180,7 +209,8 @@ function registerIpcHandlers(
   shell: ElectronBackend,
   vault: VaultStore,
   accounts: AccountStore,
-  server: AgentServer
+  server: AgentServer,
+  runner: AgentRunner
 ) {
   const handlers: BrowserShellApi = {
     openTab: async (url?: string) => manager.createTab(url),
@@ -231,8 +261,88 @@ function registerIpcHandlers(
     getTabOverrides: async (tabId: TabId) => manager.getTabOverrides(tabId),
     clearTabOverrides: async (tabId: TabId, kind: TabOverrideKind | "all") => manager.clearTabOverrides(tabId, kind),
     listAgentActivity: async () => server.listActivity(),
-    getConnectionStatus: async () => server.getConnectionStatus()
+    getConnectionStatus: async () => server.getConnectionStatus(),
+    // In-window agent chat (arguments are validated in the IPC wrappers below)
+    getAgentRunnerStatus: async () => runner.getStatus(),
+    refreshAgentRunner: async () => runner.refresh(),
+    startAgentConversation: async (input: StartAgentConversationInput) => runner.startConversation(input),
+    sendAgentMessage: async (conversationId: string, text: string) => runner.sendMessage(conversationId, text),
+    stopAgentTurn: async (conversationId: string) => runner.stopTurn(conversationId),
+    listAgentConversations: async (tabId?: TabId) => runner.listConversations(tabId),
+    getAgentConversationEvents: async (conversationId: string, afterSeq?: number) =>
+      runner.getEvents(conversationId, afterSeq ?? 0),
+    closeAgentConversation: async (conversationId: string) => runner.closeConversation(conversationId)
   };
+
+  // Chat IPC is accepted only from the shell window's own renderer and every
+  // argument is type- and length-checked here (the renderer is not trusted
+  // beyond the bridge). Conversation ids are random UUIDs known to the runner;
+  // an unknown id is rejected.
+  const fromShell = (event: IpcMainInvokeEvent) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+      throw new Error("Agent chat is only available from the HelmStack window.");
+    }
+  };
+  const str = (value: unknown, name: string, max: number): string => {
+    if (typeof value !== "string" || value.length === 0 || value.length > max) throw new Error(`Invalid ${name}.`);
+    return value;
+  };
+  const conversationId = (value: unknown): string => {
+    const id = str(value, "conversation id", 64);
+    if (!runner.hasConversation(id)) throw new Error("Unknown conversation.");
+    return id;
+  };
+  ipcMain.handle(BrowserShellChannel.GetAgentRunnerStatus, (event) => {
+    fromShell(event);
+    return handlers.getAgentRunnerStatus();
+  });
+  ipcMain.handle(BrowserShellChannel.RefreshAgentRunner, (event) => {
+    fromShell(event);
+    return handlers.refreshAgentRunner();
+  });
+  ipcMain.handle(BrowserShellChannel.StartAgentConversation, (event, raw: unknown) => {
+    fromShell(event);
+    if (!raw || typeof raw !== "object") throw new Error("Invalid conversation request.");
+    const input = raw as Record<string, unknown>;
+    const cliId = str(input.cliId, "cli", 32) as AgentCliId;
+    if (cliId !== "claude" && cliId !== "gemini") throw new Error("Unknown agent CLI.");
+    const model = typeof input.model === "string" ? input.model : "";
+    if (model.length > 80) throw new Error("Invalid model id.");
+    const clean: StartAgentConversationInput = {
+      tabId: str(input.tabId, "tab id", 200),
+      cliId,
+      model
+    };
+    if (input.workingDirectory !== undefined) clean.workingDirectory = str(input.workingDirectory, "working directory", 4096);
+    if (input.allowUnconfined === true) clean.allowUnconfined = true;
+    return runner.startConversation(clean);
+  });
+  ipcMain.handle(BrowserShellChannel.SendAgentMessage, (event, id: unknown, text: unknown) => {
+    fromShell(event);
+    return handlers.sendAgentMessage(conversationId(id), str(text, "message", 32_000));
+  });
+  ipcMain.handle(BrowserShellChannel.StopAgentTurn, (event, id: unknown) => {
+    fromShell(event);
+    return handlers.stopAgentTurn(str(id, "conversation id", 64));
+  });
+  ipcMain.handle(BrowserShellChannel.ListAgentConversations, (event, tabId: unknown) => {
+    fromShell(event);
+    return handlers.listAgentConversations(tabId === undefined ? undefined : str(tabId, "tab id", 200));
+  });
+  ipcMain.handle(BrowserShellChannel.GetAgentConversationEvents, (event, id: unknown, afterSeq: unknown) => {
+    fromShell(event);
+    if (afterSeq !== undefined && (typeof afterSeq !== "number" || !Number.isInteger(afterSeq) || afterSeq < 0)) {
+      throw new Error("Invalid sequence number.");
+    }
+    return handlers.getAgentConversationEvents(conversationId(id), afterSeq as number | undefined);
+  });
+  ipcMain.handle(BrowserShellChannel.CloseAgentConversation, (event, id: unknown) => {
+    fromShell(event);
+    return handlers.closeAgentConversation(str(id, "conversation id", 64));
+  });
+  runner.onEvent((chatEvent) => {
+    sendToShell(BrowserShellChannel.AgentChatEvent, chatEvent);
+  });
 
   ipcMain.handle(BrowserShellChannel.OpenTab, (_event, url?: string) => handlers.openTab(url));
   ipcMain.handle(BrowserShellChannel.Navigate, (_event, tabId: TabId, url: string) => handlers.navigate(tabId, url));
@@ -315,7 +425,12 @@ function registerIpcHandlers(
 
 app.whenReady().then(createMainWindow);
 
+app.on("before-quit", () => {
+  void agentRunner?.dispose();
+});
+
 app.on("window-all-closed", () => {
+  void agentRunner?.dispose();
   void agentServer?.stop();
   if (process.platform !== "darwin") {
     app.quit();

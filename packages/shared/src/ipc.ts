@@ -3,6 +3,7 @@ import type { BrowserCommandResult, BrowserOutputCommand, BrowserPerceptionPacke
 import type { PageObservation, PerceptionResult } from "./perception.js";
 import type { ElementPickResult, PageScreenshot, PageSnapshot, TabId, TabSummary, ViewportRect } from "./browser.js";
 import type { ApprovalPolicyRecord } from "./policy.js";
+import type { AgentChatEvent, AgentConversationSummary, AgentRunnerStatus, StartAgentConversationInput } from "./agent-chat.js";
 import type { AgentActivityEntry, AgentConnectionStatus, TabOverrideKind, TabOverrides } from "./shell-status.js";
 import type { FixturePageName, VaultSecretInput, VaultSecretSummary, VaultStatus } from "./vault.js";
 
@@ -51,6 +52,15 @@ export const BrowserShellChannel = {
   ClearTabOverrides: "browser-shell:clear-tab-overrides",
   ListAgentActivity: "browser-shell:list-agent-activity",
   GetConnectionStatus: "browser-shell:get-connection-status",
+  // In-window agent chat (human-initiated only)
+  GetAgentRunnerStatus: "browser-shell:get-agent-runner-status",
+  RefreshAgentRunner: "browser-shell:refresh-agent-runner",
+  StartAgentConversation: "browser-shell:start-agent-conversation",
+  SendAgentMessage: "browser-shell:send-agent-message",
+  StopAgentTurn: "browser-shell:stop-agent-turn",
+  ListAgentConversations: "browser-shell:list-agent-conversations",
+  GetAgentConversationEvents: "browser-shell:get-agent-conversation-events",
+  CloseAgentConversation: "browser-shell:close-agent-conversation",
 
   TabsChanged: "browser-shell:tabs-changed",
   PageObserved: "browser-shell:page-observed",
@@ -59,7 +69,8 @@ export const BrowserShellChannel = {
   ApprovalsChanged: "browser-shell:approvals-changed",
   TabOverridesChanged: "browser-shell:tab-overrides-changed",
   AgentActivity: "browser-shell:agent-activity",
-  ConnectionStatusChanged: "browser-shell:connection-status-changed"
+  ConnectionStatusChanged: "browser-shell:connection-status-changed",
+  AgentChatEvent: "browser-shell:agent-chat-event"
 } as const;
 
 export type BrowserShellApi = {
@@ -110,6 +121,28 @@ export type BrowserShellApi = {
   /** Most recent agent API calls, oldest first (bounded buffer). */
   listAgentActivity(): Promise<AgentActivityEntry[]>;
   getConnectionStatus(): Promise<AgentConnectionStatus>;
+  // In-window agent chat. Started by the human only; there is no agent HTTP route for this.
+  getAgentRunnerStatus(): Promise<AgentRunnerStatus>;
+  /** Re-detect installed CLIs and their settings. */
+  refreshAgentRunner(): Promise<AgentRunnerStatus>;
+  startAgentConversation(input: StartAgentConversationInput): Promise<AgentConversationSummary>;
+  /**
+   * Starts a turn; resolves with its id once the CLI process has been launched.
+   * Events of the turn (`user_message`, `turn_started`, `text_delta`,
+   * `tool_call` …) may be delivered through `onAgentChatEvent` before this
+   * resolves; dedupe by `seq`. Rejects (clear message) if a turn is running.
+   */
+  sendAgentMessage(conversationId: string, text: string): Promise<{ turnId: string }>;
+  /** Stops the running turn, if any. Idempotent. */
+  stopAgentTurn(conversationId: string): Promise<void>;
+  listAgentConversations(tabId?: TabId): Promise<AgentConversationSummary[]>;
+  /**
+   * Replay buffer (bounded) for a conversation, oldest first, for events after
+   * `afterSeq`, including the in-progress turn's events so far. Pass the last
+   * `seq` you hold: replay + subsequent live events have no gap or duplicate.
+   */
+  getAgentConversationEvents(conversationId: string, afterSeq?: number): Promise<AgentChatEvent[]>;
+  closeAgentConversation(conversationId: string): Promise<void>;
 };
 
 export type AgentLogEntry = {
@@ -128,4 +161,5 @@ export type BrowserShellBridge = BrowserShellApi & {
   onTabOverridesChanged(callback: (overrides: TabOverrides) => void): () => void;
   onAgentActivity(callback: (entry: AgentActivityEntry) => void): () => void;
   onConnectionStatusChanged(callback: (status: AgentConnectionStatus) => void): () => void;
+  onAgentChatEvent(callback: (event: AgentChatEvent) => void): () => void;
 };

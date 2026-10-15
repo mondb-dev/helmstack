@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   BrowserShellChannel,
   type AgentActivityEntry,
+  type AgentChatEvent,
   type AgentConnectionStatus,
   type AgentLogEntry,
   type BrowserShellBridge,
@@ -60,6 +61,17 @@ const browserShell: BrowserShellBridge = {
     ipcRenderer.invoke(BrowserShellChannel.ClearTabOverrides, tabId, kind),
   listAgentActivity: () => ipcRenderer.invoke(BrowserShellChannel.ListAgentActivity),
   getConnectionStatus: () => ipcRenderer.invoke(BrowserShellChannel.GetConnectionStatus),
+  // In-window agent chat
+  getAgentRunnerStatus: () => ipcRenderer.invoke(BrowserShellChannel.GetAgentRunnerStatus),
+  refreshAgentRunner: () => ipcRenderer.invoke(BrowserShellChannel.RefreshAgentRunner),
+  startAgentConversation: (input) => ipcRenderer.invoke(BrowserShellChannel.StartAgentConversation, input),
+  sendAgentMessage: (conversationId, text) => ipcRenderer.invoke(BrowserShellChannel.SendAgentMessage, conversationId, text),
+  stopAgentTurn: (conversationId) => ipcRenderer.invoke(BrowserShellChannel.StopAgentTurn, conversationId),
+  listAgentConversations: (tabId) => ipcRenderer.invoke(BrowserShellChannel.ListAgentConversations, tabId),
+  getAgentConversationEvents: (conversationId, afterSeq) =>
+    ipcRenderer.invoke(BrowserShellChannel.GetAgentConversationEvents, conversationId, afterSeq),
+  closeAgentConversation: (conversationId) => ipcRenderer.invoke(BrowserShellChannel.CloseAgentConversation, conversationId),
+  onAgentChatEvent: (callback) => subscribe<AgentChatEvent>(BrowserShellChannel.AgentChatEvent, callback),
   onTabsChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, tabs: Awaited<ReturnType<BrowserShellBridge["listTabs"]>>) => {
       callback(tabs);

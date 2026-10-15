@@ -23,6 +23,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { createBrowserClient } from "@helmstack/agent-sdk";
 
@@ -81,9 +82,27 @@ export const AGENT_SUBSTRATE_TOOLS = [
 
 const port = Number(process.env.HELMSTACK_PORT ?? 7070);
 const host = process.env.HELMSTACK_HOST ?? "127.0.0.1";
-const authToken = process.env.HELMSTACK_AUTH_TOKEN || process.env.HELMSTACK_TOKEN;
+/**
+ * The token may come from a file (`HELMSTACK_TOKEN_FILE`) so a launcher such as
+ * the in-window agent chat never has to put the secret in an environment
+ * variable or on a command line. The env vars win when both are set.
+ */
+function readTokenFile(file: string | undefined): string | undefined {
+  if (!file) return undefined;
+  try {
+    return readFileSync(file, "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+const authToken =
+  process.env.HELMSTACK_AUTH_TOKEN ||
+  process.env.HELMSTACK_TOKEN ||
+  readTokenFile(process.env.HELMSTACK_TOKEN_FILE);
+/** Attributes this server's calls (activity feed, tab badges) to a named agent. */
+const agentId = process.env.HELMSTACK_AGENT_ID?.trim() || undefined;
 
-const browser = createBrowserClient({ host, port, authToken });
+const browser = createBrowserClient({ host, port, authToken, agentId });
 
 // Autonomous-agent tool surface (accounts/TOTP, approvals, handoffs, intent) is opt-in.
 const agentSubstrate = isAgentSubstrateEnabled(process.env);
