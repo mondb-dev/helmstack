@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { McpInstallService, createMcpInstallIpc, type McpInstallDeps } from "../src/main/mcp-install-service.js";
 
+// The service is exercised with POSIX fake CLIs and macOS/Linux config paths. On Windows the
+// install dialog is copy-only (.cmd shims are not spawned), so these suites skip there.
+const d = process.platform === "win32" ? describe.skip : describe;
+
 const TOKEN = "SECRET-TOKEN-VALUE-0123456789";
 
 // A fake CLI: records argv + the env it saw, keeps state in $HOME, prints canned output.
@@ -99,7 +103,7 @@ afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const client = (o: { clients: Array<{ id: string }> }, id: string) => o.clients.find((c) => c.id === id) as never as import("../../../packages/shared/src/index.js").McpClientStatus;
 
-describe("detection", () => {
+d("detection", () => {
   it("finds CLIs on PATH with version, reports installed state and not-found for the rest", async () => {
     const service = mk();
     const overview = await service.overview();
@@ -143,7 +147,7 @@ describe("detection", () => {
   });
 });
 
-describe("command source", () => {
+d("command source", () => {
   it("prefers node from PATH running the bundled entry; npx is gated on the registry", async () => {
     const overview = await mk().overview();
     const bundled = overview.sources.find((s) => s.id === "bundled");
@@ -178,7 +182,7 @@ describe("command source", () => {
   });
 });
 
-describe("CLI install flow (fake claude / gemini)", () => {
+d("CLI install flow (fake claude / gemini)", () => {
   it("shows the command first, runs nothing until the exact preview is confirmed", async () => {
     const service = mk();
     const first = await service.handle({ clientId: "claude-code", action: "install", options: { toolset: "lite" } });
@@ -305,7 +309,7 @@ describe("CLI install flow (fake claude / gemini)", () => {
   });
 });
 
-describe("JSON clients", () => {
+d("JSON clients", () => {
   const desktopDir = () =>
     process.platform === "darwin"
       ? path.join(setup.home, "Library", "Application Support", "Claude")
@@ -396,7 +400,7 @@ describe("JSON clients", () => {
   });
 });
 
-describe("explainer / copy-only clients and IPC", () => {
+d("explainer / copy-only clients and IPC", () => {
   it("chatgpt is an explainer with no actions; generic is copy-only", async () => {
     const service = mk();
     for (const action of ["install", "remove", "verify", "preview"] as const) {
