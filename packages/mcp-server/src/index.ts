@@ -25,7 +25,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { createBrowserClient } from "@helmstack/agent-sdk";
+import { createBrowserClient, createLiteSession, LITE_TOOL_SCHEMAS, type LiteToolSchema } from "@helmstack/agent-sdk";
 
 // ── Capability gating ───────────────────────────────────────────────────────
 // NOTE: kept inline (not a separate module) on purpose — the editor launches
@@ -77,6 +77,30 @@ export const AGENT_SUBSTRATE_TOOLS = [
   "browser_get_intent",
   "browser_set_intent"
 ] as const;
+
+
+/**
+ * `HELMSTACK_TOOLSET` (or `--toolset <lite|full>` on the command line, which
+ * wins) picks WHICH tools exist: `full` (default) is the ~90 browser_* tools;
+ * `lite` registers only the ~14 small-model verbs and none of the full tools.
+ * Orthogonal to `HELMSTACK_PROFILE`, which only gates opt-in surfaces of the
+ * full toolset.
+ */
+export type Toolset = "lite" | "full";
+
+export function resolveToolset(env: NodeJS.ProcessEnv = process.env, argv: readonly string[] = process.argv.slice(2)): Toolset {
+  let fromFlag: string | undefined;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]!;
+    if (arg === "--toolset") fromFlag = argv[i + 1];
+    else if (arg.startsWith("--toolset=")) fromFlag = arg.slice("--toolset=".length);
+  }
+  const raw = (fromFlag ?? env.HELMSTACK_TOOLSET ?? "").trim().toLowerCase();
+  return raw === "lite" ? "lite" : "full";
+}
+
+/** Canonical lite tool names (kept in sync with LITE_TOOL_SCHEMAS by the gating test). */
+export const LITE_TOOLS = LITE_TOOL_SCHEMAS.map((tool) => tool.name);
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -151,10 +175,19 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
+const toolset = resolveToolset(process.env);
+
+/**
+ * Where the full `browser_*` tools register. In lite mode this is an inert
+ * stand-in, so none of them exist on the real server.
+ */
+const full: McpServer =
+  toolset === "lite" ? (new Proxy({}, { get: () => () => undefined }) as unknown as McpServer) : server;
+
 // ── Tools ─────────────────────────────────────────────────────────────────────
 
 // Health check
-server.tool(
+full.tool(
   "browser_health",
   "Check if the HelmStack browser substrate is running and how many tabs are open.",
   {},
@@ -165,7 +198,7 @@ server.tool(
 );
 
 // Tabs
-server.tool(
+full.tool(
   "browser_list_tabs",
   "List all open browser tabs with their id, title, URL, and active status.",
   {},
@@ -175,7 +208,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_open_tab",
   "Open a new browser tab, optionally navigating to a URL.",
   { url: z.string().url().optional().describe("URL to open in the new tab") },
@@ -185,7 +218,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_navigate",
   "Navigate a specific tab to a URL.",
   {
@@ -198,7 +231,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_reload",
   "Reload a tab and wait for the page to finish loading. Pass ignoreCache for a hard reload (bypasses the HTTP cache).",
   {
@@ -211,7 +244,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_go_back",
   "Go back one entry in a tab's history and wait for the load. If there is no earlier entry the tab is left unchanged.",
   { tabId: z.string().describe("Tab ID (from browser_list_tabs)") },
@@ -221,7 +254,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_go_forward",
   "Go forward one entry in a tab's history and wait for the load. If there is no later entry the tab is left unchanged.",
   { tabId: z.string().describe("Tab ID (from browser_list_tabs)") },
@@ -231,7 +264,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_set_viewport",
   "Resize a tab's viewport.",
   {
@@ -247,7 +280,7 @@ server.tool(
 );
 
 // Perception
-server.tool(
+full.tool(
   "browser_get_perception",
   "Get a structured perception of the current page: DOM graph, forms, fields, actions, and accessibility metadata. Use this to understand what is on screen before taking action.",
   { tabId: z.string().describe("Tab ID") },
@@ -257,7 +290,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_list_manifests",
   "List site capability manifests for a tab (available site-specific tools).",
   { tabId: z.string().describe("Tab ID") },
@@ -267,7 +300,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_screenshot",
   "Take a screenshot of a tab and return it as a base64 PNG image. By default captures the viewport; pass fullPage for the whole scrollable page, or selector to capture just one element.",
   {
@@ -293,7 +326,7 @@ server.tool(
 );
 
 // Execution
-server.tool(
+full.tool(
   "browser_execute",
   `Execute a command on a tab. Use browser_get_perception first to discover available tool names and field IDs.
 
@@ -328,11 +361,11 @@ Common command types:
 // Accounts/TOTP, approvals, handoffs, and intent are autonomous-agent surfaces a
 // front-end developer never needs. Registered only when the capability is on, so
 // the default MCP tool surface stays lean (see docs/positioning.md).
-if (agentSubstrate) registerAgentSubstrateTools();
+if (agentSubstrate && toolset === "full") registerAgentSubstrateTools();
 
 function registerAgentSubstrateTools(): void {
   // Approvals
-  server.tool(
+  full.tool(
     "browser_list_approvals",
     "List pending approval requests waiting for human confirmation.",
     {},
@@ -342,7 +375,7 @@ function registerAgentSubstrateTools(): void {
     }
   );
 
-  server.tool(
+  full.tool(
     "browser_approve",
     "Approve a pending command that requires human confirmation. On the HelmStack desktop app approvals are human-only by default: this returns code \"requires_human\" and the person at the browser window must approve it there. In that case tell the user and poll browser_list_approvals until the request leaves the queue.",
     { requestId: z.string().describe("Approval request ID") },
@@ -352,7 +385,7 @@ function registerAgentSubstrateTools(): void {
     }
   );
 
-  server.tool(
+  full.tool(
     "browser_reject",
     "Reject a pending command that requires human confirmation.",
     { requestId: z.string().describe("Approval request ID") },
@@ -363,7 +396,7 @@ function registerAgentSubstrateTools(): void {
   );
 
   // Handoffs
-  server.tool(
+  full.tool(
     "browser_list_handoffs",
     "List pending human handoff requests (tasks that require a human to take over).",
     {},
@@ -373,7 +406,7 @@ function registerAgentSubstrateTools(): void {
     }
   );
 
-  server.tool(
+  full.tool(
     "browser_resolve_handoff",
     "Mark a human handoff as resolved, returning control to the agent.",
     { requestId: z.string().describe("Handoff request ID") },
@@ -384,7 +417,7 @@ function registerAgentSubstrateTools(): void {
   );
 
   // Accounts (credential vault)
-  server.tool(
+  full.tool(
     "browser_list_accounts",
     "List saved accounts (credential entries) stored in the vault.",
     {},
@@ -394,7 +427,7 @@ function registerAgentSubstrateTools(): void {
     }
   );
 
-  server.tool(
+  full.tool(
     "browser_lookup_accounts",
     "Look up saved accounts matching a given origin (e.g. https://github.com).",
     { origin: z.string().describe("Origin URL to look up credentials for") },
@@ -404,7 +437,7 @@ function registerAgentSubstrateTools(): void {
     }
   );
 
-  server.tool(
+  full.tool(
     "browser_generate_totp",
     "Generate a TOTP code for an account that has 2FA configured.",
     { accountId: z.string().describe("Account ID") },
@@ -415,7 +448,7 @@ function registerAgentSubstrateTools(): void {
   );
 
   // Intent
-  server.tool(
+  full.tool(
     "browser_get_intent",
     "Get the current agent intent/task set in the HelmStack UI.",
     {},
@@ -425,7 +458,7 @@ function registerAgentSubstrateTools(): void {
     }
   );
 
-  server.tool(
+  full.tool(
     "browser_set_intent",
     "Set the agent intent/task displayed in the HelmStack UI.",
     { intent: z.string().describe("Intent or task description") },
@@ -436,7 +469,7 @@ function registerAgentSubstrateTools(): void {
   );
 }
 
-server.tool(
+full.tool(
   "browser_log",
   "Write a message to the HelmStack terminal panel in the UI.",
   {
@@ -452,7 +485,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_get_tab_logs",
   "Return buffered console logs, network requests (with headers, SSL details, cache status), WebSocket frames, EventSource events, and JS errors captured for a tab since it was last cleared.",
   { tabId: z.string().describe("Tab ID") },
@@ -462,7 +495,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_clear_tab_logs",
   "Clear buffered console, network, WebSocket, EventSource, and JS error logs for a tab.",
   { tabId: z.string().describe("Tab ID") },
@@ -472,14 +505,14 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_export_har",
   "Export the tab's buffered network requests as a HAR 1.2 archive (importable into Chrome DevTools, Charles, Insomnia, etc.).",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getHar(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_network_audit",
   `Produce a focused network/security audit for a tab. Returns per-request data useful for auditing:
 - Response headers (Cache-Control, Content-Security-Policy, Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, etc.)
@@ -538,14 +571,14 @@ Use this after navigating to a page to audit its security posture and caching co
   }
 );
 
-server.tool(
+full.tool(
   "browser_get_network_mock",
   "Return the currently active network mock/intercept rules for a tab.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getNetworkMockRules(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_enable_network_mock",
   "Enable network request mocking for a tab. Matching requests are fulfilled with the provided response; non-matching requests pass through.",
   {
@@ -565,14 +598,14 @@ server.tool(
   async ({ tabId, rules }) => jsonResult(await browser.enableNetworkMock(tabId, rules))
 );
 
-server.tool(
+full.tool(
   "browser_disable_network_mock",
   "Disable network mocking for a tab and restore normal request handling.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.disableNetworkMock(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_capture_named_screenshot",
   "Capture a screenshot and store it in HelmStack's in-memory screenshot cache under a snapshot ID.",
   {
@@ -582,7 +615,7 @@ server.tool(
   async ({ tabId, snapshotId }) => jsonResult(await browser.captureNamedScreenshot(tabId, snapshotId))
 );
 
-server.tool(
+full.tool(
   "browser_diff_screenshots",
   "Compare two named screenshots pixel-by-pixel and return changed regions plus a base64 diff image. Pass ignoreRegions to exclude dynamic areas (timestamps, ads) and cut false positives.",
   {
@@ -599,7 +632,7 @@ server.tool(
     jsonResult(await browser.diffScreenshots(beforeId, afterId, { ignoreRegions, perceptual, threshold }))
 );
 
-server.tool(
+full.tool(
   "browser_changed_elements",
   "Map changed pixel regions (a diffScreenshots result's diffRegions) to the DOM elements that occupy them — a structural 'which elements changed'. Captures live element bounds, so call it while the page is in the after-state.",
   {
@@ -610,14 +643,14 @@ server.tool(
   async ({ tabId, regions }) => jsonResult(await browser.mapRegionsToElements(tabId, regions))
 );
 
-server.tool(
+full.tool(
   "browser_list_screenshots",
   "List named screenshots currently held in HelmStack's in-memory cache.",
   {},
   async () => jsonResult(await browser.listScreenshots())
 );
 
-server.tool(
+full.tool(
   "browser_delete_screenshot",
   "Delete a named screenshot from HelmStack's in-memory cache.",
   { id: z.string().describe("Screenshot ID") },
@@ -627,7 +660,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_viewport_suite",
   "Capture screenshots at multiple responsive viewport presets, optionally including pairwise visual diffs.",
   {
@@ -638,14 +671,14 @@ server.tool(
   async ({ tabId, presets, includeDiffs }) => jsonResult(await browser.captureViewportSuite(tabId, presets, includeDiffs ?? false))
 );
 
-server.tool(
+full.tool(
   "browser_performance",
   "Capture Core Web Vitals, navigation timing, slow resources, and raw CDP performance metrics for a tab.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getPerformanceMetrics(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_health_report",
   "Aggregated page-health scorecard fusing Core Web Vitals, the WCAG audit, console/JS errors, failed network requests, layout overflow and SEO (metadata, indexability, structured data) into per-category scores plus an overall score and a pass/fail gate (suitable for CI). Set includeSeo=false to omit the SEO category.",
   {
@@ -655,14 +688,14 @@ server.tool(
   async ({ tabId, includeSeo }) => jsonResult(await browser.getHealthReport(tabId, { includeSeo }))
 );
 
-server.tool(
+full.tool(
   "browser_focus_order",
   "Audit keyboard tab order vs. the page's visual reading order: flags positive tabindex (which hijacks order) and points where focus jumps backwards (to an element above or left of the previous one). Complements the WCAG audit.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.auditFocusOrder(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_a11y_audit",
   `Run a comprehensive WCAG 2.2 accessibility audit against the live accessibility tree and DOM.
 
@@ -695,7 +728,7 @@ Pass an optional 'selector' to scope the audit to that element's subtree (page-l
   async ({ tabId, selector }) => jsonResult(await browser.auditAccessibility(tabId, selector))
 );
 
-server.tool(
+full.tool(
   "browser_seo_audit",
   `Deterministic SEO audit of the loaded page. Use it after changing page metadata, headings, structured data, or before shipping a page.
 
@@ -715,7 +748,7 @@ Returns score 0-100 (100 - 12 per error - 4 per warning, floor 0), pass (no erro
   async ({ tabId, checkLinks, maxLinks }) => jsonResult(await browser.seoAudit(tabId, { checkLinks, maxLinks }))
 );
 
-server.tool(
+full.tool(
   "browser_inspect_element_styles",
   `Inspect computed styles and layout diagnostics for elements matching a CSS selector.
 
@@ -732,7 +765,7 @@ Returns matched elements with:
   async ({ tabId, selector, limit }) => jsonResult(await browser.inspectElementStyles(tabId, selector, { limit }))
 );
 
-server.tool(
+full.tool(
   "browser_assert_element_styles",
   `Assert computed CSS styles for all elements matching a selector.
 
@@ -752,35 +785,35 @@ Each assertion supports:
     jsonResult(await browser.assertElementStyles(tabId, selector, assertions, { limit, throw: false }))
 );
 
-server.tool(
+full.tool(
   "browser_component_tree",
   "Capture a React, Vue, or Svelte component tree when framework dev hooks are exposed on the page.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.captureComponentTree(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_design_tokens",
   "Harvest the de-facto design system in use on the page: colors, font families, type scale, font weights, spacing, border-radii, shadows, and z-index layers (each ranked by usage frequency), plus declared CSS custom properties. Useful for design-system audits and 'does this match the tokens' checks.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.extractDesignTokens(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_css_coverage",
   "Report unused CSS on the page via rule-usage tracking. NOTE: this reloads the tab (like the DevTools Coverage panel) to measure usage from the initial render. Returns per-stylesheet used/unused byte tallies and rule counts, sorted worst-offender first, plus an aggregate used-percent — useful for finding dead CSS and trimming bundle size.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.captureCssCoverage(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_js_coverage",
   "Report dead JavaScript on the page via V8 precise coverage. NOTE: this reloads the tab (like the DevTools Coverage panel) to measure execution from the initial load. Returns per-script used/unused byte tallies (innermost-range-wins, so dead branches inside executed functions are counted), sorted worst-offender first, plus an aggregate used-percent — useful for finding dead code and trimming bundle size.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.captureJsCoverage(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_trace",
   "Record a CDP performance trace for a window (default 3000ms) and return a digest for diagnosing jank: long main-thread tasks (>= 50ms, longest first, with start time + duration) and a per-category time breakdown. Avoids dumping the raw multi-megabyte trace — capture while the page is doing the work you want to profile.",
   {
@@ -790,14 +823,14 @@ server.tool(
   async ({ tabId, durationMs }) => jsonResult(await browser.captureTrace(tabId, durationMs))
 );
 
-server.tool(
+full.tool(
   "browser_detect_framework",
   "Fingerprint the page's frontend framework (Next.js, Nuxt, SvelteKit, Remix, Astro, bare Vite, CRA, Angular), its dev server / bundler (Vite, webpack, Turbopack), and whether it's a local dev build with hot-module-replacement (HMR). Returns the classification plus the evidence signals. Useful for tailoring framework-specific guidance and knowing when a reload is HMR-driven rather than a full navigation.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.detectFramework(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_evaluate",
   "Evaluate a JavaScript expression in the page and return its JSON-able value (awaits promises). A raw execution primitive for driving widgets the structured tools can't reach — e.g. setting a CodeMirror/Monaco editor's content (document.querySelector('.CodeMirror').CodeMirror.setValue(...)), poking a canvas app, or reading custom state. Powerful: it runs arbitrary JS in the page with the full trust of the agent session.",
   {
@@ -807,14 +840,14 @@ server.tool(
   async ({ tabId, expression }) => jsonResult(await browser.evaluate(tabId, expression))
 );
 
-server.tool(
+full.tool(
   "browser_pick_element",
   "Activate a devtools-style inspect overlay in the tab and WAIT for the human to click an element (or cancel with Escape). Returns the picked element's CSS selector + identity, so you can act on exactly what the person pointed at instead of guessing a selector. Blocks until the human interacts — use it to bridge a human into the loop ('click the thing you mean').",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.pickElement(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_get_selected_element",
   "Returns the element the user selected with 'Select for agent' in the HelmStack window — call this when the user says 'this element', 'the thing I selected', etc. Gives the element's CSS selector, tag, id, trimmed text, page URL, tab id and when it was picked. Pass tabId for that tab's latest selection, or omit it for the most recent selection in any tab. Does not wait for the human (use browser_pick_element to ask them to pick).",
   { tabId: z.string().optional().describe("Tab ID (omit for the most recent selection in any tab)") },
@@ -833,28 +866,28 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_component_sources",
   "Map rendered DOM nodes back to the component + source file:line that produced them (React _debugSource, Svelte __svelte_meta, Vue __file). Requires a dev build with source metadata. Lets you reference '<PrimaryButton> at src/ui/Button.tsx:42' instead of a brittle CSS selector.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.captureComponentSources(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_layout_issues",
   "Detect layout problems at the current viewport: horizontal page overflow and the elements responsible, children escaping their constrained container, and elements clipping their own content. Set the viewport first (browser_set_viewport) to diagnose why a responsive breakpoint broke.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.detectLayoutIssues(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_media_state",
   "Read the page's current responsive state: resolved media features (prefers-color-scheme, prefers-reduced-motion, prefers-contrast, forced-colors, pointer, hover, orientation), the viewport size, and which @media queries from the page's stylesheets currently match. Pairs with browser_set_media_emulation to verify emulated states take effect.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getMediaState(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_mutation_timeline",
   "Sample DOM mutations over a time window (durationMs, default 1000) and rank the busiest subtrees — a re-render/layout-thrash detector. Trigger an interaction during the window to attribute mutations to it.",
   {
@@ -864,14 +897,14 @@ server.tool(
   async ({ tabId, durationMs }) => jsonResult(await browser.captureMutationTimeline(tabId, durationMs))
 );
 
-server.tool(
+full.tool(
   "browser_threejs_scene",
   "Inspect a live Three.js scene graph, renderer stats, materials, and an FPS estimate.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.captureThreeJsScene(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_assert",
   `Evaluate a natural-language assertion against the current page graph (deterministic, no LLM) and return pass/fail, an explanation, the matched page items and evidence.
 
@@ -892,35 +925,35 @@ Anything else returns pass=false with unsupported=true.`,
   async ({ tabId, assertion }) => jsonResult(await browser.assert(tabId, assertion, { throw: false }))
 );
 
-server.tool(
+full.tool(
   "browser_get_recording",
   "Return the current command recording session for a tab, if recording is active.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getRecording(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_start_recording",
   "Start recording commands executed against a tab.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.startRecording(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_stop_recording",
   "Stop recording commands for a tab and return a replayable script.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.stopRecording(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_get_site_patterns",
   "Return saved site patterns for the current origin of a tab.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getSitePatterns(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_add_site_patterns",
   "Add site patterns for the current origin of a tab.",
   {
@@ -930,7 +963,7 @@ server.tool(
   async ({ tabId, patterns }) => jsonResult(await browser.addSitePatterns(tabId, patterns))
 );
 
-server.tool(
+full.tool(
   "browser_set_site_patterns",
   "Replace site patterns for the current origin of a tab.",
   {
@@ -940,7 +973,7 @@ server.tool(
   async ({ tabId, patterns }) => jsonResult(await browser.setSitePatterns(tabId, patterns))
 );
 
-server.tool(
+full.tool(
   "browser_clear_site_patterns",
   "Clear saved site patterns for the current origin of a tab.",
   { tabId: z.string().describe("Tab ID") },
@@ -950,7 +983,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_set_file_input_files",
   "Set files on a file input matching a CSS selector.",
   {
@@ -961,14 +994,14 @@ server.tool(
   async ({ tabId, selector, files }) => jsonResult(await browser.setFileInputFiles(tabId, { selector, files }))
 );
 
-server.tool(
+full.tool(
   "browser_list_downloads",
   "List downloads tracked for a tab.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.listDownloads(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_clear_downloads",
   "Clear tracked download records for a tab.",
   { tabId: z.string().describe("Tab ID") },
@@ -978,14 +1011,14 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_get_resource_budget",
   "Return the current CPU/network/heap resource budget for a tab.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getResourceBudget(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_set_resource_budget",
   "Set CPU/network/heap resource constraints for a tab.",
   {
@@ -1002,7 +1035,7 @@ server.tool(
   async ({ tabId, budget }) => jsonResult(await browser.setResourceBudget(tabId, budget))
 );
 
-server.tool(
+full.tool(
   "browser_clear_resource_budget",
   "Clear CPU/network/heap resource constraints for a tab.",
   { tabId: z.string().describe("Tab ID") },
@@ -1012,14 +1045,14 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_get_location_override",
   "Return the current geolocation/timezone/locale override for a tab.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getLocationOverride(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_set_location_override",
   "Set a geolocation/timezone/locale override for a tab.",
   {
@@ -1034,7 +1067,7 @@ server.tool(
     jsonResult(await browser.setLocationOverride(tabId, { latitude, longitude, accuracy, timezoneId, locale }))
 );
 
-server.tool(
+full.tool(
   "browser_clear_location_override",
   "Clear geolocation/timezone/locale overrides for a tab.",
   { tabId: z.string().describe("Tab ID") },
@@ -1044,14 +1077,14 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_get_media_emulation",
   "Return the current CSS media emulation (dark mode, reduced motion, forced-colors, print) for a tab.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getMediaEmulation(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_set_media_emulation",
   "Emulate CSS media state for a tab to test dark mode, reduced motion, forced-colors (high-contrast), and print styles. Persists across navigations until cleared.",
   {
@@ -1070,7 +1103,7 @@ server.tool(
     }))
 );
 
-server.tool(
+full.tool(
   "browser_clear_media_emulation",
   "Clear all CSS media emulation for a tab (return to the real OS/browser media state).",
   { tabId: z.string().describe("Tab ID") },
@@ -1080,14 +1113,14 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_capture_storage",
   "Capture localStorage, sessionStorage, cookies, and IndexedDB for the tab's current origin.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.captureStorage(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_get_storage",
   "Read localStorage or sessionStorage entries for a tab.",
   {
@@ -1098,7 +1131,7 @@ server.tool(
   async ({ tabId, area, key }) => jsonResult(await browser.getStorage(tabId, area, key))
 );
 
-server.tool(
+full.tool(
   "browser_set_storage",
   "Write localStorage or sessionStorage entries for a tab.",
   {
@@ -1112,7 +1145,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_clear_storage",
   "Clear localStorage or sessionStorage for a tab, optionally limited to specific keys.",
   {
@@ -1126,14 +1159,14 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_get_cookies",
   "List cookies for the tab's current origin.",
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getCookies(tabId))
 );
 
-server.tool(
+full.tool(
   "browser_set_cookie",
   "Set or update a cookie for the tab's current origin.",
   {
@@ -1153,7 +1186,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_delete_cookie",
   "Delete a cookie by name for the tab's current origin, or for an explicit URL.",
   {
@@ -1167,7 +1200,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_clear_cookies",
   "Clear all cookies for the tab's current origin.",
   { tabId: z.string().describe("Tab ID") },
@@ -1177,7 +1210,7 @@ server.tool(
   }
 );
 
-server.tool(
+full.tool(
   "browser_save_perception_snapshot",
   "Capture and cache the current semantic PageGraph under a snapshot ID.",
   {
@@ -1187,7 +1220,7 @@ server.tool(
   async ({ tabId, snapshotId }) => jsonResult(await browser.savePerceptionSnapshot(tabId, snapshotId))
 );
 
-server.tool(
+full.tool(
   "browser_diff_perception",
   "Compare two named perception snapshots and return structural changes.",
   {
@@ -1197,14 +1230,14 @@ server.tool(
   async ({ beforeId, afterId }) => jsonResult(await browser.diffPerception(beforeId, afterId))
 );
 
-server.tool(
+full.tool(
   "browser_list_perception_snapshots",
   "List cached named perception snapshots.",
   {},
   async () => jsonResult(await browser.listPerceptionSnapshots())
 );
 
-server.tool(
+full.tool(
   "browser_delete_perception_snapshot",
   "Delete a named perception snapshot from the in-memory cache.",
   { id: z.string().describe("Perception snapshot ID") },
@@ -1213,6 +1246,40 @@ server.tool(
     return okResult({ ok: true, deleted: id });
   }
 );
+
+
+// ── Lite toolset (HELMSTACK_TOOLSET=lite) ─────────────────────────────────────
+// Small-model surface: plain-text in, plain-text out, numbered elements. All
+// logic lives in @helmstack/agent-sdk (lite/) so an in-process agent loop can
+// reuse it; this only adapts it to MCP.
+
+function liteParamShape(tool: LiteToolSchema): Record<string, z.ZodTypeAny> {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const p of tool.params) {
+    let schema: z.ZodTypeAny =
+      p.type === "integer"
+        ? z.coerce.number().int().min(1)
+        : p.type === "boolean"
+          ? z.union([z.boolean(), z.enum(["true", "false"]).transform((v) => v === "true")])
+          : p.type === "enum"
+            ? z.enum([...(p.enum ?? [])] as [string, ...string[]])
+            : z.string();
+    schema = schema.describe(p.description);
+    shape[p.name] = p.required ? schema : schema.optional();
+  }
+  return shape;
+}
+
+function registerLiteTools(target: McpServer): void {
+  const session = createLiteSession(browser, { env: process.env });
+  for (const tool of LITE_TOOL_SCHEMAS) {
+    target.tool(tool.name, tool.description, liteParamShape(tool), async (args: Record<string, unknown>) => ({
+      content: [{ type: "text" as const, text: await session.call(tool.name, args) }],
+    }));
+  }
+}
+
+if (toolset === "lite") registerLiteTools(server);
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 

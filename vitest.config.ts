@@ -10,6 +10,7 @@ export default defineConfig({
             "packages/perception/test/**/*.test.ts",
             "apps/desktop/test/**/*.test.ts",
             "packages/mcp-server/test/**/*.test.ts",
+            "packages/agent-sdk/test/**/*.test.ts",
             "packages/devtools-core/test/**/*.test.ts"
           ],
           // The contract suite drives real HTTP servers (and Chrome): node project below.

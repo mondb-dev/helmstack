@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign up</title>
+<meta name="description" content="Pick a plan and sign up." />
+</head>
+<body>
+  <h1>Sign up</h1>
+  <p id="status" role="status"></p>
+  <form id="f" novalidate>
+    <label for="plan">Plan</label>
+    <select id="plan" name="plan">
+      <option value="free">Free</option>
+      <option value="pro">Pro</option>
+      <option value="team">Team</option>
+    </select>
+    <label for="seats">Seats</label>
+    <input id="seats" name="seats" type="text" />
+    <button type="submit">Choose plan</button>
+  </form>
+  <script>
+    document.getElementById("f").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var plan = document.getElementById("plan");
+      var seats = document.getElementById("seats").value;
+      document.getElementById("status").textContent = "Plan selected: " + plan.options[plan.selectedIndex].text + " with " + (seats || "0") + " seats";
+    });
+  </script>
+</body>
+</html>

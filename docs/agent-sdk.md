@@ -646,6 +646,62 @@ await browser.clearCookies(tabId);
 
 See [`docs/dev-team-features.md`](dev-team-features.md) for the complete reference, request/response shapes, and more examples.
 
+## Lite toolset (small and cheap models)
+
+The full MCP surface is about 80 tools (89 with the agent-substrate profile), and a perception graph is tens of thousands of tokens. That is too much for a local 3-8B model or a Haiku-class model. The lite toolset puts a deterministic layer in front of HelmStack: the layer does the heavy lifting and the model only picks a verb and a small number.
+
+```bash
+HELMSTACK_TOOLSET=lite node packages/mcp-server/dist/index.js     # or: ... --toolset lite
+```
+
+`HELMSTACK_TOOLSET=lite|full` (default `full`) chooses which tools exist. It is separate from `HELMSTACK_PROFILE`, which only gates opt-in surfaces of the full toolset. In lite mode none of the `browser_*` tools are registered.
+
+| Tool | Parameters | What it does |
+|------|------------|--------------|
+| `look` | `all?` | Numbered view of the current page (messages, fields, buttons, links) |
+| `click` | `n` | Click item `n` (toggles checkboxes) |
+| `type` | `n`, `text`, `submit?` | Type into text field `n`, optionally submit its form |
+| `select` | `n`, `option` | Choose a dropdown option (on a miss it lists the options) |
+| `go` | `url` | Open a URL in the current tab |
+| `back` / `forward` / `reload` | none | History and reload |
+| `scroll` | `direction` | `up` or `down` by one screen |
+| `tabs` | `n?` | List tabs, or switch to tab `n` |
+| `audit` | `kind` | `accessibility`, `seo`, `layout`, `performance` or `health` digest |
+| `details` | `n` | Expand item `n` of the last audit |
+| `viewport` | `size` | `mobile`, `tablet`, `desktop` or `reset` |
+| `screenshot` | none | Saves the PNG, returns its path and a one-line description |
+
+Every tool returns plain text. Success is one `OK: ...` line followed by the new compact page view when the page changed (`Page unchanged ...` otherwise). Failure is `ERROR: <what happened>. NEXT: <exact call>`. Actions that need the user return `NEEDS APPROVAL: <summary>. The user must approve in the HelmStack window; then call look.` There is deliberately no lite approve tool.
+
+```text
+Page: Contact HelmStack (http://127.0.0.1:4177/contact-form.html) · view 3
+Headings: Contact HelmStack > Send us a message
+Messages: error "Please enter a valid email address."
+[1] textbox "Full name" (required, filled)
+[2] textbox "Work email" (required, invalid, filled)
+[3] checkbox "I agree to be contacted" (required, unchecked)
+[4] button "Send message"
+… 12 more links (look all)
+```
+
+- The view is capped (default 2,400 characters, about 600 tokens; `HELMSTACK_LITE_MAX_CHARS`, 400-20000). Priority is messages, form fields, buttons, then links, and the footer says what was left out. Field values are never shown, only `empty`/`filled`.
+- Numbers belong to the latest view of a tab. Every `look` replaces them. If the page navigated or the element is gone, the number is rejected with `ERROR: That element number is from an older view. NEXT: look` instead of clicking something else.
+- Audit digests are severity-first, five items by default, one line each, with a counts line (`3 errors, 5 warnings; score 72`) and `Say details N for more`.
+
+The pieces live in `@helmstack/agent-sdk` (also importable as `@helmstack/agent-sdk/lite`; no extra dependencies, no model, no network) so an in-process agent loop can reuse them:
+
+```typescript
+import { createBrowserClient, createLiteSession, renderPageView, digestAudit, LITE_TOOL_SCHEMAS, liteToolCallGbnf } from "@helmstack/agent-sdk";
+
+const session = createLiteSession(createBrowserClient(), { maxChars: 2400 });
+console.log(await session.call("go", { url: "http://localhost:3000" }));
+console.log(await session.call("click", { n: 3 }));
+```
+
+`renderPageView(graph, { view, maxChars, all })`, `digestAudit(kind, report, { maxItems })`, `renderTabs`, `renderCommandResult` and `describePage` are pure functions. `LITE_TOOL_SCHEMAS` lists each tool's name, one-line description and typed parameters with enums; `liteToolCallJsonSchema()` and `liteToolCallGbnf()` turn it into a JSON schema or a GBNF grammar for constrained decoding.
+
+Benchmark: `packages/mcp-server/test/lite-bench/` runs 12 deterministic verification tasks with `claude -p --model haiku` under both toolsets (or against any OpenAI-compatible endpoint such as Ollama). It is skipped unless `HELMSTACK_LITE_BENCH=1`.
+
 ## TypeScript Types
 
 The SDK re-exports all shared types for convenience:

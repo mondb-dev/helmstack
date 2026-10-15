@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AGENT_SUBSTRATE_TOOLS, isAgentSubstrateEnabled, isFlagOn } from "../src/index.js";
+import { AGENT_SUBSTRATE_TOOLS, LITE_TOOLS, isAgentSubstrateEnabled, isFlagOn, resolveToolset } from "../src/index.js";
 
 describe("capabilities helpers", () => {
   it("isFlagOn parses boolean-ish values", () => {
@@ -30,7 +30,7 @@ describe("capabilities helpers", () => {
   });
 });
 
-const GATE_KEYS = ["HELMSTACK_AGENT_SUBSTRATE", "HELMSTACK_PROFILE"] as const;
+const GATE_KEYS = ["HELMSTACK_AGENT_SUBSTRATE", "HELMSTACK_PROFILE", "HELMSTACK_TOOLSET"] as const;
 
 /** Import the server module under a given env patch and return its registered tool names. */
 async function registeredToolsWith(patch: Partial<Record<(typeof GATE_KEYS)[number], string>>): Promise<string[]> {
@@ -103,5 +103,45 @@ describe("MCP tool gating", () => {
   it("HELMSTACK_PROFILE=fe-dev keeps them off", async () => {
     const tools = await registeredToolsWith({ HELMSTACK_PROFILE: "fe-dev" });
     for (const name of AGENT_SUBSTRATE_TOOLS) expect(tools).not.toContain(name);
+  });
+});
+
+describe("toolset selector (HELMSTACK_TOOLSET / --toolset)", () => {
+  it("defaults to full; env and flag select lite; the flag wins", () => {
+    expect(resolveToolset({}, [])).toBe("full");
+    expect(resolveToolset({ HELMSTACK_TOOLSET: "full" }, [])).toBe("full");
+    expect(resolveToolset({ HELMSTACK_TOOLSET: "LITE" }, [])).toBe("lite");
+    expect(resolveToolset({}, ["--toolset", "lite"])).toBe("lite");
+    expect(resolveToolset({}, ["--toolset=lite"])).toBe("lite");
+    expect(resolveToolset({ HELMSTACK_TOOLSET: "lite" }, ["--toolset", "full"])).toBe("full");
+    expect(resolveToolset({ HELMSTACK_TOOLSET: "banana" }, [])).toBe("full");
+  });
+
+  it("is orthogonal to HELMSTACK_PROFILE", () => {
+    expect(resolveToolset({ HELMSTACK_PROFILE: "full" }, [])).toBe("full");
+    expect(resolveToolset({ HELMSTACK_PROFILE: "fe-dev", HELMSTACK_TOOLSET: "lite" }, [])).toBe("lite");
+  });
+
+  it("lite registers exactly the lite tools and none of the full ones", async () => {
+    const tools = await registeredToolsWith({ HELMSTACK_TOOLSET: "lite" });
+    expect([...tools].sort()).toEqual(
+      ["look", "click", "type", "select", "go", "back", "forward", "reload", "scroll", "tabs", "audit", "details", "viewport", "screenshot"].sort()
+    );
+    expect([...LITE_TOOLS].sort()).toEqual([...tools].sort());
+    expect(tools.filter((t) => t.startsWith("browser_"))).toEqual([]);
+  });
+
+  it("lite ignores the agent-substrate profile (no approve tool, ever)", async () => {
+    const tools = await registeredToolsWith({ HELMSTACK_TOOLSET: "lite", HELMSTACK_PROFILE: "full", HELMSTACK_AGENT_SUBSTRATE: "1" });
+    expect(tools).toHaveLength(14);
+    for (const name of AGENT_SUBSTRATE_TOOLS) expect(tools).not.toContain(name);
+    expect(tools.some((t) => /approv/i.test(t))).toBe(false);
+  });
+
+  it("full (the default) still registers none of the lite verbs", async () => {
+    const tools = await registeredToolsWith({});
+    expect(tools.length).toBeGreaterThan(60);
+    for (const name of LITE_TOOLS) expect(tools).not.toContain(name);
+    expect(await registeredToolsWith({ HELMSTACK_TOOLSET: "full" })).toEqual(tools);
   });
 });

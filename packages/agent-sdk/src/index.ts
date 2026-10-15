@@ -1351,6 +1351,9 @@ function screenshotQuery(options: ScreenshotOptions): string {
   return query ? `?${query}` : "";
 }
 
+// ── Lite toolset (small-model layer) ─────────────────────────────────────────
+export * from "./lite/index.js";
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 export function createBrowserClient(opts?: BrowserClientOptions): BrowserClient {

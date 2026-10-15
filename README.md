@@ -168,6 +168,8 @@ npm run dev
 
 The browser is now running and waiting on `127.0.0.1:7070`.
 
+**Small or cheap models:** set `HELMSTACK_TOOLSET=lite` (or pass `--toolset lite`) to expose only about a dozen plain-text verbs (`look`, `click 3`, `type 2 "text"`, `audit seo`, ...) instead of the full tool list. See [Lite toolset](docs/agent-sdk.md#lite-toolset-small-and-cheap-models).
+
 ### Available MCP Tools
 
 | Tool | Description |
