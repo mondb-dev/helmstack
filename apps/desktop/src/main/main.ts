@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, ipcMain, session, shell as electronShell, type IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 
 import {
@@ -10,6 +10,7 @@ import {
   type ApprovalPolicyKey,
   BrowserShellChannel,
   type BrowserShellApi,
+  type FindInPageOptions,
   type FixturePageName,
   type HumanHandoffRecord,
   type PageObservation,
@@ -19,6 +20,11 @@ import {
   type ViewportRect
 } from "../../../../packages/shared/src/index.js";
 import { ElectronBackend } from "./tab-manager.js";
+import { ZoomStore } from "./zoom-store.js";
+import { parseFindOptions, parseFindText, parseReloadMode, parseZoomAction } from "./ipc-validate.js";
+import { installAppMenu } from "./app-menu.js";
+import { createShortcutRunner, routeKeyInput, type ShortcutHost } from "./shortcut-controller.js";
+import { detectShortcutPlatform, type ShortcutId, type ZoomAction } from "../../../../packages/shared/src/index.js";
 import { ExtensionManager } from "./extension-manager.js";
 import { AccountStore } from "./account-store.js";
 import { VaultStore } from "./vault-store.js";
@@ -110,6 +116,7 @@ async function createMainWindow() {
     height: 960,
     minWidth: 1100,
     minHeight: 720,
+    autoHideMenuBar: true,
     titleBarStyle: "hidden",
     titleBarOverlay: process.platform === "darwin" ? false : { color: "#101214", symbolColor: "#f6f7f9" },
     backgroundColor: "#101214",
@@ -125,13 +132,17 @@ async function createMainWindow() {
   // HelmstackCore (packages/devtools-core), shared with the headless daemon.
   const vault = new VaultStore(userDataPath);
   const accountStore = new AccountStore(userDataPath);
-  const browserBackend = new ElectronBackend(mainWindow, appDir, pagePreloadPath, accountStore);
+  const zoomStore = new ZoomStore(userDataPath);
+  const browserBackend = new ElectronBackend(mainWindow, appDir, pagePreloadPath, accountStore, zoomStore);
   core = new HelmstackCore(browserBackend, {
     dataDir: userDataPath,
     secrets: createDesktopSecrets(vault, accountStore),
     // The page preload already pushes fresh observations; skip the CDP pull.
     pullObservations: false
   });
+
+  // ── Browser shortcuts: application menu + in-page key routing ────────────
+  installBrowserShortcuts(core, browserBackend, mainWindow);
 
   // ── Agent server ──────────────────────────────────────────────────────────
   // Binds to 127.0.0.1 only.  External agents connect here.
@@ -192,6 +203,65 @@ async function createMainWindow() {
   await core.createTab("https://example.com");
 }
 
+/**
+ * Application menu + `before-input-event` routing. Menu accelerators cover the
+ * shell (and macOS pages); the key router makes shortcuts work whichever view
+ * has focus on Windows/Linux and handles Esc / Ctrl+Tab everywhere.
+ */
+function installBrowserShortcuts(manager: HelmstackCore, backend: ElectronBackend, window: BrowserWindow): void {
+  const platform = detectShortcutPlatform(process.platform);
+  const host: ShortcutHost = {
+    activeTabId: () => backend.activeId(),
+    tabCount: () => backend.listTabs().length,
+    tabAtOffset: (delta) => backend.tabAtOffset(delta),
+    tabAtIndex: (index) => backend.tabAtIndex(index),
+    isLoading: (tabId) => backend.isLoading(tabId),
+    openBlankTab: () => manager.createTab("about:blank"),
+    closeTab: (tabId) => manager.closeTab(tabId),
+    focusTab: (tabId) => backend.focusTab(tabId),
+    reopenClosedTab: async () => {
+      const closed = backend.popClosedTab();
+      if (!closed) return;
+      const tabs = await manager.createTab(closed.url);
+      const created = tabs.find((tab) => tab.isActive);
+      if (created) backend.moveTab(created.id, closed.index);
+    },
+    goBack: (tabId) => backend.goBack(tabId),
+    goForward: (tabId) => backend.goForward(tabId),
+    reload: (tabId, hard) => backend.reload(tabId, { ignoreCache: hard }),
+    stop: (tabId) => backend.stop(tabId),
+    zoom: (tabId, action) => backend.zoomTab(tabId, action),
+    toggleDevTools: (tabId) => backend.toggleDevTools(tabId),
+    print: (tabId) => backend.print(tabId),
+    closeWindow: () => window.close(),
+    toShell: (id: ShortcutId) => sendToShell(BrowserShellChannel.Shortcut, id),
+    focusShell: () => {
+      if (!window.isDestroyed()) window.webContents.focus();
+    },
+    focusPage: () => backend.focusActivePage(),
+    onError: (id, error) => console.warn(`[shortcuts] ${id} failed:`, error)
+  };
+  const run = createShortcutRunner(host);
+
+  const router = (surface: "page" | "shell") => (event: Electron.Event, input: Electron.Input) => {
+    if (routeKeyInput(input, platform, surface, run) === "consumed") event.preventDefault();
+  };
+  backend.setKeyRouter(router("page"));
+  window.webContents.on("before-input-event", router("shell"));
+
+  void installAppMenu(platform, {
+    run,
+    openProjectPage: () => void electronShell.openExternal("https://github.com/mondb-dev/helmstack"),
+    toggleShellDevTools: app.isPackaged
+      ? undefined
+      : () => {
+          const wc = window.webContents;
+          if (wc.isDevToolsOpened()) wc.closeDevTools();
+          else wc.openDevTools({ mode: "detach" });
+        }
+  });
+}
+
 /** The agent server's optional accounts slice over the `safeStorage`-backed store. */
 function accountsApi(store: AccountStore): AccountsApi {
   return {
@@ -218,6 +288,29 @@ function registerIpcHandlers(
     listTabs: async () => manager.listTabs(),
     focusTab: async (tabId: TabId) => shell.focusTab(tabId),
     closeTab: async (tabId: TabId) => manager.closeTab(tabId),
+    goBack: async (tabId: TabId) => {
+      await shell.goBack(tabId);
+      return manager.listTabs();
+    },
+    goForward: async (tabId: TabId) => {
+      await shell.goForward(tabId);
+      return manager.listTabs();
+    },
+    reload: async (tabId: TabId, hard?: boolean) => {
+      await shell.reload(tabId, { ignoreCache: hard === true });
+      return manager.listTabs();
+    },
+    stopLoading: async (tabId: TabId) => {
+      shell.stop(tabId);
+      return manager.listTabs();
+    },
+    findInPage: async (tabId: TabId, text: string, options?: FindInPageOptions) => shell.findInPage(tabId, text, options),
+    stopFindInPage: async (tabId: TabId) => shell.stopFindInPage(tabId),
+    zoomTab: async (tabId: TabId, action: ZoomAction) => {
+      shell.zoomTab(tabId, action);
+      return manager.listTabs();
+    },
+    focusPage: async () => shell.focusActivePage(),
     setViewport: async (rect: ViewportRect) => shell.setViewport(rect),
     captureSnapshot: async (tabId: TabId) => manager.captureSnapshot(tabId),
     getLatestObservation: async (tabId: TabId) => manager.getLatestObservation(tabId),
@@ -234,7 +327,7 @@ function registerIpcHandlers(
     updateApprovalPolicy: async (key: ApprovalPolicyKey, decision: ApprovalDecision) => manager.updateApprovalPolicy(key, decision),
     getFixtureUrl: async (name: FixturePageName) => shell.getFixtureUrl(name),
     // Screenshot
-    captureScreenshot: async (tabId: TabId) => manager.captureScreenshot(tabId),
+    captureScreenshot: async (tabId: TabId) => shell.withHumanCapture(tabId, () => manager.captureScreenshot(tabId)),
     // "Select for agent": record the human's pick so agents can read it
     // (GET /api/tabs/:id/picks/latest, SSE element_picked, MCP tool).
     pickElement: async (tabId: TabId) => {
@@ -292,6 +385,32 @@ function registerIpcHandlers(
     if (!runner.hasConversation(id)) throw new Error("Unknown conversation.");
     return id;
   };
+  // Browser navigation / find / zoom: shell-only, tab must exist, arguments checked.
+  const liveTab = (event: IpcMainInvokeEvent, value: unknown): TabId => {
+    fromShell(event);
+    const id = str(value, "tab id", 200);
+    if (!shell.getTab(id)) throw new Error("Unknown tab.");
+    return id;
+  };
+  ipcMain.handle(BrowserShellChannel.GoBack, (event, tabId: unknown) => handlers.goBack(liveTab(event, tabId)));
+  ipcMain.handle(BrowserShellChannel.GoForward, (event, tabId: unknown) => handlers.goForward(liveTab(event, tabId)));
+  ipcMain.handle(BrowserShellChannel.Reload, (event, tabId: unknown, hard: unknown) =>
+    handlers.reload(liveTab(event, tabId), parseReloadMode(hard))
+  );
+  ipcMain.handle(BrowserShellChannel.StopLoading, (event, tabId: unknown) => handlers.stopLoading(liveTab(event, tabId)));
+  ipcMain.handle(BrowserShellChannel.FindInPage, (event, tabId: unknown, text: unknown, raw: unknown) =>
+    handlers.findInPage(liveTab(event, tabId), parseFindText(text), parseFindOptions(raw))
+  );
+  ipcMain.handle(BrowserShellChannel.StopFindInPage, (event, tabId: unknown) => handlers.stopFindInPage(liveTab(event, tabId)));
+  ipcMain.handle(BrowserShellChannel.ZoomTab, (event, tabId: unknown, action: unknown) =>
+    handlers.zoomTab(liveTab(event, tabId), parseZoomAction(action))
+  );
+  ipcMain.handle(BrowserShellChannel.FocusPage, (event) => {
+    fromShell(event);
+    return handlers.focusPage();
+  });
+  shell.onFindResult((result) => sendToShell(BrowserShellChannel.FindResult, result));
+
   ipcMain.handle(BrowserShellChannel.GetAgentRunnerStatus, (event) => {
     fromShell(event);
     return handlers.getAgentRunnerStatus();

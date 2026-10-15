@@ -212,6 +212,33 @@ describe("HelmstackCore", () => {
     }
   });
 
+  it("reload, back and forward delegate to the backend tab and return the tab list", async () => {
+    const tab = backend.addTab();
+    core = new HelmstackCore(backend, { dataDir });
+    await expect(core.reload(tab.id)).resolves.toHaveLength(1);
+    await core.reload(tab.id, { ignoreCache: true });
+    await core.goBack(tab.id);
+    await core.goForward(tab.id);
+    expect(tab.historyCalls).toEqual(["reload", "hard-reload", "back", "forward"]);
+  });
+
+  it("history commands reject cleanly on a backend without them", async () => {
+    const tab = backend.addTab();
+    (tab as { reload?: unknown }).reload = undefined;
+    (tab as { goBack?: unknown }).goBack = undefined;
+    core = new HelmstackCore(backend, { dataDir });
+    await expect(core.reload(tab.id)).rejects.toThrow(/cannot reload/);
+    await expect(core.goBack(tab.id)).rejects.toThrow(/history/);
+    await expect(core.reload("missing" as TabId)).rejects.toThrow(/Unknown tab/);
+  });
+
+  it("a failing reload does not reject the command (the summary carries the error)", async () => {
+    const tab = backend.addTab();
+    tab.reload = async () => { throw new Error("net::ERR_FAILED"); };
+    core = new HelmstackCore(backend, { dataDir });
+    await expect(core.reload(tab.id)).resolves.toHaveLength(1);
+  });
+
   it("handoff context groups related tabs by parent and origin", async () => {
     core = new HelmstackCore(backend, { dataDir });
     const parent = backend.addTab("https://a.test/1");

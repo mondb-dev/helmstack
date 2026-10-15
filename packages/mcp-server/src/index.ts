@@ -199,6 +199,39 @@ server.tool(
 );
 
 server.tool(
+  "browser_reload",
+  "Reload a tab and wait for the page to finish loading. Pass ignoreCache for a hard reload (bypasses the HTTP cache).",
+  {
+    tabId: z.string().describe("Tab ID to reload (from browser_list_tabs)"),
+    ignoreCache: z.boolean().optional().describe("Hard reload, bypassing the cache (default: false)"),
+  },
+  async ({ tabId, ignoreCache }) => {
+    const tabs = await browser.reload(tabId, ignoreCache === undefined ? {} : { ignoreCache });
+    return { content: [{ type: "text", text: JSON.stringify(tabs, null, 2) }] };
+  }
+);
+
+server.tool(
+  "browser_go_back",
+  "Go back one entry in a tab's history and wait for the load. If there is no earlier entry the tab is left unchanged.",
+  { tabId: z.string().describe("Tab ID (from browser_list_tabs)") },
+  async ({ tabId }) => {
+    const tabs = await browser.goBack(tabId);
+    return { content: [{ type: "text", text: JSON.stringify(tabs, null, 2) }] };
+  }
+);
+
+server.tool(
+  "browser_go_forward",
+  "Go forward one entry in a tab's history and wait for the load. If there is no later entry the tab is left unchanged.",
+  { tabId: z.string().describe("Tab ID (from browser_list_tabs)") },
+  async ({ tabId }) => {
+    const tabs = await browser.goForward(tabId);
+    return { content: [{ type: "text", text: JSON.stringify(tabs, null, 2) }] };
+  }
+);
+
+server.tool(
   "browser_set_viewport",
   "Resize a tab's viewport.",
   {

@@ -26,6 +26,12 @@ export interface BackendTab {
   title(): string;
   /** `loadURL` on desktop, `Page.navigate` on the daemon; resolves once loaded. */
   navigate(url: string): Promise<void>;
+  /** Reload the page (`ignoreCache` = hard reload); resolves once loaded. Optional: backends without history omit it. */
+  reload?(options?: { ignoreCache?: boolean }): Promise<void>;
+  /** History back; resolves once loaded. Resolves `false` when there is no earlier entry. */
+  goBack?(): Promise<boolean>;
+  /** History forward; resolves once loaded. Resolves `false` when there is no later entry. */
+  goForward?(): Promise<boolean>;
 }
 
 export type TabLifecycleEvent =

@@ -87,6 +87,9 @@ export const ACTIVITY_ROUTES: readonly ActivityRoute[] = [
   { method: "POST", pattern: "/api/tabs", label: "Open tab" },
   { method: "DELETE", pattern: "/api/tabs/:id", label: "Close tab" },
   { method: "POST", pattern: "/api/tabs/:id/navigate", label: "Navigate" },
+  { method: "POST", pattern: "/api/tabs/:id/reload", label: "Reload page" },
+  { method: "POST", pattern: "/api/tabs/:id/back", label: "Go back" },
+  { method: "POST", pattern: "/api/tabs/:id/forward", label: "Go forward" },
   // Perception / commands
   {
     method: "GET", pattern: "/api/tabs/:id/perception", label: "Read page",

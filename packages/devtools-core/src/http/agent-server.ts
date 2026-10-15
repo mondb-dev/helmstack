@@ -162,6 +162,9 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/tabs
  * POST /api/tabs                          { url?: string }
  * POST /api/tabs/:id/navigate             { url: string }
+ * POST /api/tabs/:id/reload               { ignoreCache?: boolean }   (waits for the load)
+ * POST /api/tabs/:id/back                 (waits for the load; unchanged when there is no earlier entry)
+ * POST /api/tabs/:id/forward              (likewise)
  * GET  /api/tabs/:id/perception
  * GET  /api/tabs/:id/manifests
  * POST /api/tabs/:id/command              { command: BrowserOutputCommand }
@@ -781,6 +784,19 @@ export class AgentServer {
       const body = await readBody(req);
       if (typeof body.url !== "string") return error(res, 400, "url is required");
       return json(res, await this.tabs.navigate(navMatch[1] as TabId, body.url));
+    }
+
+    const historyMatch = p.match(/^\/api\/tabs\/([^/]+)\/(reload|back|forward)$/);
+    if (method === "POST" && historyMatch) {
+      const tabId = historyMatch[1] as TabId;
+      if (historyMatch[2] === "reload") {
+        const body = await readBody(req);
+        if (body.ignoreCache !== undefined && typeof body.ignoreCache !== "boolean") {
+          return error(res, 400, "ignoreCache must be a boolean");
+        }
+        return json(res, await this.tabs.reload(tabId, { ignoreCache: body.ignoreCache === true }));
+      }
+      return json(res, historyMatch[2] === "back" ? await this.tabs.goBack(tabId) : await this.tabs.goForward(tabId));
     }
 
     const perceptionMatch = p.match(/^\/api\/tabs\/([^/]+)\/perception$/);

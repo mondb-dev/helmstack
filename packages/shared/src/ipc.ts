@@ -5,6 +5,7 @@ import type { ElementPickResult, PageScreenshot, PageSnapshot, TabId, TabSummary
 import type { ApprovalPolicyRecord } from "./policy.js";
 import type { AgentChatEvent, AgentConversationSummary, AgentRunnerStatus, StartAgentConversationInput } from "./agent-chat.js";
 import type { AgentActivityEntry, AgentConnectionStatus, TabOverrideKind, TabOverrides } from "./shell-status.js";
+import type { ShortcutId } from "./shortcuts.js";
 import type { FixturePageName, VaultSecretInput, VaultSecretSummary, VaultStatus } from "./vault.js";
 
 export const BrowserShellChannel = {
@@ -62,7 +63,19 @@ export const BrowserShellChannel = {
   GetAgentConversationEvents: "browser-shell:get-agent-conversation-events",
   CloseAgentConversation: "browser-shell:close-agent-conversation",
 
+  // Browser navigation, find and zoom (human-initiated, shell only)
+  GoBack: "browser-shell:go-back",
+  GoForward: "browser-shell:go-forward",
+  Reload: "browser-shell:reload",
+  StopLoading: "browser-shell:stop-loading",
+  FindInPage: "browser-shell:find-in-page",
+  StopFindInPage: "browser-shell:stop-find-in-page",
+  ZoomTab: "browser-shell:zoom-tab",
+  FocusPage: "browser-shell:focus-page",
+
   TabsChanged: "browser-shell:tabs-changed",
+  FindResult: "browser-shell:find-result",
+  Shortcut: "browser-shell:shortcut",
   PageObserved: "browser-shell:page-observed",
   HandoffRequested: "browser-shell:handoff-requested",
   AgentLog: "browser-shell:agent-log",
@@ -73,12 +86,45 @@ export const BrowserShellChannel = {
   AgentChatEvent: "browser-shell:agent-chat-event"
 } as const;
 
+/** Zoom steps the human can request for a tab. */
+export type ZoomAction = "in" | "out" | "reset";
+
+export type FindInPageOptions = {
+  /** Search direction; default true (forward). */
+  forward?: boolean;
+  /** Continue to the next match of the same text instead of starting a new search. */
+  findNext?: boolean;
+  matchCase?: boolean;
+};
+
+/** Result of a find-in-page request; `cleared` means the find state was dropped (navigation, tab close). */
+export type FindInPageResult = {
+  tabId: TabId;
+  activeMatchOrdinal: number;
+  matches: number;
+  finalUpdate: boolean;
+  cleared?: boolean;
+};
+
 export type BrowserShellApi = {
   openTab(url?: string): Promise<TabSummary[]>;
   navigate(tabId: TabId, url: string): Promise<TabSummary[]>;
   listTabs(): Promise<TabSummary[]>;
   focusTab(tabId: TabId): Promise<TabSummary[]>;
   closeTab(tabId: TabId): Promise<TabSummary[]>;
+  /** History back (no-op when there is nothing behind). Resolves with the tab list. */
+  goBack(tabId: TabId): Promise<TabSummary[]>;
+  goForward(tabId: TabId): Promise<TabSummary[]>;
+  /** `hard` bypasses the cache. */
+  reload(tabId: TabId, hard?: boolean): Promise<TabSummary[]>;
+  stopLoading(tabId: TabId): Promise<TabSummary[]>;
+  /** Starts or continues a find; the outcome arrives through `onFindResult`. */
+  findInPage(tabId: TabId, text: string, options?: FindInPageOptions): Promise<void>;
+  /** Clears highlights and the selection. */
+  stopFindInPage(tabId: TabId): Promise<void>;
+  zoomTab(tabId: TabId, action: ZoomAction): Promise<TabSummary[]>;
+  /** Moves keyboard focus from the shell into the active page (after Enter / Esc in the address bar). */
+  focusPage(): Promise<void>;
   setViewport(rect: ViewportRect): Promise<void>;
   captureSnapshot(tabId: TabId): Promise<PageSnapshot>;
   getLatestObservation(tabId: TabId): Promise<PageObservation | null>;
@@ -153,6 +199,9 @@ export type AgentLogEntry = {
 
 export type BrowserShellBridge = BrowserShellApi & {
   onTabsChanged(callback: (tabs: TabSummary[]) => void): () => void;
+  onFindResult(callback: (result: FindInPageResult) => void): () => void;
+  /** A keyboard shortcut handled natively (menu / page key routing) that the shell UI must act on. */
+  onShortcut(callback: (id: ShortcutId) => void): () => void;
   onPageObserved(callback: (observation: PageObservation) => void): () => void;
   onHandoffRequested(callback: (handoff: HumanHandoffRecord) => void): () => void;
   onAgentLog(callback: (entry: AgentLogEntry) => void): () => void;

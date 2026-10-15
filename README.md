@@ -176,6 +176,8 @@ The browser is now running and waiting on `127.0.0.1:7070`.
 | `browser_list_tabs` | List open tabs with ID, title, URL |
 | `browser_open_tab` | Open a new tab (optionally navigate to a URL) |
 | `browser_navigate` | Navigate a tab to a URL |
+| `browser_reload` | Reload a tab (optionally bypassing the cache) and wait for the load |
+| `browser_go_back` / `browser_go_forward` | Move through a tab's history and wait for the load |
 | `browser_set_viewport` | Resize a tab's viewport |
 | `browser_get_perception` | Structured DOM graph: forms, fields, actions, a11y metadata |
 | `browser_list_manifests` | Site capability manifests for a tab |
@@ -393,6 +395,38 @@ Claude will call:
 3. `browser_get_perception` → read the page DOM
 4. `browser_screenshot` → optionally look at the rendered page
 5. Reply with the summary
+
+## Keyboard Shortcuts
+
+HelmStack uses the standard browser shortcuts (⌘ on macOS, Ctrl elsewhere). **Help → Keyboard shortcuts…** (⌘/ · Ctrl+/) lists them in the app; the list is generated from the same table as the menu (`packages/shared/src/shortcuts.ts`).
+
+| Area | Action | macOS | Windows / Linux |
+|---|---|---|---|
+| Tabs | New tab | ⌘T | Ctrl+T |
+| | Close tab | ⌘W | Ctrl+W, Ctrl+F4 |
+| | Reopen closed tab (last 10) | ⌘⇧T | Ctrl+Shift+T |
+| | Close window | ⌘⇧W | Ctrl+Shift+W |
+| | Next / previous tab | ⌃Tab / ⌃⇧Tab, ⌘⌥→ / ⌘⌥←, ⌘⇧] / ⌘⇧[ | Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+PgDn / Ctrl+PgUp |
+| | Select tab 1–8, last tab | ⌘1–8, ⌘9 | Ctrl+1–8, Ctrl+9 |
+| Navigation | Back / Forward | ⌘[ / ⌘] | Alt+← / Alt+→ |
+| | Reload / hard reload | ⌘R, F5 / ⌘⇧R | Ctrl+R, F5 / Ctrl+Shift+R, Ctrl+F5 |
+| | Stop loading | Esc (while loading) | Esc (while loading) |
+| | Focus address bar | ⌘L | Ctrl+L, Alt+D, F6 |
+| Page | Print | ⌘P | Ctrl+P |
+| | Developer tools for the page | ⌘⌥I, F12 | F12, Ctrl+Shift+I |
+| Find | Find / next / previous | ⌘F / ⌘G / ⌘⇧G | Ctrl+F / F3, Ctrl+G / Shift+F3, Ctrl+Shift+G |
+| Zoom | In / out / actual size | ⌘+ (or ⌘=) / ⌘- / ⌘0 | Ctrl++ (or Ctrl+=) / Ctrl+- / Ctrl+0 |
+| HelmStack | Select an element for the agent | ⌘⇧E | Ctrl+Shift+E |
+| | Show or hide the agent panel | ⌘⇧A | Ctrl+Shift+A |
+| | Focus the chat composer | ⌘⇧K | Ctrl+Shift+K |
+| | Keyboard shortcuts | ⌘/ | Ctrl+/ |
+
+Notes:
+
+- **Reserved keys.** The shortcuts above belong to the browser chrome and are not delivered to pages (on macOS the page still sees a key first and only unhandled keys reach the menu; on Windows/Linux the chrome shortcuts are taken before the page). Everything else — copy/paste/undo, arrows, typing, Esc in page dialogs — goes to the page untouched. Esc also stops a loading page but is never taken from the page.
+- **Not bound on macOS:** ⌘←/⌘→ (line start/end in text fields) and ⌥←/⌥→ (word movement) — use ⌘[ / ⌘] for Back/Forward.
+- **Address bar.** Typing a bare term searches DuckDuckGo (`DEFAULT_SEARCH_URL_TEMPLATE` in `apps/desktop/src/renderer/ui/format.ts`); `localhost:3000`, `127.0.0.1:4177`, `file://`, `about:blank` and `http://` addresses are opened as typed. Esc reverts the bar and returns focus to the page.
+- **Zoom** is remembered per site (`helmstack-zoom.json` in the user-data folder). While an agent has a viewport override active (or takes a screenshot) the page renders at 100% so emulated sizes and screenshots are unaffected.
 
 ## Agent Example
 

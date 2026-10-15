@@ -229,9 +229,41 @@ class ScriptedTab implements BackendTab {
     return new URL(this.url).pathname.replace(/^\//, "") || "about:blank";
   }
 
+  private history: string[] = [];
+  private index = -1;
+
   async navigate(url: string): Promise<void> {
+    this.history = [...this.history.slice(0, this.index + 1), url];
+    this.index = this.history.length - 1;
     this.url = url;
     this.backend.load(this);
+  }
+
+  async reload(): Promise<void> {
+    this.backend.load(this);
+  }
+
+  async goBack(): Promise<boolean> {
+    return this.step(-1);
+  }
+
+  async goForward(): Promise<boolean> {
+    return this.step(1);
+  }
+
+  private step(delta: number): boolean {
+    const next = this.index + delta;
+    if (next < 0 || next >= this.history.length) return false;
+    this.index = next;
+    this.url = this.history[next]!;
+    this.backend.load(this);
+    return true;
+  }
+
+  /** The tab starts with its creation URL as the first history entry. */
+  seedHistory(): void {
+    this.history = [this.url];
+    this.index = 0;
   }
 }
 
@@ -257,6 +289,7 @@ export class ScriptedBackend implements BrowserBackend {
     const tab = new ScriptedTab(`tab-${this.nextId++}` as TabId, url, this, opts?.parentTabId);
     for (const other of this.tabs.values()) other.isActive = false;
     tab.isActive = true;
+    tab.seedHistory();
     this.tabs.set(tab.id, tab);
     this.emit({ type: "created", tab });
     this.load(tab);

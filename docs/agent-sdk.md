@@ -48,6 +48,11 @@ const tab = tabs.find(t => t.isActive);
 // Navigate
 await browser.navigate(tab.id, "https://example.com");
 
+// Reload (hard reload bypasses the cache) and move through history; each waits for the load
+await browser.reload(tab.id, { ignoreCache: true });
+await browser.goBack(tab.id);
+await browser.goForward(tab.id);
+
 // Get page perception
 const perception = await browser.getPerception(tab.id);
 console.log(`Page: ${perception.result.snapshot.title}`);

@@ -217,6 +217,38 @@ export class ChromeTabs {
     }
   }
 
+  /** Reloads and waits for the main frame to stop loading. Errors set status "error" and throw. */
+  async reload(id: TabId, ignoreCache = false, timeoutMs = this.#timeoutMs): Promise<void> {
+    await this.#loadCycle(id, (target) => target.reload(ignoreCache, timeoutMs));
+  }
+
+  /** Moves through history; resolves `false` when there is no entry in that direction. */
+  async history(id: TabId, delta: -1 | 1, timeoutMs = this.#timeoutMs): Promise<boolean> {
+    let moved = false;
+    await this.#loadCycle(id, async (target) => {
+      moved = await target.navigateHistory(delta, timeoutMs);
+    });
+    return moved;
+  }
+
+  async #loadCycle(id: TabId, run: (target: ChromeCdpTarget) => Promise<void>): Promise<void> {
+    const entry = this.#entry(id);
+    entry.status = "loading";
+    entry.statusMessage = undefined;
+    this.#emit({ type: "changed", id });
+    try {
+      await run(entry.target);
+      entry.status = entry.target.isLoading() ? "loading" : "idle";
+      await this.#refreshTitle(entry);
+    } catch (error) {
+      entry.status = "error";
+      entry.statusMessage = (error as Error).message;
+      throw error;
+    } finally {
+      this.#emit({ type: "changed", id });
+    }
+  }
+
   /**
    * Records a title observed by other means (e.g. perception's `document.title`).
    * Empty titles are ignored: Chrome reports the URL for untitled pages.

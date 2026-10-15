@@ -14,6 +14,8 @@ import {
 } from "../src/http/agent-server.js";
 import { agentTokenPath, readOrCreateAgentToken } from "../src/http/token.js";
 
+const calls: unknown[][] = [];
+
 /** AgentApi stub with only what these routes touch; `pick` adds the optional picker. */
 function stubApi(opts: { pick?: boolean } = {}): AgentApi {
   const api: Record<string, unknown> = {
@@ -24,6 +26,18 @@ function stubApi(opts: { pick?: boolean } = {}): AgentApi {
     onAssertionTransition() {},
     listTabs() {
       return [{ id: "tab-1", title: "Example", url: "https://example.com", isActive: true, status: "idle", statusMessage: "" }];
+    },
+    async reload(tabId: string, options: unknown) {
+      calls.push(["reload", tabId, options]);
+      return [{ id: tabId }];
+    },
+    async goBack(tabId: string) {
+      calls.push(["back", tabId]);
+      return [{ id: tabId }];
+    },
+    async goForward(tabId: string) {
+      calls.push(["forward", tabId]);
+      return [{ id: tabId }];
     }
   };
   if (opts.pick) api.pickElement = async (tabId: string) => ({ tabId, picked: true });
@@ -88,6 +102,23 @@ describe("agent server on a backend without optional slices (daemon)", () => {
     [server, port] = await startServer({ api: stubApi(), backend: "daemon", port: 0, authToken: null });
   });
   afterAll(() => server.stop());
+
+  it("serves reload, back and forward and validates ignoreCache", async () => {
+    calls.length = 0;
+    expect((await request(port, "POST", "/api/tabs/tab-1/reload", {})).json).toEqual([{ id: "tab-1" }]);
+    await request(port, "POST", "/api/tabs/tab-1/reload", { ignoreCache: true });
+    expect((await request(port, "POST", "/api/tabs/tab-1/back")).status).toBe(200);
+    expect((await request(port, "POST", "/api/tabs/tab-1/forward", {})).status).toBe(200);
+    expect((await request(port, "POST", "/api/tabs/tab-1/reload", { ignoreCache: "yes" })).status).toBe(400);
+    expect(calls).toEqual([
+      ["reload", "tab-1", { ignoreCache: false }],
+      ["reload", "tab-1", { ignoreCache: true }],
+      ["back", "tab-1"],
+      ["forward", "tab-1"]
+    ]);
+    // GET is not a history route.
+    expect((await request(port, "GET", "/api/tabs/tab-1/reload")).status).toBeGreaterThanOrEqual(400);
+  });
 
   it("reports backend and empty capabilities in /api/health", async () => {
     const res = await request(port, "GET", "/api/health");

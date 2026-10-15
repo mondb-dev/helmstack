@@ -317,6 +317,31 @@ export class HelmstackCore implements AgentApi {
     return this.listTabs();
   }
 
+  async reload(tabId: TabId, options: { ignoreCache?: boolean } = {}): Promise<TabSummary[]> {
+    const session = this.requireSession(tabId);
+    const { tab } = session;
+    if (!tab.reload) throw new Error("This backend cannot reload tabs.");
+    await tab.reload({ ignoreCache: options.ignoreCache === true }).catch(() => {});
+    return this.listTabs();
+  }
+
+  async goBack(tabId: TabId): Promise<TabSummary[]> {
+    return this.stepHistory(tabId, "back");
+  }
+
+  async goForward(tabId: TabId): Promise<TabSummary[]> {
+    return this.stepHistory(tabId, "forward");
+  }
+
+  private async stepHistory(tabId: TabId, direction: "back" | "forward"): Promise<TabSummary[]> {
+    const session = this.requireSession(tabId);
+    const { tab } = session;
+    const step = direction === "back" ? tab.goBack : tab.goForward;
+    if (!step) throw new Error("This backend cannot move through history.");
+    await step.call(tab).catch(() => {});
+    return this.listTabs();
+  }
+
   // ── Snapshot / perception ─────────────────────────────────────────────────
 
   async captureSnapshot(tabId: TabId): Promise<PageSnapshot> {

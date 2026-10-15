@@ -41,6 +41,11 @@
       </header>
 
       <nav class="navbar" aria-label="Address bar">
+        <div class="nav-controls" role="group" aria-label="Page navigation">
+          <button class="btn btn--icon btn--quiet" id="nav-back" type="button" aria-label="Back" title="Back" disabled></button>
+          <button class="btn btn--icon btn--quiet" id="nav-forward" type="button" aria-label="Forward" title="Forward" disabled></button>
+          <button class="btn btn--icon btn--quiet" id="nav-reload" type="button" aria-label="Reload" title="Reload" data-mode="reload" disabled></button>
+        </div>
         <form class="nav-form" id="address-form">
           <label class="sr-only" for="address-input">Address</label>
           <input
@@ -48,14 +53,24 @@
             id="address-input"
             type="text"
             spellcheck="false"
-            placeholder="Enter URL or search..."
+            placeholder="Search or enter address"
           />
+          <button class="zoom-chip" id="zoom-chip" type="button" hidden aria-label="Page zoom 100%. Reset to 100%" title="Reset zoom to 100%"></button>
           <button class="btn btn--ghost" type="submit">Go</button>
         </form>
         <button class="btn btn--primary" id="pick-button" type="button" title="Click an element in the page to hand its selector to your agent">
           <span>Select for agent</span>
         </button>
       </nav>
+
+      <section class="find-bar" id="find-bar" role="search" aria-label="Find in page" hidden>
+        <label class="sr-only" for="find-input">Find in page</label>
+        <input class="nav-input find-bar__input" id="find-input" type="text" spellcheck="false" autocomplete="off" placeholder="Find in page" />
+        <span class="find-bar__count" id="find-count" role="status" aria-live="polite"></span>
+        <button class="btn btn--icon btn--sm btn--quiet" id="find-prev" type="button" aria-label="Previous match" title="Previous match"></button>
+        <button class="btn btn--icon btn--sm btn--quiet" id="find-next" type="button" aria-label="Next match" title="Next match"></button>
+        <button class="btn btn--icon btn--sm btn--quiet" id="find-close" type="button" aria-label="Close find bar" title="Close (Esc)"></button>
+      </section>
 
       <section class="override-strip" id="override-strip" role="region" aria-label="Agent overrides on this tab" hidden>
         <span class="override-strip__title">Overrides</span>
@@ -199,6 +214,17 @@
             <div class="vault-list" id="vault-list"></div>
           </section>
         </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="shortcuts-modal" hidden>
+      <div class="modal-backdrop" id="shortcuts-backdrop"></div>
+      <div class="modal modal--wide" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+        <div class="modal-header modal-header--row">
+          <h2 id="shortcuts-title" class="modal-title">Keyboard shortcuts</h2>
+          <button class="btn btn--sm btn--ghost" id="shortcuts-close" type="button">Close</button>
+        </div>
+        <div class="shortcuts" id="shortcuts-body"></div>
       </div>
     </div>
 

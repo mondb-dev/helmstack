@@ -92,6 +92,14 @@ describe("MCP tool gating", () => {
     expect(tools).toContain("browser_pick_element");
   });
 
+  it("history tools (reload / back / forward) are part of the default FE-dev surface", async () => {
+    const tools = await registeredTools(undefined);
+    for (const name of ["browser_reload", "browser_go_back", "browser_go_forward"]) {
+      expect(AGENT_SUBSTRATE_TOOLS).not.toContain(name);
+      expect(tools).toContain(name);
+    }
+  });
+
   it("HELMSTACK_PROFILE=fe-dev keeps them off", async () => {
     const tools = await registeredToolsWith({ HELMSTACK_PROFILE: "fe-dev" });
     for (const name of AGENT_SUBSTRATE_TOOLS) expect(tools).not.toContain(name);

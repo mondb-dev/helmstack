@@ -163,6 +163,43 @@ export function defineContractSuite(factory: BackendFactory): void {
       expect(((await ok("GET", "/api/tabs")) as Json[]).some((t) => t.id === tabId)).toBe(false);
     }, SLOW);
 
+    it("tabs: back, forward and reload move through history and wait for the load", async () => {
+      await withTab(pages.counter, async (tabId) => {
+        const tabState = async (): Promise<Json> => ((await ok("GET", "/api/tabs")) as Json[]).find((t) => t.id === tabId);
+        const titleOf = async (): Promise<string> => (await tabState()).title;
+        await expect.poll(async () => (await tabState()).url, POLL).toBe(pages.counter);
+
+        // Two pages, then back / forward across them.
+        await ok("POST", `/api/tabs/${tabId}/navigate`, { url: pages.blank });
+        await expect.poll(async () => (await tabState()).url, POLL).toBe(pages.blank);
+
+        const back = (await ok("POST", `/api/tabs/${tabId}/back`, {})) as Json[];
+        expect(back).toEqual(expect.arrayContaining([expect.objectContaining({ id: tabId })]));
+        await expect.poll(async () => (await tabState()).url, POLL).toBe(pages.counter);
+
+        const forward = (await ok("POST", `/api/tabs/${tabId}/forward`, {})) as Json[];
+        expect(forward).toEqual(expect.arrayContaining([expect.objectContaining({ id: tabId })]));
+        await expect.poll(async () => (await tabState()).url, POLL).toBe(pages.blank);
+
+        // No later entry: unchanged, not an error.
+        await ok("POST", `/api/tabs/${tabId}/forward`, {});
+        expect((await tabState()).url).toBe(pages.blank);
+
+        // Reload: the served counter page changes content on every request.
+        await ok("POST", `/api/tabs/${tabId}/back`, {});
+        await expect.poll(async () => (await tabState()).url, POLL).toBe(pages.counter);
+        const before = await titleOf();
+        await ok("POST", `/api/tabs/${tabId}/reload`, {});
+        await ok("POST", `/api/tabs/${tabId}/reload`, { ignoreCache: true });
+        if (!needsBrowser) {
+          // Real browsers only: the scripted backend has no network to re-request.
+          await expect.poll(titleOf, POLL).not.toBe(before);
+        }
+
+        expect((await call("POST", `/api/tabs/${tabId}/reload`, { ignoreCache: "yes" })).status).toBe(400);
+      });
+    }, SLOW);
+
     // ── Perception ──────────────────────────────────────────────────────────
 
     it("perception packet, named snapshots and perception diff", async () => {

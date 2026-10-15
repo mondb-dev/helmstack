@@ -153,4 +153,70 @@ describe("ChromeCdpTarget", () => {
     target.dispose();
     expect(session.handlers.size).toBe(0);
   });
+
+  describe("reload and history", () => {
+    async function attached(extra: FakeSession["responses"] = {}) {
+      const session = new FakeSession();
+      Object.assign(session.responses, extra);
+      const target = await ChromeCdpTarget.attach(session);
+      return { session, target };
+    }
+
+    it("reload sends Page.reload with ignoreCache and resolves on the next load stop", async () => {
+      const { session, target } = await attached({ "Page.reload": () => ({}) });
+      let resolved = false;
+      const pending = target.reload(true, 1000).then(() => {
+        resolved = true;
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(session.sent.at(-1)).toEqual({ method: "Page.reload", params: { ignoreCache: true } });
+      expect(resolved).toBe(false);
+      session.emit("Page.frameStoppedLoading", { frameId: "main" });
+      await pending;
+      expect(resolved).toBe(true);
+    });
+
+    it("navigateHistory moves to the adjacent entry and waits for the load", async () => {
+      const { session, target } = await attached({
+        "Page.getNavigationHistory": () => ({
+          currentIndex: 1,
+          entries: [{ id: 10, url: "https://a.test/" }, { id: 11, url: "https://b.test/" }, { id: 12, url: "https://c.test/" }]
+        }),
+        "Page.navigateToHistoryEntry": () => ({})
+      });
+      const back = target.navigateHistory(-1, 1000);
+      await new Promise((r) => setTimeout(r, 5));
+      expect(session.sent.at(-1)).toEqual({ method: "Page.navigateToHistoryEntry", params: { entryId: 10 } });
+      session.emit("Page.frameStoppedLoading", { frameId: "main" });
+      await expect(back).resolves.toBe(true);
+    });
+
+    it("resolves false without navigating when there is no entry that way", async () => {
+      const { session, target } = await attached({
+        "Page.getNavigationHistory": () => ({ currentIndex: 0, entries: [{ id: 10, url: "https://a.test/" }] })
+      });
+      await expect(target.navigateHistory(-1, 1000)).resolves.toBe(false);
+      await expect(target.navigateHistory(1, 1000)).resolves.toBe(false);
+      expect(session.sent.map((s) => s.method)).not.toContain("Page.navigateToHistoryEntry");
+    });
+
+    it("settles on a same-document history move and on a no-load commit (bfcache)", async () => {
+      const { session, target } = await attached({
+        "Page.getNavigationHistory": () => ({
+          currentIndex: 1,
+          entries: [{ id: 1, url: "https://a.test/" }, { id: 2, url: "https://a.test/#x" }]
+        }),
+        "Page.navigateToHistoryEntry": () => ({})
+      });
+      const sameDoc = target.navigateHistory(-1, 5000);
+      await new Promise((r) => setTimeout(r, 5));
+      session.emit("Page.navigatedWithinDocument", { frameId: "main", url: "https://a.test/" });
+      await expect(sameDoc).resolves.toBe(true);
+
+      const restore = target.navigateHistory(-1, 5000);
+      await new Promise((r) => setTimeout(r, 5));
+      session.emit("Page.frameNavigated", { frame: { id: "main", url: "https://a.test/" } });
+      await expect(restore).resolves.toBe(true);
+    });
+  });
 });

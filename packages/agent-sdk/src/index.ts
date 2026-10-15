@@ -296,6 +296,20 @@ export class BrowserClient {
     return this.post(`/api/tabs/${tabId}/navigate`, { url });
   }
 
+  /** Reloads the tab and waits for the load. `ignoreCache` is a hard reload. */
+  async reload(tabId: TabId, options: { ignoreCache?: boolean } = {}): Promise<TabSummary[]> {
+    return this.post(`/api/tabs/${tabId}/reload`, options.ignoreCache === undefined ? {} : { ignoreCache: options.ignoreCache });
+  }
+
+  /** History back (waits for the load); the tab is unchanged when there is no earlier entry. */
+  async goBack(tabId: TabId): Promise<TabSummary[]> {
+    return this.post(`/api/tabs/${tabId}/back`, {});
+  }
+
+  async goForward(tabId: TabId): Promise<TabSummary[]> {
+    return this.post(`/api/tabs/${tabId}/forward`, {});
+  }
+
   async setViewport(tabId: TabId, width: number, height: number, mobile = false): Promise<{ ok: boolean; width: number; height: number; mobile: boolean }> {
     return this.post(`/api/tabs/${tabId}/viewport`, { width, height, mobile });
   }

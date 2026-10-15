@@ -9,6 +9,8 @@ export interface AddressBarOptions {
   input: HTMLInputElement;
   /** URL the bar should show when not dirty (pending navigation or the active tab's URL). */
   currentValue: () => string | undefined;
+  /** Escape reverted the bar and blurred it: hand focus back (e.g. to the page). */
+  onDismiss?: () => void;
 }
 
 export interface AddressBarController {
@@ -17,6 +19,8 @@ export interface AddressBarController {
   /** The user submitted; clears the dirty flag (call before navigating). */
   markSubmitted(): void;
   isDirty(): boolean;
+  /** Cmd/Ctrl+L, Alt+D, F6: show the current URL, focus and select it. */
+  focusAndSelect(): void;
 }
 
 export function mountAddressBar(options: AddressBarOptions): AddressBarController {
@@ -37,9 +41,12 @@ export function mountAddressBar(options: AddressBarOptions): AddressBarControlle
   });
   input.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    // Revert to the page's URL and leave the bar, like Chrome.
+    event.preventDefault();
     dirty = false;
     show();
-    input.select();
+    input.blur();
+    options.onDismiss?.();
   });
 
   return {
@@ -50,5 +57,11 @@ export function mountAddressBar(options: AddressBarOptions): AddressBarControlle
       dirty = false;
     },
     isDirty: () => dirty,
+    focusAndSelect() {
+      dirty = false;
+      show();
+      input.focus();
+      input.select();
+    },
   };
 }

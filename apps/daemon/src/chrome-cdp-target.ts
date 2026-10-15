@@ -82,6 +82,8 @@ export class ChromeCdpTarget implements CdpTarget {
   readonly #session: CdpSessionLike;
   readonly #listeners = new Set<(method: string, params: Record<string, unknown>) => void>();
   readonly #loadWaiters = new Set<() => void>();
+  /** Waiters that also settle on a same-document change or a no-load commit (history moves). */
+  readonly #settleWaiters = new Set<() => void>();
   #mainFrameId: string;
   #url: string;
   #loading: boolean;
@@ -185,6 +187,39 @@ export class ChromeCdpTarget implements CdpTarget {
     }
   }
 
+  /** `Page.reload`; resolves once the main frame stops loading (or after `timeoutMs`). */
+  async reload(ignoreCache: boolean, timeoutMs: number): Promise<void> {
+    let cancel: () => void = () => {};
+    const stopped = this.#nextLoadStop(timeoutMs, (c) => (cancel = c));
+    try {
+      await this.send("Page.reload", { ignoreCache });
+      await stopped;
+    } finally {
+      cancel();
+    }
+  }
+
+  /**
+   * Moves `delta` entries through the navigation history. Resolves `false`
+   * (and does nothing) when there is no such entry; otherwise waits until the
+   * navigation settles: load stop, a same-document change, or a commit that
+   * never starts loading (back/forward cache restore).
+   */
+  async navigateHistory(delta: number, timeoutMs: number): Promise<boolean> {
+    const history = await this.send<{ currentIndex: number; entries: { id: number; url: string }[] }>("Page.getNavigationHistory");
+    const entry = history.entries[history.currentIndex + delta];
+    if (!entry) return false;
+    let cancel: () => void = () => {};
+    const settled = this.#nextSettled(timeoutMs, (c) => (cancel = c));
+    try {
+      await this.send("Page.navigateToHistoryEntry", { entryId: entry.id });
+      await settled;
+    } finally {
+      cancel();
+    }
+    return true;
+  }
+
   /** Stops tracking and detaches listeners. Does not close the page. */
   dispose(): void {
     if (this.#disposed) return;
@@ -193,6 +228,21 @@ export class ChromeCdpTarget implements CdpTarget {
     this.#listeners.clear();
     this.#loading = false;
     for (const resolve of [...this.#loadWaiters]) resolve();
+  }
+
+  #nextSettled(timeoutMs: number, exposeCancel?: (cancel: () => void) => void): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        this.#loadWaiters.delete(done);
+        this.#settleWaiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, Math.max(0, timeoutMs));
+      this.#loadWaiters.add(done);
+      this.#settleWaiters.add(done);
+      exposeCancel?.(done);
+    });
   }
 
   #nextLoadStop(timeoutMs: number, exposeCancel?: (cancel: () => void) => void): Promise<void> {
@@ -215,12 +265,17 @@ export class ChromeCdpTarget implements CdpTarget {
         if (!frame.parentId) {
           this.#mainFrameId = frame.id;
           this.#url = frame.url + (frame.urlFragment ?? "");
+          // A commit that never started loading (bfcache restore) is already settled.
+          if (!this.#loading) for (const resolve of [...this.#settleWaiters]) resolve();
         }
         break;
       }
       case "Page.navigatedWithinDocument": {
         const { frameId, url } = params as { frameId: string; url: string };
-        if (frameId === this.#mainFrameId) this.#url = url;
+        if (frameId === this.#mainFrameId) {
+          this.#url = url;
+          for (const resolve of [...this.#settleWaiters]) resolve();
+        }
         break;
       }
       case "Page.frameStartedLoading":

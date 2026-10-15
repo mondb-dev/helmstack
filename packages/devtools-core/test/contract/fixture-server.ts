@@ -90,6 +90,8 @@ export type FixtureServer = {
   contactForm: string;
   styled: string;
   blank: string;
+  /** Title is "Counter N", N incrementing on every request: reload shows a new number. */
+  counter: string;
   /** Clean SEO page: no errors expected. */
   seoGood: string;
   /** SEO page with deliberate problems; under /private/ (disallowed by robots.txt). */
@@ -102,6 +104,7 @@ export type FixtureServer = {
 };
 
 export async function startFixtureServer(): Promise<FixtureServer> {
+  let counterHits = 0;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const send = (status: number, type: string, body: string | Buffer) => {
@@ -124,6 +127,14 @@ export async function startFixtureServer(): Promise<FixtureServer> {
         return send(200, "text/html; charset=utf-8", STYLED_HTML);
       case "/blank.html":
         return send(200, "text/html; charset=utf-8", BLANK_HTML);
+      case "/counter.html": {
+        counterHits += 1;
+        return send(
+          200,
+          "text/html; charset=utf-8",
+          `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Counter ${counterHits}</title></head><body><p>hits ${counterHits}</p></body></html>`
+        );
+      }
       case "/fixture.css":
         return send(200, "text/css; charset=utf-8", STYLED_CSS);
       case "/fixture.js":
@@ -150,6 +161,7 @@ export async function startFixtureServer(): Promise<FixtureServer> {
     contactForm: `${origin}/contact-form.html`,
     styled: `${origin}/styled.html`,
     blank: `${origin}/blank.html`,
+    counter: `${origin}/counter.html`,
     seoGood: `${origin}/seo-good.html`,
     seoBad: `${origin}/private/seo-bad.html`,
     seoHeaderNoindex: `${origin}/seo-header-noindex.html`,

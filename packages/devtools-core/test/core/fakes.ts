@@ -71,6 +71,22 @@ export class FakeTab implements BackendTab {
     this.url = url;
     this.cdp.currentUrl = url;
   }
+
+  readonly historyCalls: string[] = [];
+
+  async reload(options?: { ignoreCache?: boolean }): Promise<void> {
+    this.historyCalls.push(options?.ignoreCache ? "hard-reload" : "reload");
+  }
+
+  async goBack(): Promise<boolean> {
+    this.historyCalls.push("back");
+    return true;
+  }
+
+  async goForward(): Promise<boolean> {
+    this.historyCalls.push("forward");
+    return true;
+  }
 }
 
 export class FakeBackend implements BrowserBackend {

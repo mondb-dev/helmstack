@@ -11,7 +11,14 @@ const adapters = new WeakMap<WebContents, CdpTarget>();
  * inspection/actuation modules stay Electron-free. One adapter is cached per
  * `WebContents`; the debugger is attached lazily on the first `send`.
  */
-export function electronCdpTarget(webContents: WebContents): CdpTarget {
+export type CdpIntercept = {
+  /** Runs before a command is sent; the command waits for it. */
+  before?(method: string): void | Promise<void>;
+  /** Runs after a command settled (success or failure). */
+  after?(method: string): void;
+};
+
+export function electronCdpTarget(webContents: WebContents, intercept?: CdpIntercept): CdpTarget {
   const cached = adapters.get(webContents);
   if (cached) return cached;
 
@@ -20,7 +27,12 @@ export function electronCdpTarget(webContents: WebContents): CdpTarget {
       if (!webContents.debugger.isAttached()) {
         webContents.debugger.attach(CDP_PROTOCOL_VERSION);
       }
-      return webContents.debugger.sendCommand(method, params) as Promise<T>;
+      try {
+        await intercept?.before?.(method);
+        return (await webContents.debugger.sendCommand(method, params)) as T;
+      } finally {
+        intercept?.after?.(method);
+      }
     },
 
     onEvent(listener) {

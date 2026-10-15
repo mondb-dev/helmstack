@@ -9,6 +9,11 @@ export type TabSummary = {
   isActive: boolean;
   status: TabStatus;
   statusMessage?: string;
+  /** Desktop shell: history has an entry before / after the current one. Absent when unknown. */
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  /** Desktop shell: the human's page zoom for this tab (1 = 100%). Absent when unknown. */
+  zoomFactor?: number;
 };
 
 export type ViewportRect = {

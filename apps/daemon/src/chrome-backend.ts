@@ -85,6 +85,20 @@ class ChromeBackendTab implements BackendTab {
   navigate(url: string): Promise<void> {
     return this.#tabs.navigate(this.id, url);
   }
+
+  /** `Page.reload` (`ignoreCache` = hard reload); resolves once the main frame stops loading. */
+  reload(options: { ignoreCache?: boolean } = {}): Promise<void> {
+    return this.#tabs.reload(this.id, options.ignoreCache === true);
+  }
+
+  /** `Page.navigateToHistoryEntry` one back; `false` when there is no earlier entry. */
+  goBack(): Promise<boolean> {
+    return this.#tabs.history(this.id, -1);
+  }
+
+  goForward(): Promise<boolean> {
+    return this.#tabs.history(this.id, 1);
+  }
 }
 
 type TabRecord = {

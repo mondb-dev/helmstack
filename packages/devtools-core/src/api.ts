@@ -97,6 +97,11 @@ export interface TabsApi {
   createTab(url?: string, parentTabId?: TabId): Promise<TabSummary[]>;
   closeTab(tabId: TabId): Promise<TabSummary[]>;
   navigate(tabId: TabId, url: string): Promise<TabSummary[]>;
+  /** Reload (`ignoreCache` = hard reload) and wait for the load; resolves with the tab list. */
+  reload(tabId: TabId, options?: { ignoreCache?: boolean }): Promise<TabSummary[]>;
+  /** History back and wait for the load. A tab with no earlier entry is left unchanged. */
+  goBack(tabId: TabId): Promise<TabSummary[]>;
+  goForward(tabId: TabId): Promise<TabSummary[]>;
 }
 
 /** Perception packets, capability manifests and named perception snapshots. */
