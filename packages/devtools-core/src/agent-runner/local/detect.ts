@@ -47,6 +47,9 @@ export function parseEndpoints(raw: string | undefined): { endpoints: LocalEndpo
     const kind: LocalEndpointKind = forced ?? (port === "11434" ? "ollama" : "openai-compat");
     endpoints.push({ kind, origin, label: kind === "ollama" ? "Ollama" : `Local server (${new URL(origin).host})` });
   }
+  // An override that contains nothing usable must not silently switch detection off
+  // ("Ollama is not installed" while it is running): fall back to the loopback defaults.
+  if (endpoints.length === 0) return { endpoints: defaultEndpoints(), rejected };
   return { endpoints, rejected };
 }
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   type AccountInput,
   type AccountUpdate,
+  AGENT_CLI_IDS,
   type AgentCliId,
   type StartAgentConversationInput,
   type ApprovalDecision,
@@ -450,7 +451,7 @@ function registerIpcHandlers(
     if (!raw || typeof raw !== "object") throw new Error("Invalid conversation request.");
     const input = raw as Record<string, unknown>;
     const cliId = str(input.cliId, "cli", 32) as AgentCliId;
-    if (cliId !== "claude" && cliId !== "gemini") throw new Error("Unknown agent CLI.");
+    if (!(AGENT_CLI_IDS as readonly string[]).includes(cliId)) throw new Error("Unknown agent CLI.");
     const model = typeof input.model === "string" ? input.model : "";
     if (model.length > 80) throw new Error("Invalid model id.");
     const clean: StartAgentConversationInput = {

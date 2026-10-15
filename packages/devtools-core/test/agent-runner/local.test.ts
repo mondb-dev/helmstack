@@ -272,6 +272,13 @@ describe("loopback validation", () => {
     expect(parseEndpoints(undefined).endpoints.map((e) => e.origin)).toEqual(["http://127.0.0.1:11434", "http://127.0.0.1:1234", "http://127.0.0.1:8080"]);
   });
 
+  it("falls back to the loopback defaults when the override has no usable entry", () => {
+    const { endpoints, rejected } = parseEndpoints("192.168.1.50:11434, http://example.com:1234, http://user:pw@127.0.0.1:11434");
+    expect(rejected.length).toBe(3);
+    expect(endpoints.map((e) => e.origin)).toEqual(["http://127.0.0.1:11434", "http://127.0.0.1:1234", "http://127.0.0.1:8080"]);
+    expect(endpoints.every((e) => /^http:\/\/127\.0\.0\.1:/.test(e.origin))).toBe(true);
+  });
+
   it("never follows redirects", async () => {
     const target = await serve((_req, res) => json(res, { version: "6.6.6" }));
     const redirector = await serve((_req, res) => {

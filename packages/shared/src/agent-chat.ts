@@ -11,7 +11,8 @@ import type { TabId } from "./browser.js";
  * "ollama" and "openai-compat" (LM Studio, llama.cpp) are loopback-only local model
  * servers: they are HTTP model APIs, not CLIs, and HelmStack runs the agent loop.
  */
-export type AgentCliId = "claude" | "gemini" | "ollama" | "openai-compat";
+export const AGENT_CLI_IDS = ["claude", "gemini", "ollama", "openai-compat"] as const;
+export type AgentCliId = (typeof AGENT_CLI_IDS)[number];
 
 /** Whether a provider is a spawned agent CLI or a local model server. Absent means "cli". */
 export type AgentProviderKind = "cli" | "local";
