@@ -299,6 +299,26 @@ export class ActivityLog {
     if (this.entries.length > this.capacity) this.entries.splice(0, this.entries.length - this.capacity);
   }
 
+  /**
+   * Resolve a pending approval entry in place. Returns the updated entry, or
+   * undefined when it was evicted / never pending (nothing changes then).
+   */
+  resolveApproval(
+    requestId: string,
+    outcome: NonNullable<AgentActivityEntry["approval"]>,
+    commandStatus?: string
+  ): AgentActivityEntry | undefined {
+    const entry = this.entries.find((e) => e.requestId === requestId && e.approval === "pending");
+    if (!entry) return undefined;
+    entry.approval = outcome;
+    // The HTTP call itself succeeded; only an approved command that then
+    // failed or was blocked is flagged !ok. Reject/cancel/expire are not errors.
+    const failedRun = outcome === "approved" && (commandStatus === "failed" || commandStatus === "blocked");
+    entry.ok = !failedRun;
+    entry.summary = failedRun ? `approved: ${commandStatus}` : outcome;
+    return { ...entry };
+  }
+
   /** Oldest first. */
   list(): AgentActivityEntry[] {
     return this.entries.map((entry) => ({ ...entry }));

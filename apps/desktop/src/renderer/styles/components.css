@@ -998,6 +998,12 @@
   color: var(--color-warning-text);
 }
 
+/* Rejected / cancelled / expired approvals: resolved, not an error. */
+.activity-row--muted .activity-row__status,
+.activity-row--muted .activity-row__summary {
+  color: var(--color-text-secondary);
+}
+
 .activity-row__main {
   display: flex;
   flex-direction: column;

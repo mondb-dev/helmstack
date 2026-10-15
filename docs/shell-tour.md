@@ -24,7 +24,7 @@ Back, forward, reload, the address bar, and **Select for agent**. Find in page (
 
 Toggle with `Cmd/Ctrl+Shift+A`. Two tabs:
 
-- **Activity**: a live feed of what agents are doing, one row per API call or log line, with a filter. This is the place to check what an agent actually did.
+- **Activity**: a live feed of what agents are doing, one row per API call or log line, with a filter. This is the place to check what an agent actually did. A command held for your approval shows as "Run page command - awaiting approval" with a clock, and the same row updates in place when it resolves: a check and "approved", a muted x and "rejected", or a muted "cancelled" (the page changed or the tab closed) or "expired". Rows never show the command, its arguments or page text.
 - **Chat**: talk to an agent or a local model. See [Agent chat and local models](agent-chat.md).
 
 ## Connection popover

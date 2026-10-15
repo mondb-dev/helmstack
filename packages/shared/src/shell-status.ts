@@ -43,6 +43,16 @@ export type AgentActivityEntry = {
   ok: boolean;
   /** One-line result summary when the route has one, e.g. "4 issues". */
   summary?: string;
+  /**
+   * Opaque approval request id, set only on a command that was queued for human
+   * approval. Never carries the command, args or page text.
+   */
+  requestId?: string;
+  /**
+   * Lifecycle of a queued approval, updated in place (same `id`) when it
+   * resolves. Fixed enum values only.
+   */
+  approval?: "pending" | "approved" | "rejected" | "cancelled" | "expired";
 };
 
 export type AgentProfile = "fe-dev" | "agent-substrate" | "full";

@@ -5,6 +5,7 @@ import type {
   AgentActivityEntry,
   AgentConnectionStatus,
   AgentLogEntry,
+  ApprovalResolution,
   BrowserOutputCommand,
   CookieEntry,
   DiffRegion,
@@ -336,7 +337,10 @@ export class AgentServer {
     tabs.onPageObserved((o) => this.broadcastTabEvent("page_observed", o, o.tabId));
     tabs.onAssertionTransition((t) => this.broadcastTabEvent("assertion_changed", t, t.tabId));
     tabs.onApprovalQueued((a) => this.broadcastTabEvent("approval_queued", a, a.tabId));
-    tabs.onApprovalResolved?.((r) => this.broadcastTabEvent("approval_resolved", r, r.tabId));
+    tabs.onApprovalResolved?.((r) => {
+      this.broadcastTabEvent("approval_resolved", r, r.tabId);
+      this.resolveApprovalActivity(r);
+    });
     tabs.onHandoffRequested((h: HumanHandoffRecord) => this.broadcastTabEvent("human_handoff_requested", h, h.tabId));
     tabs.onElementPicked?.((pick) => this.handleHumanPick(pick));
   }
@@ -492,8 +496,14 @@ export class AgentServer {
   private recordActivity(req: http.IncomingMessage, res: http.ServerResponse, method: string, pathname: string, at: number): void {
     const match = matchActivityRoute(method, pathname);
     const agentId = clampAgentId(this.agentIdOf(req));
-    const summary = res.statusCode < 400 ? summarizeResponse(match.summarize, responseData.get(res)) : undefined;
+    const data = responseData.get(res);
+    const summary = res.statusCode < 400 ? summarizeResponse(match.summarize, data) : undefined;
     responseData.delete(res);
+    const queuedId =
+      summary === "awaiting approval" && match.route === "/api/tabs/:id/command" && data && typeof data === "object"
+        ? (data as { requestId?: unknown }).requestId
+        : undefined;
+    const requestId = typeof queuedId === "string" && /^[\w.:-]{1,128}$/.test(queuedId) ? queuedId : undefined;
     const entry: AgentActivityEntry = {
       id: `act-${++this.activitySeq}`,
       at,
@@ -505,16 +515,28 @@ export class AgentServer {
       ...(agentId ? { agentId } : {}),
       status: res.statusCode,
       ok: res.statusCode < 400,
-      ...(summary ? { summary } : {})
+      ...(summary ? { summary } : {}),
+      ...(requestId ? { requestId, approval: "pending" as const } : {})
     };
     this.pushActivity(entry);
   }
 
+  /** Flip the feed row of a queued command when its approval resolves; live consumers upsert by id. */
+  private resolveApprovalActivity(r: ApprovalResolution): void {
+    const updated = this.activity.resolveApproval(r.requestId, r.outcome, r.status);
+    if (!updated) return;
+    this.notifyActivity(updated);
+  }
+
+  private notifyActivity(entry: AgentActivityEntry): void {
+    for (const fn of this.activityListeners) {
+      try { fn({ ...entry }); } catch { /* a listener must not break the server */ }
+    }
+  }
+
   private pushActivity(entry: AgentActivityEntry): void {
     this.activity.push(entry);
-    for (const fn of this.activityListeners) {
-      try { fn(entry); } catch { /* a listener must not break the server */ }
-    }
+    this.notifyActivity(entry);
   }
 
   setIntent(value: string, agentId: string | null = null): void {

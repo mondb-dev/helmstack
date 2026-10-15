@@ -79,7 +79,7 @@ export function connectHint(status: AgentConnectionStatus | null): string {
   return `Connect your coding agent: open the connection status in ${where}, copy the MCP config into your agent, then ask it to check your page.`;
 }
 
-export type CallTone = "ok" | "pending" | "fail";
+export type CallTone = "ok" | "pending" | "fail" | "muted";
 
 /** How an API call row looks: icon, colour tone and screen-reader prefix. */
 export interface CallState {
@@ -111,7 +111,25 @@ export const CALL_STATES: Record<string, CallState> = {
 const CALL_OK: CallState = CALL_STATES.completed;
 const CALL_FAILED: CallState = CALL_STATES.failed;
 
+/**
+ * Resolved approvals (`entry.approval`, set by the server and updated in
+ * place). Rejected/cancelled/expired are muted, not errors: the human said no
+ * or the request went stale. Each has its own icon and screen-reader label.
+ */
+export const APPROVAL_STATES: Record<NonNullable<AgentActivityEntry["approval"]>, CallState> = {
+  pending: CALL_STATES["awaiting approval"],
+  approved: { icon: "check", tone: "ok", srLabel: "Approved: " },
+  rejected: { icon: "x", tone: "muted", srLabel: "Rejected: " },
+  cancelled: { icon: "triangle-alert", tone: "muted", srLabel: "Cancelled: " },
+  expired: { icon: "info", tone: "muted", srLabel: "Expired: " },
+};
+
 export function callState(entry: AgentActivityEntry): CallState {
+  if (entry.approval && Object.hasOwn(APPROVAL_STATES, entry.approval)) {
+    // An approved command that then failed/was blocked arrives with ok:false.
+    if (entry.approval === "approved" && !entry.ok) return { icon: "circle-x", tone: "fail", srLabel: "Approved, then failed: " };
+    return APPROVAL_STATES[entry.approval];
+  }
   if (!entry.ok) return CALL_FAILED;
   const key = entry.summary?.trim().toLowerCase();
   return (key && Object.hasOwn(CALL_STATES, key) ? CALL_STATES[key] : undefined) ?? CALL_OK;
@@ -188,6 +206,18 @@ export function mountActivity(options: ActivityOptions): ActivityController {
       changed = true;
     }
     return changed;
+  };
+
+  /** Insert, or replace in place (keeps position and time) when the id is known. */
+  const upsertCall = (entry: AgentActivityEntry): boolean => {
+    const index = items.findIndex((item) => item.kind === "call" && item.id === entry.id);
+    if (index >= 0) {
+      const existing = items[index];
+      items[index] = { kind: "call", id: entry.id, at: existing.at, entry };
+    } else {
+      items.push({ kind: "call", id: entry.id, at: entry.at, entry });
+    }
+    return trackAgent(entry);
   };
 
   const buildCallRow = (entry: AgentActivityEntry): HTMLLIElement => {
@@ -397,23 +427,19 @@ export function mountActivity(options: ActivityOptions): ActivityController {
   const controller: ActivityController = {
     setActivity(entries) {
       // Merge (not replace): live events may have arrived before the list did.
-      const known = new Set(items.map((item) => item.id));
       let touched = false;
       for (const entry of entries) {
-        if (known.has(entry.id)) continue;
-        items.push({ kind: "call", id: entry.id, at: entry.at, entry });
-        touched = trackAgent(entry) || touched;
+        touched = upsertCall(entry) || touched;
       }
       trim();
       render();
       if (touched) options.onAgentsByTabChange?.(agents);
     },
     addActivity(entry) {
-      if (items.some((item) => item.kind === "call" && item.id === entry.id)) return;
-      items.push({ kind: "call", id: entry.id, at: entry.at, entry });
+      const touched = upsertCall(entry);
       trim();
       render();
-      if (trackAgent(entry)) options.onAgentsByTabChange?.(agents);
+      if (touched) options.onAgentsByTabChange?.(agents);
     },
     addLog(entry) {
       logCounter += 1;

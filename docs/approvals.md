@@ -50,6 +50,20 @@ A cancelled or expired request leaves the pending list and the agent receives `a
 
 Approving a fill or `type` into form F on tab T records a single-use grant. The next submit of F on T runs without a second prompt when the tab is still on the same document, the submit's effects are a subset of what was approved (a sign-up submit adds `create_account`, so it asks again), and it is within 5 minutes. `block` always wins. A rejected fill grants nothing.
 
+## What the Activity feed shows
+
+A queued command gets one row in the Activity feed. It starts as "awaiting approval" (clock) and the same row is updated when the approval resolves:
+
+| State | Row text | Icon |
+| --- | --- | --- |
+| Waiting | awaiting approval | clock, warning |
+| Approved | approved (or "approved: failed" if the command then failed) | check, success (x if it failed) |
+| Rejected | rejected | x, muted - a human said no, not an error |
+| Cancelled | cancelled (the page changed or the tab closed) | warning triangle, muted |
+| Expired | expired | info, muted |
+
+An agent's refused attempt to approve (`requires_human`) leaves the row waiting. Rows older than the feed's history are not updated.
+
 ## Handoffs
 
 Separately from approvals, an agent can ask the human to take over (for example to solve a captcha). The window shows a handoff dialog; the agent waits for **Done** or **Cancel**. Routes: `GET /api/handoffs`, `POST /api/handoffs/:id/resolve`, `POST /api/handoffs/:id/cancel`.

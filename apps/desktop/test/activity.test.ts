@@ -203,6 +203,95 @@ describe("agent activity panel", () => {
   });
 });
 
+describe("approval rows upsert in place", () => {
+  beforeEach(() => {
+    loadShellDom();
+    activeTab = "tab-1";
+    try {
+      localStorage.clear();
+    } catch {
+      /* ignore */
+    }
+  });
+  afterEach(() => {
+    controller?.destroy();
+    controller = null;
+  });
+
+  const pendingEntry = () =>
+    activityEntry({
+      label: "Run page command", summary: "awaiting approval", requestId: "req-1", approval: "pending",
+      tabId: "tab-1", at: 1_700_000_050_000,
+    });
+
+  it("flips the same row, keeping position, with no duplicate", () => {
+    const { controller } = setup();
+    const entry = pendingEntry();
+    controller.addActivity(activityEntry({ label: "Screenshot", at: 1_700_000_010_000, tabId: "tab-1" }));
+    controller.addActivity(entry);
+    controller.addActivity(activityEntry({ label: "Navigate", at: 1_700_000_090_000, tabId: "tab-1" }));
+    let list = rows();
+    expect(list[1].className).toContain("activity-row--pending");
+    expect(list[1].textContent).toContain("Awaiting approval:");
+
+    controller.addActivity({ ...entry, approval: "approved", summary: "approved" });
+    list = rows();
+    expect(list).toHaveLength(3);
+    expect(list.map((r) => r.querySelector(".activity-row__label")!.textContent)).toEqual(["Navigate", "Run page command", "Screenshot"]);
+    expect(list[1].className).toContain("activity-row--ok");
+    expect(list[1].textContent).toContain("Approved:");
+    expect(list[1].querySelector(".activity-row__summary")!.textContent).toBe("approved");
+    expect(controller.items()).toHaveLength(3);
+  });
+
+  it("setActivity with a newer snapshot also upserts", () => {
+    const { controller } = setup();
+    const entry = pendingEntry();
+    controller.addActivity(entry);
+    controller.setActivity([{ ...entry, approval: "expired", summary: "expired" }]);
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0].textContent).toContain("Expired:");
+  });
+
+  it("maps each outcome to its own icon, tone and sr label", () => {
+    const base = pendingEntry();
+    const seen = new Set<string>();
+    for (const [approval, tone, label] of [
+      ["pending", "pending", "Awaiting approval: "],
+      ["approved", "ok", "Approved: "],
+      ["rejected", "muted", "Rejected: "],
+      ["cancelled", "muted", "Cancelled: "],
+      ["expired", "muted", "Expired: "],
+    ] as const) {
+      const state = callState({ ...base, approval });
+      expect(state).toMatchObject({ tone, srLabel: label });
+      seen.add(state.icon);
+    }
+    expect(seen.size).toBe(5); // every state has its own icon
+  });
+
+  it("an approved command that failed shows the failure state", () => {
+    expect(callState({ ...pendingEntry(), approval: "approved", ok: false }).tone).toBe("fail");
+  });
+
+  it("filters still apply to upserted rows and the cap holds", () => {
+    const { controller } = setup();
+    const entry = pendingEntry();
+    controller.addActivity(entry);
+    controller.setFilter("tab");
+    activeTab = "tab-2";
+    controller.refreshForTab();
+    expect(rows()).toHaveLength(0);
+    controller.addActivity({ ...entry, approval: "rejected", summary: "rejected" });
+    expect(rows()).toHaveLength(0);
+    activeTab = "tab-1";
+    controller.refreshForTab();
+    expect(rows()[0].className).toContain("activity-row--muted");
+    for (let i = 0; i < ACTIVITY_RENDER_CAP + 5; i += 1) controller.addActivity(activityEntry({ tabId: "tab-1" }));
+    expect(rows()).toHaveLength(ACTIVITY_RENDER_CAP);
+  });
+});
+
 describe("selectFeed", () => {
   it("sorts newest first and caps", () => {
     const items = [1, 3, 2].map((n) => ({ kind: "call" as const, id: `c${n}`, at: n, entry: activityEntry({ at: n }) }));
