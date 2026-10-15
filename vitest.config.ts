@@ -14,7 +14,7 @@ export default defineConfig({
             "packages/devtools-core/test/**/*.test.ts"
           ],
           // The contract suite drives real HTTP servers (and Chrome): node project below.
-          exclude: ["**/node_modules/**", "packages/devtools-core/test/contract/**"],
+          exclude: ["**/node_modules/**", "packages/devtools-core/test/contract/**", "packages/devtools-core/test/agent-runner/local.test.ts"],
           environment: "jsdom",
           setupFiles: ["./packages/perception/test/setup.ts"],
           environmentOptions: {
@@ -22,6 +22,15 @@ export default defineConfig({
               url: "https://example.com/"
             }
           }
+        }
+      },
+      {
+        // Local-model chat backend: real fetch + AbortController against fake loopback
+        // servers. jsdom replaces AbortController with one undici rejects, so plain Node.
+        test: {
+          name: "local-models",
+          include: ["packages/devtools-core/test/agent-runner/local.test.ts"],
+          environment: "node"
         }
       },
       {

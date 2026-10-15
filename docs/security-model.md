@@ -222,6 +222,55 @@ remaining process group and delete the temp files.
 page content the agent reads to that provider. HelmStack's approval gating
 still applies to risky actions the agent requests through MCP.
 
+### Local models (Ollama, LM Studio, llama.cpp)
+
+The same dropdown can start a chat with a model served on this machine. A local
+runtime is only an HTTP model API, so HelmStack runs the agent loop itself
+(`packages/devtools-core/src/agent-runner/local/`), inside the same
+`AgentRunner` (conversations, Stop, replay buffer, caps and cleanup are shared).
+
+- **Loopback only.** Probes and chat requests go only to `127.0.0.1`, `[::1]` or
+  `localhost` (default Ollama `:11434`, LM Studio `:1234`, llama.cpp `:8080`;
+  override with `HELMSTACK_LOCAL_ENDPOINTS`, a comma list that is validated: any
+  non-loopback host, credentials in the URL or non-http(s) scheme is dropped).
+  Redirects are never followed and bodies are size-capped. Probes time out at
+  ~800 ms.
+- **Only 14 verbs are executable.** The model is given the lite tools
+  (`look`, `click`, `type`, `select`, `go`, `back`, `forward`, `reload`,
+  `scroll`, `tabs`, `audit`, `details`, `viewport`, `screenshot`) as structured
+  tools. Only structured `tool_calls` are run, after the name and arguments are
+  validated against `LITE_TOOL_SCHEMAS`; unknown tools and extra or invalid
+  arguments are returned to the model as `ERROR: ... NEXT: ...` and never
+  executed. JSON that merely appears in the model's text or in a page is data.
+  At most 4 calls per step, 12 steps per turn.
+- **Model output and page content are untrusted.** Tool results are fed back as
+  `tool` messages only, capped at 3,000 characters. The system prompt tells the
+  model to treat them as data.
+- **Same pipeline as every other agent.** The loop talks to this instance's own
+  agent API over loopback with its token, as `chat:ollama:<model>`, pinned to
+  the conversation's tab. Approval gating (human-only on desktop), activity
+  recording and redaction are unchanged: risky actions come back as
+  `NEEDS APPROVAL` and there is no verb that approves. The loop has no other
+  capability: no shell, files, accounts or TOTP.
+- **Ollama's own API is never exposed** to pages or to agents; only the main
+  process talks to it. HelmStack never pulls or downloads models.
+- **What the UI sees.** Text and tool rows (verb plus a fixed phrase). Arguments,
+  results and raw server responses are never forwarded; errors are sanitised
+  sentences ("Couldn't reach the local model server", "stopped responding").
+- **Failure modes.** The server dying mid-stream, no bytes for 120 s, a 5 minute
+  turn timeout, Stop or closing the tab all abort the in-flight request and end
+  the turn with a clean outcome; nothing hangs.
+- **Context window.** Ollama silently truncates prompts at its small default
+  context. HelmStack always sends `options.num_ctx` (default 8192, override with
+  `HELMSTACK_LOCAL_NUM_CTX`, 2048-131072) and bounds history (last 12 messages,
+  about 40% of the budget). Larger values use more memory.
+- **Capability gating.** For Ollama, `/api/show` `capabilities` decides: models
+  without `tools` are listed but disabled ("No tool-calling support"); older
+  servers that report none are "tool support unknown" (selectable, flagged).
+  LM Studio and llama.cpp report no capabilities, so they are always "unknown".
+- **Not supported.** A text-command fallback for models without native tool
+  calling was cut; such models are disabled instead.
+
 ## Anti-detection / stealth
 
 Fingerprint hardening and human-like input timing are **opt-in** and **off by

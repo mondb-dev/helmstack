@@ -35,6 +35,8 @@ import { detectCli, type DetectOptions } from "./detect.js";
 import { scrubbedEnv } from "./env.js";
 import { isValidModelId, type AdapterEvent, type AgentCliAdapter, type McpServerSpec } from "./types.js";
 import { cleanText, ensurePrivateDir, writePrivateFile } from "./util.js";
+import { LocalModelBackend, type LocalBackendOptions, type LocalSession } from "./local/backend.js";
+import { MAX_HISTORY_MESSAGES, type HistoryMessage } from "./local/loop.js";
 
 export const MAX_PROMPT_CHARS = 32_000;
 
@@ -63,6 +65,14 @@ export type AgentRunnerOptions = {
   platform?: NodeJS.Platform;
   adapters?: readonly AgentCliAdapter[];
   detect?: DetectOptions;
+  /**
+   * Enable local model servers (Ollama, LM Studio, llama.cpp) as a second backend.
+   * `true` uses defaults; an object tunes detection/loop. They are loopback-only and
+   * reach the page through this instance's own agent API (same port/token as the MCP path).
+   */
+  local?: true | Omit<LocalBackendOptions, "port" | "host" | "tokenFile" | "authToken">;
+  /** Per-turn timeout for local models. Default 5 minutes. */
+  localTurnTimeoutMs?: number;
   tmpRoot?: string;
   turnTimeoutMs?: number;
   maxConversations?: number;
@@ -74,7 +84,9 @@ export type AgentRunnerOptions = {
 
 type Turn = {
   id: string;
-  child: ChildProcess;
+  /** Null for local-model turns, which have no process. */
+  child: ChildProcess | null;
+  abort: AbortController | null;
   stopRequested: boolean;
   timedOut: boolean;
   capped: boolean;
@@ -95,8 +107,11 @@ type Conversation = {
   /** True once the CLI confirmed the session exists (so later turns resume). */
   sessionStarted: boolean;
   unconfined: boolean;
-  adapter: AgentCliAdapter;
+  /** Null for local-model conversations. */
+  adapter: AgentCliAdapter | null;
   binary: string;
+  /** Present for local-model conversations. */
+  local: { session: LocalSession; history: HistoryMessage[] } | null;
   dir: string;
   prepared: unknown;
   seq: number;
@@ -116,6 +131,7 @@ export class AgentRunner {
   private readonly adapters: readonly AgentCliAdapter[];
   private readonly conversations = new Map<string, Conversation>();
   private readonly listeners = new Set<(event: AgentChatEvent) => void>();
+  private readonly localBackend: LocalModelBackend | null;
   private clis: AgentCliInfo[] = [];
   private tmpBase: string | null = null;
   private disposed = false;
@@ -131,12 +147,39 @@ export class AgentRunner {
       ...options
     };
     this.adapters = options.adapters ?? BUILTIN_ADAPTERS;
+    this.localBackend = options.local
+      ? new LocalModelBackend({
+          port: options.port,
+          host: options.host,
+          tokenFile: options.tokenFile,
+          authToken: options.authToken,
+          env: options.env,
+          ...(options.local === true ? {} : options.local)
+        })
+      : null;
+  }
+
+  /** Spawned CLIs need the MCP entry and a POSIX platform (Windows .cmd shims are unsupported). */
+  private cliBlockedReason(): string | null {
+    if ((this.opts.platform ?? process.platform) === "win32") return "In-window agent chat with CLIs isn't supported on Windows yet.";
+    if (!this.opts.mcpEntry || !existsSync(this.opts.mcpEntry)) {
+      return this.opts.disabledReason ?? "The HelmStack MCP server entry was not found.";
+    }
+    return null;
   }
 
   // ── status ────────────────────────────────────────────────────────────────
 
   async refresh(): Promise<AgentRunnerStatus> {
-    this.clis = await Promise.all(this.adapters.map((a) => detectCli(a, { env: this.opts.env, ...this.opts.detect })));
+    const blocked = this.localBackend ? this.cliBlockedReason() : null;
+    const [clis, local] = await Promise.all([
+      Promise.all(this.adapters.map((a) => detectCli(a, { env: this.opts.env, ...this.opts.detect }))),
+      this.localBackend ? this.localBackend.refresh().catch(() => [] as AgentCliInfo[]) : Promise.resolve([] as AgentCliInfo[])
+    ]);
+    this.clis = [
+      ...clis.map((c) => (blocked ? { ...c, available: false, reason: blocked } : c)),
+      ...local
+    ];
     return this.getStatus();
   }
 
@@ -144,7 +187,7 @@ export class AgentRunner {
     // Windows installs agent CLIs as .cmd shims, which Node can no longer spawn without a
     // shell; resolving them safely is not done yet, so say so instead of half-working.
     const unsupportedPlatform = (this.opts.platform ?? process.platform) === "win32";
-    const enabled = !unsupportedPlatform && !!this.opts.mcpEntry && existsSync(this.opts.mcpEntry);
+    const enabled = (!unsupportedPlatform && !!this.opts.mcpEntry && existsSync(this.opts.mcpEntry)) || this.localBackend !== null;
     const reason = unsupportedPlatform
       ? "In-window agent chat isn't supported on Windows yet."
       : (this.opts.disabledReason ?? "The HelmStack MCP server entry was not found.");
@@ -173,6 +216,10 @@ export class AgentRunner {
     }
     if (typeof input.tabId !== "string" || !input.tabId) throw new Error("A tab is required.");
     if (this.opts.isTabAlive && !this.opts.isTabAlive(input.tabId)) throw new Error("That tab no longer exists.");
+    const localInfo = this.clis.find((c) => c.id === input.cliId && c.kind === "local");
+    if (localInfo) return this.startLocalConversation(input, localInfo);
+    const blocked = this.cliBlockedReason();
+    if (blocked) throw new Error(blocked);
     const adapter = this.adapters.find((a) => a.id === input.cliId);
     const info = this.clis.find((c) => c.id === input.cliId);
     if (!adapter || !info) throw new Error("Unknown agent CLI.");
@@ -205,6 +252,7 @@ export class AgentRunner {
         unconfined,
         adapter,
         binary: info.path,
+        local: null,
         dir,
         prepared,
         seq: 0,
@@ -220,6 +268,44 @@ export class AgentRunner {
     }
   }
 
+  private startLocalConversation(input: StartAgentConversationInput, info: AgentCliInfo): AgentConversationSummary {
+    if (!this.localBackend) throw new Error("Local models are not enabled.");
+    if (!info.available) throw new Error(`${info.label} is not available: ${info.reason ?? "unknown reason"}`);
+    const option = info.models.find((m) => m.id === input.model);
+    if (typeof input.model !== "string" || input.model === "" || !option) throw new Error("Choose one of the detected local models.");
+    if (option.disabledReason) throw new Error(`${input.model} can't be used: ${option.disabledReason}.`);
+    const session = this.localBackend.createSession({
+      provider: info.id as "ollama" | "openai-compat",
+      model: input.model,
+      tabId: input.tabId
+    });
+    const id = randomUUID();
+    const conv: Conversation = {
+      id,
+      tabId: input.tabId,
+      cliId: input.cliId,
+      model: input.model,
+      workingDirectory: this.opts.defaultWorkingDirectory,
+      title: "New chat",
+      createdAt: Date.now(),
+      turnCount: 0,
+      sessionId: randomUUID(),
+      sessionStarted: false,
+      unconfined: false,
+      adapter: null,
+      binary: "",
+      local: { session, history: [] },
+      dir: "",
+      prepared: null,
+      seq: 0,
+      events: [],
+      turn: null,
+      closed: false
+    };
+    this.conversations.set(id, conv);
+    return this.summary(conv);
+  }
+
   async sendMessage(conversationId: string, text: string): Promise<{ turnId: string }> {
     const conv = this.require(conversationId);
     if (typeof text !== "string" || text.trim() === "") throw new Error("Message is empty.");
@@ -228,7 +314,18 @@ export class AgentRunner {
     if (this.opts.isTabAlive && !this.opts.isTabAlive(conv.tabId)) throw new Error("That tab no longer exists.");
 
     const turnId = randomUUID();
-    const built = conv.adapter.buildTurn({
+    if (conv.local) {
+      if (conv.title === "New chat") conv.title = cleanText(text.replace(/\s+/g, " ").trim(), 60) || "New chat";
+      conv.turnCount += 1;
+      this.emit(conv, { type: "user_message", turnId, text });
+      const turn: Turn = { id: turnId, child: null, abort: new AbortController(), stopRequested: false, timedOut: false, capped: false, killTimer: null, timeoutTimer: null };
+      conv.turn = turn;
+      this.emit(conv, { type: "turn_started", turnId });
+      void this.runLocal(conv, turn, text);
+      return { turnId };
+    }
+    const adapter = conv.adapter as AgentCliAdapter;
+    const built = adapter.buildTurn({
       prepared: conv.prepared,
       model: conv.model,
       sessionId: conv.sessionId,
@@ -259,7 +356,7 @@ export class AgentRunner {
       this.emit(conv, { type: "turn_finished", turnId, outcome: "error", error: "The CLI could not be started." });
       return { turnId };
     }
-    const turn: Turn = { id: turnId, child, stopRequested: false, timedOut: false, capped: false, killTimer: null, timeoutTimer: null };
+    const turn: Turn = { id: turnId, child, abort: null, stopRequested: false, timedOut: false, capped: false, killTimer: null, timeoutTimer: null };
     conv.turn = turn;
     this.emit(conv, { type: "turn_started", turnId });
     this.attach(conv, turn, built.stdin);
@@ -295,7 +392,8 @@ export class AgentRunner {
       conv.turn.stopRequested = true;
       this.killTurn(conv.turn, true);
     }
-    rmSync(conv.dir, { recursive: true, force: true });
+    conv.local?.session.close();
+    if (conv.dir) rmSync(conv.dir, { recursive: true, force: true });
   }
 
   /** The tab went away: end its conversations. */
@@ -315,7 +413,8 @@ export class AgentRunner {
   /** Synchronous last-resort cleanup for `process.on("exit")`. */
   killAllSync(): void {
     for (const conv of this.conversations.values()) {
-      const pid = conv.turn?.child.pid;
+      conv.turn?.abort?.abort();
+      const pid = conv.turn?.child?.pid;
       if (pid) killGroup(pid, "SIGKILL");
     }
     this.removeTmpBase();
@@ -418,12 +517,11 @@ export class AgentRunner {
     }
   }
 
-  private attach(conv: Conversation, turn: Turn, stdin: string): void {
-    const { child } = turn;
-    const parser = conv.adapter.createParser();
-    let buffer = "";
-    let stderrTail = "";
-    let bytes = 0;
+  /**
+   * Turns neutral adapter events into chat events and closes the turn exactly once.
+   * Shared by CLI turns (parsed stdout) and local-model turns (the loop's events).
+   */
+  private createSink(conv: Conversation, turn: Turn) {
     let textChars = 0;
     let segment = "";
     let finished = false;
@@ -481,6 +579,75 @@ export class AgentRunner {
       }
     };
 
+    /** `tail` is any last events (a CLI parser's end-of-stream output). */
+    const conclude = (tail: AdapterEvent[] = []) => {
+      if (finished) return;
+      finished = true;
+      if (turn.timeoutTimer) clearTimeout(turn.timeoutTimer);
+      if (turn.killTimer) clearTimeout(turn.killTimer);
+      handle(tail);
+      flushSegment();
+      let outcome: AgentTurnOutcome;
+      let error: string | undefined;
+      const r = result as { ok: boolean; error?: string } | null;
+      if (turn.stopRequested) {
+        outcome = "stopped";
+      } else if (turn.timedOut) {
+        outcome = "error";
+        error = "The agent took too long and was stopped.";
+      } else if (turn.capped) {
+        outcome = "error";
+        error = "The agent produced too much output and was stopped.";
+      } else if (r && r.ok) {
+        outcome = "completed";
+      } else {
+        outcome = "error";
+        error = r?.error ?? "The agent process ended unexpectedly.";
+      }
+      if (conv.turn === turn) conv.turn = null;
+      this.emit(conv, { type: "turn_finished", turnId: turn.id, outcome, ...(error ? { error } : {}) });
+    };
+    return { handle, conclude, isFinished: () => finished };
+  }
+
+  /** One local-model turn: the loop's events flow through the same sink as CLI turns. */
+  private async runLocal(conv: Conversation, turn: Turn, text: string): Promise<void> {
+    const local = conv.local as NonNullable<Conversation["local"]>;
+    const sink = this.createSink(conv, turn);
+    const abort = turn.abort as AbortController;
+    turn.timeoutTimer = setTimeout(() => {
+      turn.timedOut = true;
+      abort.abort();
+    }, this.opts.localTurnTimeoutMs ?? 5 * 60_000);
+    turn.timeoutTimer.unref?.();
+    try {
+      const result = await local.session.runTurn({
+        history: local.history.slice(-MAX_HISTORY_MESSAGES),
+        text,
+        signal: abort.signal,
+        emit: sink.handle
+      });
+      local.history.push({ role: "user", content: text.slice(0, 4000) });
+      if (result.reply.trim()) local.history.push({ role: "assistant", content: result.reply.slice(0, 4000) });
+      if (local.history.length > 2 * MAX_HISTORY_MESSAGES) local.history.splice(0, local.history.length - 2 * MAX_HISTORY_MESSAGES);
+      sink.handle([{ kind: "result", ok: result.ok, error: cleanText(result.error ?? "", 300) || undefined }]);
+    } catch {
+      sink.handle([{ kind: "result", ok: false, error: "The local model failed unexpectedly." }]);
+    }
+    sink.conclude();
+  }
+
+  private attach(conv: Conversation, turn: Turn, stdin: string): void {
+    const child = turn.child as ChildProcess;
+    const adapter = conv.adapter as AgentCliAdapter;
+    const parser = adapter.createParser();
+    let buffer = "";
+    let stderrTail = "";
+    let bytes = 0;
+    let finished = false;
+    const sink = this.createSink(conv, turn);
+    const handle = sink.handle;
+
     child.stdout?.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
       if (bytes > this.opts.maxOutputBytes && !turn.capped) {
@@ -514,35 +681,16 @@ export class AgentRunner {
     }, this.opts.turnTimeoutMs);
     turn.timeoutTimer.unref?.();
 
+    let result: { ok: boolean; error?: string } | null = null;
     const finish = (code: number | null) => {
       if (finished) return;
       finished = true;
-      if (turn.timeoutTimer) clearTimeout(turn.timeoutTimer);
-      if (turn.killTimer) clearTimeout(turn.killTimer);
       // Reap any grandchildren (e.g. the MCP server) left in the process group.
       if (child.pid) killGroup(child.pid, "SIGKILL");
       if (buffer.trim() && !turn.capped) handle(parser.push(buffer.trim()));
-      handle(parser.end({ code, stderr: stderrTail }));
-      flushSegment();
-      let outcome: AgentTurnOutcome;
-      let error: string | undefined;
-      const r = result as { ok: boolean; error?: string } | null;
-      if (turn.stopRequested) {
-        outcome = "stopped";
-      } else if (turn.timedOut) {
-        outcome = "error";
-        error = "The agent took too long and was stopped.";
-      } else if (turn.capped) {
-        outcome = "error";
-        error = "The agent produced too much output and was stopped.";
-      } else if (r && r.ok) {
-        outcome = "completed";
-      } else {
-        outcome = "error";
-        error = r?.error ?? "The agent process ended unexpectedly.";
-      }
-      if (conv.turn === turn) conv.turn = null;
-      this.emit(conv, { type: "turn_finished", turnId: turn.id, outcome, ...(error ? { error } : {}) });
+      const tail = parser.end({ code, stderr: stderrTail });
+      if (result) tail.unshift({ kind: "result", ok: result.ok, error: result.error });
+      sink.conclude(tail);
     };
     child.on("error", () => {
       result = { ok: false, error: "The CLI could not be started." };
@@ -553,6 +701,10 @@ export class AgentRunner {
 
   /** SIGTERM the process group, SIGKILL after the grace period. */
   private killTurn(turn: Turn, immediate = false): void {
+    if (!turn.child) {
+      turn.abort?.abort();
+      return;
+    }
     const pid = turn.child.pid;
     if (!pid) {
       turn.child.kill("SIGKILL");

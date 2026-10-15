@@ -6,8 +6,18 @@
  */
 import type { TabId } from "./browser.js";
 
-/** Known agent CLIs. Adapters are allowlisted; unknown binaries are never run. */
-export type AgentCliId = "claude" | "gemini";
+/**
+ * Known agent providers. CLI adapters are allowlisted; unknown binaries are never run.
+ * "ollama" and "openai-compat" (LM Studio, llama.cpp) are loopback-only local model
+ * servers: they are HTTP model APIs, not CLIs, and HelmStack runs the agent loop.
+ */
+export type AgentCliId = "claude" | "gemini" | "ollama" | "openai-compat";
+
+/** Whether a provider is a spawned agent CLI or a local model server. Absent means "cli". */
+export type AgentProviderKind = "cli" | "local";
+
+/** Detection state of a local model server. */
+export type LocalRuntimeState = "not_installed" | "not_running" | "no_models" | "running";
 
 export type AgentModelSource =
   /** A stable alias the CLI itself resolves (e.g. "sonnet"). */
@@ -15,17 +25,29 @@ export type AgentModelSource =
   /** Read from the CLI's own settings file as the configured default. */
   | "configured"
   /** Typed by the user; validated against a strict character set. */
-  | "custom";
+  | "custom"
+  /** Reported by a running local model server. */
+  | "local";
 
 export type AgentModelOption = {
   /** Value passed to the CLI's `--model` flag. Empty string = the CLI's own default. */
   id: string;
   label: string;
   source: AgentModelSource;
+  /** Local models only: why this model can't be selected (e.g. "No tool-calling support"). */
+  disabledReason?: string;
+  /** Local models only: e.g. "3.2B · 2.0 GB". */
+  sizeLabel?: string;
+  /** Local models only: whether the server reports tool-calling support. */
+  toolSupport?: "yes" | "no" | "unknown";
 };
 
 export type AgentCliInfo = {
   id: AgentCliId;
+  /** "local" for model servers (Ollama…); absent or "cli" for agent CLIs. */
+  kind?: AgentProviderKind;
+  /** Local providers only: detection state, for a precise empty state. */
+  localState?: LocalRuntimeState;
   label: string;
   /** Absolute path of the binary found on PATH; null when not installed. */
   path: string | null;

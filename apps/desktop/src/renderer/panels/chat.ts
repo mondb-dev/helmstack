@@ -326,9 +326,26 @@ export function mountChat(options: ChatOptions): ChatController {
       const tags: string[] = [];
       if (!cli.available) tags.push(cli.reason ?? "Unavailable");
       if (cli.experimental) tags.push("Experimental");
-      group.label = tags.length ? `${cli.label} — ${tags.join(", ")}` : cli.label;
+      const isLocal = cli.kind === "local";
+      const title = isLocal ? `Local models · ${cli.label}` : cli.label;
+      group.label = tags.length ? `${title} — ${tags.join(", ")}` : title;
       group.dataset.cli = cli.id;
-      if (!cli.available) {
+      if (isLocal && cli.models.length > 0) {
+        // Local servers list what they serve; models that can't drive the browser stay visible but disabled.
+        for (const model of cli.models) {
+          const option = document.createElement("option");
+          option.value = optionValue(cli.id, model.id);
+          const notes: string[] = [];
+          if (model.sizeLabel) notes.push(model.sizeLabel);
+          if (model.toolSupport === "unknown") notes.push("tool support unknown");
+          if (model.disabledReason) {
+            option.disabled = true;
+            notes.push(model.disabledReason);
+          }
+          option.textContent = notes.length ? `${model.label} (${notes.join(" · ")})` : model.label;
+          group.append(option);
+        }
+      } else if (!cli.available) {
         group.disabled = true;
         const only = document.createElement("option");
         only.disabled = true;
@@ -367,6 +384,8 @@ export function mountChat(options: ChatOptions): ChatController {
       modelNote.textContent = unconfinedSupported
         ? ""
         : `${cli.label} can't be limited to browser tools, so HelmStack won't start it from here yet. Choose another agent.`;
+    } else if (cli?.kind === "local" && cli.models.find((m) => m.id === parseValue(selected)?.model)?.toolSupport === "unknown") {
+      modelNote.textContent = "This server doesn't say whether the model supports tool calling. It may not control the page reliably.";
     } else {
       modelNote.textContent = "";
     }
@@ -430,11 +449,21 @@ export function mountChat(options: ChatOptions): ChatController {
       return;
     }
     if (hasThread) return;
+    const localDown = status?.clis.find((c) => c.kind === "local" && c.localState === "not_running");
+    if (availableClis().length === 0 && localDown) {
+      empty.append(
+        buildEmptyState({
+          title: `${localDown.label} is installed but not running`,
+          hint: "Start it, then choose Refresh. You can also install Claude Code or Gemini CLI.",
+        })
+      );
+      return;
+    }
     if (availableClis().length === 0) {
       empty.append(
         buildEmptyState({
           title: "No agent CLI found",
-          hint: "Install Claude Code or Gemini CLI, make sure it's on your PATH, then choose Refresh.",
+          hint: "Install Claude Code or Gemini CLI (on your PATH), or start a local model server such as Ollama or LM Studio, then choose Refresh.",
         })
       );
       return;
