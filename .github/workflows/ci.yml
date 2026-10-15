@@ -57,6 +57,13 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Docs
+        # Generated reference regions are current and relative links resolve.
+        if: runner.os == 'Linux' && matrix.node-version == 22
+        run: |
+          npm run docs:test
+          npm run docs:check
+
       - name: Build packages
         run: npm run build:packages
 

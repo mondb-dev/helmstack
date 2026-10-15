@@ -18,7 +18,10 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:perception": "vitest run",
-    "prepare": "husky"
+    "prepare": "husky",
+    "docs:generate": "node scripts/docs/generate.mjs",
+    "docs:check": "node scripts/docs/generate.mjs --check",
+    "docs:test": "node --test scripts/docs/test/docs.test.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.6.1",

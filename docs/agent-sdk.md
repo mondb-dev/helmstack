@@ -1,768 +1,103 @@
-# HelmStack Agent SDK
+# Agent SDK reference
 
-The `@helmstack/agent-sdk` package provides a TypeScript client for building agents that connect to the HelmStack browser substrate.
+`@helmstack/agent-sdk` is a TypeScript client for the [HTTP API](http-api.md). It runs on Node (it uses `node:http`) and is what the MCP server is built on.
 
-## Installation
+**Prerequisites:** a running desktop app or daemon, and Node 20 or newer. The package is not on npm yet; import it from a clone (`packages/agent-sdk`, after `npm run build:packages`) or from the monorepo workspace as `@helmstack/agent-sdk`.
 
-```bash
-npm install @helmstack/agent-sdk
-```
+## Create a client
 
-**Note:** The SDK is currently part of the HelmStack monorepo and not yet published to npm. To use it in your project:
-
-1. Clone the HelmStack repo
-2. Use npm workspaces or link it locally:
-   ```bash
-   cd /path/to/helmstack
-   npm link packages/agent-sdk
-
-   cd /path/to/your-agent
-   npm link @helmstack/agent-sdk
-   ```
-
-Or reference it directly in your `package.json`:
-```json
-{
-  "dependencies": {
-    "@helmstack/agent-sdk": "file:../helmstack/packages/agent-sdk"
-  }
-}
-```
-
-## Quick Start
-
-```typescript
+```ts
 import { createBrowserClient } from "@helmstack/agent-sdk";
 
-// Connect to the browser (default: 127.0.0.1:7070)
-const browser = createBrowserClient();
-
-// Health check
-const health = await browser.health();
-console.log(`Connected. ${health.tabs} tabs open.`);
-
-// Get active tab
-const tabs = await browser.listTabs();
-const tab = tabs.find(t => t.isActive);
-
-// Navigate
-await browser.navigate(tab.id, "https://example.com");
-
-// Reload (hard reload bypasses the cache) and move through history; each waits for the load
-await browser.reload(tab.id, { ignoreCache: true });
-await browser.goBack(tab.id);
-await browser.goForward(tab.id);
-
-// Get page perception
-const perception = await browser.getPerception(tab.id);
-console.log(`Page: ${perception.result.snapshot.title}`);
-console.log(`Forms: ${perception.result.graph.forms.length}`);
-
-// Execute a command
-await browser.execute(tab.id, {
-  type: "invoke_site_tool",
-  provider: "dom",
-  toolName: "dom.fill.form-1",
-  args: {
-    "field-1": "test@example.com",
-    "field-2": "password123"
-  }
-});
+const browser = createBrowserClient({ port: 7070, agentId: "my-agent" });
+console.log(await browser.health());
 ```
 
-## Configuration
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `host` | `127.0.0.1` | Server host |
+| `port` | `7070` | Server port |
+| `timeout` | `30000` | Request timeout in ms |
+| `authToken` | from the environment | Token to send |
+| `agentId` | none | Sent as `X-Agent-ID`; attributes activity and scopes tab ownership (advisory, see [Security model](security-model.md)) |
 
-```typescript
-import { createBrowserClient } from "@helmstack/agent-sdk";
+When `authToken` is omitted the client uses `HELMSTACK_AUTH_TOKEN`, then reads the file named by `HELMSTACK_TOKEN_FILE`.
 
-const browser = createBrowserClient({
-  host: "127.0.0.1",    // default
-  port: 7070,            // default
-  timeout: 30000,        // default: 30s
-  authToken: process.env.HELMSTACK_AUTH_TOKEN // optional
-});
-```
+## Methods
 
-## Core APIs
+Each method maps to one route in the [HTTP API reference](http-api.md); names mirror the MCP tools.
 
-### Tab Management
-
-```typescript
-// List all tabs
-const tabs = await browser.listTabs();
-
-// Open a new tab
-await browser.openTab("https://example.com");
-
-// Navigate existing tab
-await browser.navigate(tabId, "https://github.com");
-
-// Set viewport size
-await browser.setViewport(tabId, 1280, 720, false);
-```
-
-### Perception
-
-```typescript
-// Get full page perception packet
-const perception = await browser.getPerception(tabId);
-
-// Access the semantic page graph
-const graph = perception.result.graph;
-console.log(`Page kind: ${graph.pageKind}`);
-console.log(`Forms: ${graph.forms.length}`);
-console.log(`Actions: ${graph.actions.length}`);
-console.log(`Headings: ${graph.headings.map(h => h.text)}`);
-
-// Get capability manifests
-const manifests = await browser.listManifests(tabId);
-
-// Get screenshot (base64 PNG)
-const screenshot = await browser.getScreenshot(tabId);
-const base64 = screenshot.data;
-
-// Or get raw Buffer for vision APIs
-const buffer = await browser.getScreenshotBuffer(tabId);
-```
-
-### Execution
-
-```typescript
-// Fill a form
-await browser.execute(tabId, {
-  type: "invoke_site_tool",
-  provider: "dom",
-  toolName: "dom.fill.form-1",
-  args: {
-    "field-1": "value1",
-    "field-2": { kind: "vault", id: "vault.identity.work_email" }
-  }
-});
-
-// Submit a form (pauses for approval)
-await browser.execute(tabId, {
-  type: "invoke_site_tool",
-  provider: "dom",
-  toolName: "dom.submit.form-1",
-  args: {}
-});
-
-// Click an action
-await browser.execute(tabId, {
-  type: "invoke_site_tool",
-  provider: "dom",
-  toolName: "dom.activate.action-123",
-  args: {}
-});
-
-// Low-level commands
-await browser.execute(tabId, {
-  type: "browser_action",
-  action: "click",
-  selector: "#login-button"
-});
-```
-
-### Approvals
-
-Sensitive actions (form submits) require user approval. Handle them with:
-
-```typescript
-// List pending approvals
-const approvals = await browser.listApprovals();
-
-// Approve
-await browser.approveCommand(approvalId);
-
-// Reject
-await browser.rejectCommand(approvalId);
-```
-
-### Human Handoffs
-
-Request user intervention when the agent is blocked:
-
-```typescript
-// Request handoff — reason must be one of: "captcha" | "2fa" | "payment" | "legal"
-await browser.execute(tabId, {
-  type: "await_human",
-  reason: "captcha"
-});
-
-// Wait for user to resolve it (polls SSE stream)
-await browser.waitForHandoffResolved(requestId, 120000);
-
-// Or manually check
-const handoffs = await browser.listHandoffs();
-
-// Resolve
-await browser.resolveHandoff(requestId);
-
-// Cancel
-await browser.cancelHandoff(requestId);
-```
-
-### Accounts & TOTP
-
-```typescript
-// List all accounts
-const accounts = await browser.listAccounts();
-
-// Find accounts for a specific origin
-const matched = await browser.lookupAccounts("https://github.com");
-
-// Create account
-await browser.saveAccount({
-  label: "GitHub",
-  origins: ["https://github.com"],
-  username: "user@example.com",
-  password: "secret",
-  totpSeed: "JBSWY3DPEHPK3PXP"   // base32 TOTP seed (optional)
-});
-
-// Update account
-await browser.updateAccount(accountId, {
-  password: "new-password"
-});
-
-// Delete account
-await browser.deleteAccount(accountId);
-
-// Generate TOTP code
-const totp = await browser.generateTotp(accountId);
-console.log(totp.code);      // "123456"
-console.log(totp.expiresIn); // seconds until code expires (max 30)
-```
-
-### Intent System
-
-```typescript
-// Get current intent from task panel
-const { intent } = await browser.getIntent();
-
-// Set intent (triggers agents listening to the stream)
-await browser.setIntent("go to github.com and check notifications");
-```
-
-### Logging
-
-```typescript
-// Log to HelmStack terminal panel
-await browser.log("Processing login form", "agent");
-await browser.log("Navigation complete", "nav");
-await browser.log("Error occurred", "error");
-```
-
-## Real-Time Events (SSE)
-
-Subscribe to browser events via Server-Sent Events:
-
-```typescript
-const stream = browser.stream({
-  // Tab state changes
-  onTabsChanged: (tabs) => {
-    console.log(`${tabs.length} tabs open`);
-  },
-
-  // Page content updated
-  onPageObserved: (observation) => {
-    console.log("Page changed:", observation.tabId);
-  },
-
-  // Approval needed
-  onApprovalQueued: (approval) => {
-    console.log("Action needs approval:", approval);
-  },
-
-  // Human handoff requested
-  onHandoffRequested: (handoff) => {
-    console.log("Agent needs help:", handoff.reason);
-  },
-
-  // Handoff resolved
-  onHandoffResolved: (data) => {
-    console.log("Handoff resolved:", data.requestId);
-  },
-
-  // Intent changed
-  onIntentChanged: (data) => {
-    console.log("New intent:", data.intent);
-  },
-
-  // Agent logs
-  onAgentLog: (data) => {
-    console.log(`[${data.level}] ${data.message}`);
-  },
-
-  // Stream errors
-  onError: (err) => {
-    console.error("SSE error:", err);
-  }
-});
-
-// Later: disconnect
-stream.close();
-```
-
-The SSE stream automatically reconnects on disconnection.
-
-## Example Agents
-
-### Intent-Driven Agent
-
-```typescript
-import { createBrowserClient } from "@helmstack/agent-sdk";
-
-const browser = createBrowserClient();
-
-async function handleIntent(intent: string, tabId: string) {
-  // Parse intent
-  const urlMatch = intent.match(/https?:\/\/[^\s]+/);
-
-  if (urlMatch) {
-    // Navigate to explicit URL
-    await browser.navigate(tabId, urlMatch[0]);
-  } else {
-    // Search Google
-    const query = encodeURIComponent(intent);
-    await browser.navigate(tabId, `https://www.google.com/search?q=${query}`);
-  }
-
-  // Wait for page load
-  await new Promise(r => setTimeout(r, 2000));
-
-  // Get perception
-  const perception = await browser.getPerception(tabId);
-  const graph = perception.result.graph;
-
-  console.log(`Page: ${perception.result.snapshot.title}`);
-  console.log(`Forms: ${graph.forms.length}`);
-  console.log(`Actions: ${graph.actions.length}`);
-}
-
-// Listen for intents
-browser.stream({
-  onIntentChanged: async (data) => {
-    const tabs = await browser.listTabs();
-    const tab = tabs.find(t => t.isActive);
-    if (tab) {
-      await handleIntent(data.intent, tab.id);
-    }
-  }
-});
-```
-
-### Form-Filling Agent
-
-```typescript
-import { createBrowserClient } from "@helmstack/agent-sdk";
-
-const browser = createBrowserClient();
-
-async function fillLoginForm(tabId: string, origin: string) {
-  // Get perception
-  const perception = await browser.getPerception(tabId);
-  const forms = perception.result.graph.forms;
-
-  // Find login form
-  const loginForm = forms.find(f =>
-    f.purpose?.includes("login") ||
-    f.purpose?.includes("sign-in")
-  );
-
-  if (!loginForm) {
-    console.log("No login form found");
-    return;
-  }
-
-  // Lookup accounts for this origin
-  const accounts = await browser.lookupAccounts(origin);
-  if (accounts.length === 0) {
-    console.log("No saved accounts for", origin);
-    return;
-  }
-
-  const account = accounts[0];
-
-  // Fill form
-  const usernameField = loginForm.fields.find(f =>
-    f.fieldType === "email" || f.label?.includes("username")
-  );
-  const passwordField = loginForm.fields.find(f =>
-    f.fieldType === "password"
-  );
-
-  if (usernameField && passwordField) {
-    await browser.execute(tabId, {
-      type: "invoke_site_tool",
-      provider: "dom",
-      toolName: `dom.fill.${loginForm.id}`,
-      args: {
-        [usernameField.id]: account.username,
-        [passwordField.id]: account.password
-      }
-    });
-
-    console.log("Form filled, ready to submit");
-  }
-}
-```
-
-### TOTP 2FA Agent
-
-```typescript
-async function handle2FA(tabId: string) {
-  const perception = await browser.getPerception(tabId);
-  const forms = perception.result.graph.forms;
-
-  // Find TOTP input
-  const totpForm = forms.find(f =>
-    f.fields.some(field =>
-      field.label?.toLowerCase().includes("code") ||
-      field.label?.toLowerCase().includes("2fa") ||
-      field.label?.toLowerCase().includes("verify")
-    )
-  );
-
-  if (!totpForm) return;
-
-  // Get current origin
-  const origin = perception.result.snapshot.url;
-  const accounts = await browser.lookupAccounts(origin);
-
-  if (accounts.length === 0) return;
-
-  // Generate TOTP
-  const totp = await browser.generateTotp(accounts[0].id);
-
-  // Fill code
-  const codeField = totpForm.fields[0];
-  await browser.execute(tabId, {
-    type: "invoke_site_tool",
-    provider: "dom",
-    toolName: `dom.fill.${totpForm.id}`,
-    args: {
-      [codeField.id]: totp.code
-    }
-  });
-
-  console.log("TOTP code filled:", totp.code);
-}
-```
-
-## Dev Tooling for Web Teams
-
-All dev-team tools are available on `BrowserClient` with no extra configuration.
-
-### Viewport Suite
-
-```typescript
-const suite = await browser.captureViewportSuite(tabId);
-// Screenshots at mobile / tablet / desktop / 4K simultaneously
-// Optionally includes pixel diffs between adjacent breakpoints
-for (const entry of suite.captures) {
-  console.log(`${entry.preset}: ${entry.screenshot.width}×${entry.screenshot.height}`);
-}
-```
-
-### Performance Metrics
-
-```typescript
-const perf = await browser.getPerformanceMetrics(tabId);
-console.log(`LCP: ${perf.lcp}ms  CLS: ${perf.cls}  TBT: ${perf.tbt}ms`);
-console.log(`JS heap: ${(perf.jsHeapUsed / 1e6).toFixed(1)} MB`);
-```
-
-### SEO Audit
-
-```typescript
-const seo = await browser.seoAudit(tabId);           // add { checkLinks: true, maxLinks: 25 } to opt into a link check
-console.log(`SEO ${seo.score}/100, pass=${seo.pass}`, seo.counts);   // { error, warning, info }
-for (const issue of seo.issues.filter((i) => i.severity !== "info")) {
-  console.log(`[${issue.severity}] ${issue.id}: ${issue.message}`);
-  console.log(`  fix: ${issue.fix}`);
-}
-```
-
-Covers metadata (title, description, canonical, `lang`, viewport, charset, hreflang), indexability
-(meta robots/googlebot, `X-Robots-Tag`, document status, `robots.txt` for `*` and Googlebot), content
-(single h1, heading skips, alt text, generic link text, no-href/`javascript:` links), Open Graph / Twitter
-cards and JSON-LD (parse errors, `@type`s, required properties for Article, Product, Organization,
-BreadcrumbList, FAQPage, WebSite). Route: `GET /api/tabs/:id/seo?checkLinks=&maxLinks=` (max 100).
-
-- **Score:** `max(0, 100 - 12 x errors - 4 x warnings)`; info issues do not deduct and every issue counts
-  once, so the score is monotonic. `pass` means no error-severity issues.
-- **Network:** no requests of its own. `/robots.txt` (and, only with `checkLinks`, up to `maxLinks`
-  same-origin links; concurrency 4, 5s timeout) are fetched through the page. Redirects report the final URL
-  only; intermediate hops are not observable from page `fetch`.
-- **Headers:** `X-Robots-Tag` and the status come from the tab's network log. Only `x-robots-tag`,
-  `content-type`, `link` and `location` are copied into the report; cookies and auth headers never are.
-- **Not checkable offline:** reciprocal hreflang links (listed under `unsupported`). Checks that could not
-  run (e.g. robots.txt unreachable) are listed under `skipped` and are info, not errors.
-- **Health report:** `getHealthReport(tabId)` includes an `seo` category (equal weight in `overallScore`,
-  fails the gate on any SEO error). Pass `{ includeSeo: false }` (`?seo=false`) to get the previous five categories.
-
-### Accessibility Audit
-
-```typescript
-const report = await browser.auditAccessibility(tabId);
-for (const v of report.violations) {
-  console.log(`[${v.impact}] ${v.rule}: ${v.description}`);
-  console.log(`  selector: ${v.selector}`);
-}
-```
-
-### Element Style Inspector
-
-```typescript
-const styles = await browser.inspectElementStyles(tabId, ".primary-button");
-const button = styles.elements[0];
-
-console.log(button.bounds);
-console.log(button.box.padding);
-console.log(button.computed["background-color"]);
-console.log(button.contrast?.ratio);
-console.log(button.issues);
-
-await browser.assertElementStyles(tabId, ".primary-button", [
-  { property: "background-color", equals: "#2563eb" },
-  { property: "border-radius", min: 6 },
-  { property: "font-weight", min: 600 }
-]);
-```
-
-### Component Tree
-
-```typescript
-const ct = await browser.captureComponentTree(tabId);
-// Detects React 16-18, Vue 2/3, Svelte
-console.log(`Framework: ${ct.framework}, ${ct.nodeCount} components`);
-```
-
-### Visual Snapshot Diff
-
-```typescript
-await browser.captureNamedScreenshot(tabId, "before");
-// … make changes …
-await browser.captureNamedScreenshot(tabId, "after");
-const diff = await browser.diffScreenshots("before", "after");
-console.log(`${diff.diffPixelCount} changed pixels`);
-console.log(`${diff.diffRegions.length} change regions`);
-// diff.diffImageData — blended overlay (40% original + 60% red tint)
-```
-
-### Perception Diff ("What Broke?")
-
-```typescript
-await browser.savePerceptionSnapshot(tabId, "pre-deploy");
-// … deploy your changes …
-await browser.savePerceptionSnapshot(tabId, "post-deploy");
-const diff = await browser.diffPerception("pre-deploy", "post-deploy");
-console.log(diff.summary);
-for (const change of diff.changes) {
-  console.log(`[${change.kind}] ${change.description}`);
-}
-```
-
-### Three.js Scene Inspector
-
-```typescript
-const report = await browser.captureThreeJsScene(tabId);
-if (report.detected) {
-  console.log(`Draw calls: ${report.renderer?.drawCalls}`);
-  console.log(`FPS: ${report.fps?.fps}`);
-  // Feed report to an LLM for AI code feedback
-}
-```
-
-### Natural Language Assertions
-
-```typescript
-// Throws AssertionError on failure (default):
-await browser.assert(tabId, "the checkout button is visible");
-await browser.assert(tabId, "there are no error messages");
-await browser.assert(tabId, "the cart shows 3 items");
-await browser.assert(tabId, "the submit button is disabled");
-
-// Get raw result without throwing:
-const r = await browser.assert(tabId, "the total is correct", { throw: false });
-if (!r.pass) {
-  console.log(`FAIL (${r.confidence}): ${r.explanation}`);
-  // r.matched — page items that decided the verdict, e.g. 'button "Export" (disabled)'
-  // r.unsupported — true when the assertion is outside the grammar below
-  // r.evidence — compact page-graph bundle for LLM forwarding
-}
-```
-
-The evaluator is deterministic (no LLM). It understands these forms; quoted text
-matches case-insensitively with whitespace normalised:
-
-| Form | Examples |
+| Group | Methods |
 | --- | --- |
-| Existence / counts | `the page has a heading`, `there is a "Sign in" button`, `exactly 2 forms`, `at least 3 links`, `no error messages`, `a heading containing "Recent"` |
-| Visibility | `the Save button is visible`, `"Payment failed" is not shown`, `a modal is open` |
-| State | `the Export button is disabled`, `the email field is required`, `the bio field is optional`, `the name field is empty` / `is filled in` |
-| Element text | `the main heading is "Dashboard"`, `the error says "Invalid password"` |
-| Scoped to a form | `the login form has 2 fields`, `the form has a required password field` |
-| Page text | `the page shows "Welcome back"`, `the page does not contain "Error"` |
-| Title / URL | `the title contains "Acme"`, `the URL ends with /login`, `the user is on /dashboard` |
+| Tabs | `health`, `listTabs`, `openTab`, `navigate`, `reload`, `goBack`, `goForward`, `setViewport` |
+| Perception | `getPerception`, `listManifests`, `savePerceptionSnapshot`, `diffPerception`, `listPerceptionSnapshots`, `deletePerceptionSnapshot` |
+| Screenshots | `getScreenshot`, `getScreenshotBuffer`, `captureNamedScreenshot`, `diffScreenshots`, `mapRegionsToElements`, `listScreenshots`, `deleteScreenshot`, `captureViewportSuite` |
+| Audits | `auditAccessibility`, `seoAudit`, `auditFocusOrder`, `detectLayoutIssues`, `getPerformanceMetrics`, `getHealthReport`, `captureCssCoverage`, `captureJsCoverage`, `captureTrace`, `captureMutationTimeline`, `getMediaState` |
+| Styles and components | `inspectElementStyles`, `assertElementStyles`, `extractDesignTokens`, `captureComponentTree`, `captureComponentSources`, `detectFramework`, `captureThreeJsScene` |
+| Assertions | `assert`, `watchAssertion`, `listAssertionWatches`, `removeAssertionWatch` |
+| Environment | `setResourceBudget`, `setLocationOverride`, `setMediaEmulation`, `enableNetworkMock`, `disableNetworkMock`, `getNetworkMockRules` (and the matching `get`/`clear` methods) |
+| Data | `getLogs`, `clearLogs`, `getHar`, `captureStorage`, `getStorage`, `setStorage`, `clearStorage`, `getCookies`, `setCookie`, `deleteCookie`, `clearCookies`, `listDownloads`, `setFileInputFiles` |
+| Recording and patterns | `startRecording`, `stopRecording`, `getRecording`, `getSitePatterns`, `setSitePatterns`, `addSitePatterns`, `clearSitePatterns` |
+| Human in the loop | `pickElement`, `getLatestPick`, `listPicks`, `listApprovals`, `approveCommand`, `rejectCommand`, `listHandoffs`, `resolveHandoff`, `cancelHandoff`, `waitForHandoffResolved` |
+| Accounts (desktop) | `listAccounts`, `saveAccount`, `updateAccount`, `deleteAccount`, `lookupAccounts`, `generateTotp` |
+| Misc | `execute` (send a `BrowserOutputCommand`), `getIntent`, `setIntent`, `log`, `stream` |
 
-**Error / warning / success messages** are classified by how the page marks them,
-not by substring matching: `role=alert|alertdialog`, `aria-live`, invalid fields
-pointing at their message (`aria-invalid` + `aria-errormessage`/`aria-describedby`,
-`:user-invalid`), `role=status` for success, class names only as weak hints, and
-whole-word phrases from a vetted list. Evidence that is weak or conflicting yields
-an `unknown` tone, which counts as neither an error nor a success message (the
-result's explanation says how many messages were left unclassified). Field
-emptiness uses a boolean `filled` flag; field values are never captured. On an
-observation without it the assertion fails with low confidence and a hint.
-Assertions and watches always evaluate a freshly pulled observation, so an
-assertion right after a page change sees the new state.
-| Page kind / a11y | `this is a login page`, `all buttons have accessible names` |
+The class is the authority; see `packages/agent-sdk/src/index.ts` for signatures and the report types it returns.
 
-- **Elements:** heading (h1–h6, header), button (submit, cta), link, field (input, textbox, textarea, checkbox, dropdown), form, alert / error / warning / message / toast, dialog / modal / popup, image, video, navigation. Plurals and synonyms such as "sign in" ↔ "login" are normalised.
-- **Quantifiers:** `a`/`an`/`any`, a bare number or `one`…`twenty` (exact), `exactly`, `at least`, `at most`, `more than`, `fewer than`, `no`/`none`, `multiple`. Negation: `no X`, `does not show X`, `X is not visible`. Clauses joined with `and` must all hold.
-- **Limits:** only text the page graph captures is searched: title, headings, button/link labels, field labels, alerts. Body copy is not. Hidden elements are not captured, so "visible" means "present". Heading levels are not distinguished (`h1` means the top heading).
-- **Unsupported assertions** (e.g. "the layout feels balanced") return `pass: false`, `unsupported: true` and a list of supported forms, so `assert()` throws and watches report them as failing rather than passing.
+## Errors
 
-### Storage Inspector
+A non-2xx response throws `HelmstackHttpError` with `status`, `body` and `code` (the JSON body's `code`, for example `requires_human` or `unsupported_on_backend`). `getLatestPick` returns `null` when nothing is picked instead of throwing.
 
-```typescript
-// Full snapshot
-const snap = await browser.captureStorage(tabId);
-console.log(`${snap.localStorage.length} localStorage keys`);
-console.log(`${snap.cookies.length} cookies`);
-console.log(`${snap.indexedDb.length} IndexedDB databases`);
+## Events
 
-// Seed test state
-await browser.setStorage(tabId, "local", { "auth-token": "test-jwt", "user-id": "42" });
-await browser.setCookie(tabId, { name: "session_id", value: "test-sess", httpOnly: true });
-
-// Read & clean up
-const entries = await browser.getStorage(tabId, "local", "auth-token");
-await browser.clearStorage(tabId, "session");
-await browser.clearCookies(tabId);
+```ts
+const handle = browser.stream({
+  onApprovalQueued: (a) => console.log("needs a human:", a),
+  onApprovalResolved: (r) => console.log(r.outcome),
+  onElementPicked: (pick) => console.log(pick),
+  onError: (e) => console.error(e)
+});
+// later
+handle.close();
 ```
 
-See [`docs/dev-team-features.md`](dev-team-features.md) for the complete reference, request/response shapes, and more examples.
+Handlers exist for tabs changed, page observed, approval queued and resolved, handoff requested and resolved, intent changed, agent log, assertion changed and element picked. The stream reconnects after 2 seconds when it drops.
 
-## Lite toolset (small and cheap models)
+## Example
 
-The full MCP surface is about 80 tools (89 with the agent-substrate profile), and a perception graph is tens of thousands of tokens. That is too much for a local 3-8B model or a Haiku-class model. The lite toolset puts a deterministic layer in front of HelmStack: the layer does the heavy lifting and the model only picks a verb and a small number.
+Tested against the daemon:
 
-```bash
-HELMSTACK_TOOLSET=lite node packages/mcp-server/dist/index.js     # or: ... --toolset lite
+```ts
+const [tab] = await browser.listTabs();
+await browser.navigate(tab.id, "http://127.0.0.1:4177/contact-form.html");
+const report = await browser.auditAccessibility(tab.id);
+console.log(report.score, report.violationCounts);
 ```
 
-`HELMSTACK_TOOLSET=lite|full` (default `full`) chooses which tools exist. It is separate from `HELMSTACK_PROFILE`, which only gates opt-in surfaces of the full toolset. In lite mode none of the `browser_*` tools are registered.
+## Natural language assertions
 
-| Tool | Parameters | What it does |
-|------|------------|--------------|
-| `look` | `all?` | Numbered view of the current page (messages, fields, buttons, links) |
-| `click` | `n` | Click item `n` (toggles checkboxes) |
-| `type` | `n`, `text`, `submit?` | Type into text field `n`, optionally submit its form |
-| `select` | `n`, `option` | Choose a dropdown option (on a miss it lists the options) |
-| `go` | `url` | Open a URL in the current tab |
-| `back` / `forward` / `reload` | none | History and reload |
-| `scroll` | `direction` | `up` or `down` by one screen |
-| `tabs` | `n?` | List tabs, or switch to tab `n` |
-| `audit` | `kind` | `accessibility`, `seo`, `layout`, `performance` or `health` digest |
-| `details` | `n` | Expand item `n` of the last audit |
-| `viewport` | `size` | `mobile`, `tablet`, `desktop` or `reset` |
-| `screenshot` | none | Saves the PNG, returns its path and a one-line description |
+`assert(tabId, "…")` (HTTP `POST /api/tabs/:id/assert`, MCP `browser_assert`) evaluates a sentence against the page's perception graph. There is no model call: the sentence is normalized and matched against a fixed grammar. Anything outside it returns `pass: false` with an "Unsupported assertion" explanation, so an unsupported sentence never passes.
 
-Every tool returns plain text. Success is one `OK: ...` line followed by the new compact page view when the page changed (`Page unchanged ...` otherwise). Failure is `ERROR: <what happened>. NEXT: <exact call>`. Actions that need the user return `NEEDS APPROVAL: <summary>. The user must approve in the HelmStack window; then call look.` There is deliberately no lite approve tool.
+Supported forms:
 
-```text
-Page: Contact HelmStack (http://127.0.0.1:4177/contact-form.html) · view 3
-Headings: Contact HelmStack > Send us a message
-Messages: error "Please enter a valid email address."
-[1] textbox "Full name" (required, filled)
-[2] textbox "Work email" (required, invalid, filled)
-[3] checkbox "I agree to be contacted" (required, unchecked)
-[4] button "Send message"
-… 12 more links (look all)
-```
+| Kind | Examples |
+| --- | --- |
+| Existence and counts | "the page has a heading", "exactly 2 forms", "at least 3 links", "there are no error messages", "there is a \"Sign in\" button" |
+| Visibility | "the Save button is visible", "\"Payment failed\" is not shown" |
+| State | "the Export button is disabled", "the email field is required" |
+| Element text | "the main heading is \"Dashboard\"", "the error says \"Invalid\"" |
+| Scoped | "the login form has 2 fields" |
+| Page text | "the page shows \"Welcome back\"", "does not contain \"Error\"" |
+| Title and URL | "the title contains \"Acme\"", "the URL ends with /login" |
+| Page kind | "this is a login page" |
+| Accessible names | "all buttons have accessible names" |
 
-- The view is capped (default 2,400 characters, about 600 tokens; `HELMSTACK_LITE_MAX_CHARS`, 400-20000). Priority is messages, form fields, buttons, then links, and the footer says what was left out. Field values are never shown, only `empty`/`filled`.
-- Numbers belong to the latest view of a tab. Every `look` replaces them. If the page navigated or the element is gone, the number is rejected with `ERROR: That element number is from an older view. NEXT: look` instead of clicking something else.
-- Audit digests are severity-first, five items by default, one line each, with a counts line (`3 errors, 5 warnings; score 72`) and `Say details N for more`.
+The result has `pass`, `confidence`, an `explanation`, the `evidence` it used and the `matched` items. `watchAssertion` registers the same sentence as a standing watch; changes arrive as `assertion_changed` events.
 
-The pieces live in `@helmstack/agent-sdk` (also importable as `@helmstack/agent-sdk/lite`; no extra dependencies, no model, no network) so an in-process agent loop can reuse them:
+## Lite toolset
 
-```typescript
-import { createBrowserClient, createLiteSession, renderPageView, digestAudit, LITE_TOOL_SCHEMAS, liteToolCallGbnf } from "@helmstack/agent-sdk";
+`@helmstack/agent-sdk/lite` (also re-exported from the root) exports `createLiteSession`, `LITE_TOOL_SCHEMAS` and helpers. See [Lite toolset](lite-toolset.md).
 
-const session = createLiteSession(createBrowserClient(), { maxChars: 2400 });
-console.log(await session.call("go", { url: "http://localhost:3000" }));
-console.log(await session.call("click", { n: 3 }));
-```
+## Verify it worked
 
-`renderPageView(graph, { view, maxChars, all })`, `digestAudit(kind, report, { maxItems })`, `renderTabs`, `renderCommandResult` and `describePage` are pure functions. `LITE_TOOL_SCHEMAS` lists each tool's name, one-line description and typed parameters with enums; `liteToolCallJsonSchema()` and `liteToolCallGbnf()` turn it into a JSON schema or a GBNF grammar for constrained decoding.
-
-Benchmark: `packages/mcp-server/test/lite-bench/` runs 12 deterministic verification tasks with `claude -p --model haiku` under both toolsets (or against any OpenAI-compatible endpoint such as Ollama). It is skipped unless `HELMSTACK_LITE_BENCH=1`.
-
-## TypeScript Types
-
-The SDK re-exports all shared types for convenience:
-
-```typescript
-import type {
-  AssertionConfidence,
-  AssertionEvidence,
-  AssertionResult,
-  BrowserPerceptionPacket,
-  BrowserOutputCommand,
-  BrowserCommandResult,
-  CookieEntry,
-  IndexedDbDatabase,
-  PageGraph,
-  SiteCapabilityManifest,
-  StorageArea,
-  StorageEntry,
-  StorageReport,
-  TabSummary,
-  AccountSummary,
-  ThreeSceneReport,
-  TotpResult
-} from "@helmstack/agent-sdk";
-```
-
-## Error Handling
-
-```typescript
-try {
-  const result = await browser.execute(tabId, command);
-  if (!result.success) {
-    console.error("Command failed:", result.error);
-  }
-} catch (err) {
-  if (err.message.includes("HTTP 404")) {
-    console.error("Tab not found");
-  } else if (err.message.includes("timeout")) {
-    console.error("Request timed out");
-  } else {
-    console.error("Unexpected error:", err);
-  }
-}
-```
-
-## Prerequisites
-
-The HelmStack browser must be running before connecting:
-
-```bash
-# Terminal 1: Start the browser
-cd /path/to/helmstack
-npm run dev
-
-# Terminal 2: Start your agent
-cd /path/to/your-agent
-npm start
-```
-
-The agent server listens on `127.0.0.1:7070` by default.
-
-## Full Example
-
-See `apps/agent-example/src/index.ts` in the HelmStack repo for a complete working example.
+`await browser.health()` resolves to `{ status: "ok", ... }`. A wrong token rejects with `HelmstackHttpError` and `status` 401.
