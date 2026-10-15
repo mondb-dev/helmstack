@@ -18,6 +18,8 @@ import { mountConnection } from "./panels/connection.js";
 import { mountOverridesStrip } from "./panels/overrides.js";
 import { mountApprovals } from "./panels/approvals.js";
 import { mountActivity } from "./panels/activity.js";
+import { mountChat } from "./panels/chat.js";
+import { mountSideTabs } from "./panels/side-tabs.js";
 import { mountSettings } from "./panels/settings.js";
 import { mountHandoff } from "./panels/handoff.js";
 import { mountAddressBar } from "./panels/address-bar.js";
@@ -135,6 +137,7 @@ async function bootstrap(): Promise<void> {
     if (current?.id !== previousActive) {
       void overrides.setActiveTab(current?.id);
       activity.refreshForTab();
+      chat.refreshForTab();
     }
     viewport.queue();
   };
@@ -147,6 +150,16 @@ async function bootstrap(): Promise<void> {
     onAgentsByTabChange: () => renderTabs(tabs),
     onShowConnection: () => connection.open(),
   });
+
+  const chat = mountChat({
+    bridge,
+    activeTabId: () => activeTab()?.id,
+    tabHost: (tabId) => {
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      return tab ? safeHostLabel(tab.url) : undefined;
+    },
+  });
+  mountSideTabs({ onChange: (panel) => panel === "chat" && chat.show() });
 
   const settings = mountSettings({
     bridge,
@@ -248,6 +261,8 @@ async function bootstrap(): Promise<void> {
   bridge.onTabOverridesChanged((next) => overrides.update(next));
   bridge.onAgentActivity((entry) => activity.addActivity(entry));
   bridge.onConnectionStatusChanged(applyConnectionStatus);
+  // Absent until the agent runner lands in preload.
+  if (typeof bridge.onAgentChatEvent === "function") bridge.onAgentChatEvent((event) => chat.handleEvent(event));
 
   // ── initial state ─────────────────────────────────────────────────────────
   renderTabs(await bridge.listTabs());

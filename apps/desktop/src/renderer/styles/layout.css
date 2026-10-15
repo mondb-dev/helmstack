@@ -478,6 +478,42 @@
   display: none;
 }
 
+/* Side-panel tabs (Activity | Chat). The aside's data-panel decides which
+   body shows; the activity body's own `hidden` stays owned by its collapse. */
+.side-tabs {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.side-tabs__tab {
+  height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.side-tabs__tab:hover {
+  color: var(--color-text);
+}
+
+.side-tabs__tab[aria-selected="true"] {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.activity[data-panel="chat"] > #activity-body,
+.activity[data-collapsed="true"] > .side-tabs,
+.activity[data-collapsed="true"] > .chat {
+  display: none;
+}
+
 /* ── Viewport ────────────────────────────────────────────────── */
 
 .viewport-stage {

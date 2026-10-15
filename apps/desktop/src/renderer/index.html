@@ -87,7 +87,11 @@
             <h2 class="activity__title" id="activity-title">Agent activity</h2>
             <button class="btn btn--icon btn--sm btn--quiet" id="activity-collapse" type="button" aria-controls="activity-body" aria-expanded="true" aria-label="Collapse agent activity" title="Collapse"></button>
           </div>
-          <div class="activity__body" id="activity-body">
+          <div class="side-tabs" id="side-tabs" role="tablist" aria-label="Side panel">
+            <button class="side-tabs__tab" id="side-tab-activity" type="button" role="tab" data-panel="activity" aria-selected="true" aria-controls="activity-body" tabindex="0">Activity</button>
+            <button class="side-tabs__tab" id="side-tab-chat" type="button" role="tab" data-panel="chat" aria-selected="false" aria-controls="chat-body" tabindex="-1">Chat</button>
+          </div>
+          <div class="activity__body" id="activity-body" role="tabpanel" aria-labelledby="side-tab-activity">
             <form class="intent" id="intent-form" hidden>
               <label class="field__label" for="intent-box">Intent for listening agents</label>
               <textarea class="textarea intent__input" id="intent-box" rows="2" placeholder="Describe what you'd like the agent to do..."></textarea>
@@ -100,6 +104,7 @@
             <ol class="activity__list" id="activity-list" aria-labelledby="activity-title"></ol>
             <p class="activity__footer" id="activity-footer" hidden></p>
           </div>
+          <div class="chat" id="chat-body" role="tabpanel" aria-labelledby="side-tab-chat" hidden></div>
         </aside>
       </main>
     </div>
