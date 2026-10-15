@@ -154,6 +154,15 @@ export function validateToolCall(name: string, rawArgs: unknown): Validated {
   return { ok: true, name: name as LiteToolName, args: out };
 }
 
+/**
+ * Verbs that act on a numbered element. A small model that skipped `look` will guess a
+ * number, and the session still holds the previous view's numbers, so the guess can
+ * resolve to a real element. They are refused until the model has been shown a view.
+ */
+const NEEDS_VIEW: ReadonlySet<LiteToolName> = new Set<LiteToolName>(["click", "type", "select"]);
+/** Verbs whose successful result carries the compact page view back to the model. */
+const SHOWS_VIEW: ReadonlySet<LiteToolName> = new Set<LiteToolName>(["look", "go", "back", "forward", "reload", "click", "type", "select"]);
+
 /** Fixed, argument-free phrases for the activity row. */
 const PHRASES: Record<LiteToolName, string> = {
   look: "Reading the page",
@@ -356,6 +365,8 @@ export async function runLocalTurn(input: LocalTurnInput): Promise<LocalTurnResu
   ];
   let reply = "";
   let callCounter = 0;
+  // True once a view has been returned to the model in an earlier step of this turn.
+  let viewSeen = false;
   try {
     for (let n = 1; n <= maxSteps; n++) {
       if (input.signal.aborted) return { ok: false, error: "Stopped.", reply };
@@ -376,6 +387,10 @@ export async function runLocalTurn(input: LocalTurnInput): Promise<LocalTurnResu
             : { id: c.id, type: "function", function: { name: c.name, arguments: typeof c.args === "string" ? c.args : JSON.stringify(c.args ?? {}) } }
         )
       });
+      // A view only counts once the model has seen it, i.e. from the next step on: a `look`
+      // and a `click` in the same step are still a blind click.
+      const mayAct = viewSeen;
+      let viewShownThisStep = false;
       // Calls beyond the per-step cap are dropped unexecuted (the model sees no result for them).
       for (const c of accepted) {
         const callId = `${n}-${++callCounter}`;
@@ -388,6 +403,31 @@ export async function runLocalTurn(input: LocalTurnInput): Promise<LocalTurnResu
           messages.push(toolMessage(input.provider, c, v.error));
           continue;
         }
+        if (NEEDS_VIEW.has(v.name) && !mayAct) {
+          input.emit([
+            { kind: "tool_call", callId, name: v.name, summary: "Refused: the page has not been read yet", status: "running" },
+            { kind: "tool_call", callId, name: v.name, status: "error" }
+          ]);
+          // A small model that refuses to look will often answer from imagination ("after
+          // looking at the page again, I see…"). So the loop does the look itself and hands the
+          // real view back with the refusal, grounding whatever the model does next.
+          const lookId = `${callId}-look`;
+          input.emit([{ kind: "tool_call", callId: lookId, name: "look", summary: PHRASES.look, status: "running" }]);
+          let view = "";
+          try {
+            view = await input.call("look", {});
+          } catch {
+            view = "";
+          }
+          if (input.signal.aborted) return { ok: false, error: "Stopped.", reply };
+          const viewOk = view !== "" && !/^ERROR:/.test(view) && !/^NEEDS APPROVAL:/.test(view);
+          input.emit([{ kind: "tool_call", callId: lookId, name: "look", status: viewOk ? "ok" : "error" }]);
+          if (viewOk) viewShownThisStep = true;
+          const refusal = liteError(`You had not looked at the page, so ${v.name} would act on a guess. The page is shown below`, `choose what to do using the numbers in this view, then call ${v.name} again`);
+          const body = viewOk ? `${refusal}\n\n${view}` : refusal;
+          messages.push(toolMessage(input.provider, c, body.length > TOOL_RESULT_CHARS ? `${body.slice(0, TOOL_RESULT_CHARS)}\n…(cut)` : body));
+          continue;
+        }
         input.emit([{ kind: "tool_call", callId, name: v.name, summary: PHRASES[v.name], status: "running" }]);
         let out: string;
         try {
@@ -398,6 +438,7 @@ export async function runLocalTurn(input: LocalTurnInput): Promise<LocalTurnResu
         if (input.signal.aborted) return { ok: false, error: "Stopped.", reply };
         const failed = /^ERROR:/.test(out);
         const approval = /^NEEDS APPROVAL:/.test(out);
+        if (!failed && !approval && SHOWS_VIEW.has(v.name)) viewShownThisStep = true;
         input.emit([
           {
             kind: "tool_call",
@@ -409,6 +450,7 @@ export async function runLocalTurn(input: LocalTurnInput): Promise<LocalTurnResu
         ]);
         messages.push(toolMessage(input.provider, c, out.length > TOOL_RESULT_CHARS ? `${out.slice(0, TOOL_RESULT_CHARS)}\n…(cut)` : out));
       }
+      if (viewShownThisStep) viewSeen = true;
     }
     return {
       ok: false,

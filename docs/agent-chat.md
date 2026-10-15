@@ -60,6 +60,7 @@ HelmStack never pulls or downloads models. Choose one that supports tool calling
 ### Small-model advice
 
 - Raise the context window if the model loses track: `HELMSTACK_LOCAL_NUM_CTX` (default 8192, clamped to 2048 to 131072). Ollama otherwise truncates prompts silently at its small default. Larger values use more memory.
+- A small model may skip `look` and guess an element number. HelmStack refuses `click`, `type` and `select` until the model has been shown the page in the same turn, and tells it `ERROR: … NEXT: look`.
 - Keep requests narrow. A turn is limited to 12 model steps and 4 tool calls per step; if the model uses all 12 it says: "The model used all 12 steps without finishing. Ask again with a narrower request."
 - Page views are short by design (see `HELMSTACK_LITE_MAX_CHARS`). History keeps the last 12 messages.
 - A request that produces no bytes for 120 seconds, or a turn that runs past 5 minutes, ends cleanly.

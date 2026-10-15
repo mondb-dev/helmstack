@@ -385,6 +385,62 @@ describe("local chat loop", () => {
     expect(events.find((e) => e.type === "text")).toMatchObject({ text: "Sent the message." });
   });
 
+  it("refuses click/type/select until the model has been shown the page (the live 3B failure)", async () => {
+    const o = await fakeOllama({
+      chat: [
+        // Blind guess: acts on element 1 without ever looking.
+        (_q, r) => { nd(r, tool("type", { n: 1, text: "Ada" })); r.end(); },
+        (_q, r) => { nd(r, tool("look", {})); r.end(); },
+        (_q, r) => { nd(r, tool("click", { n: 1 })); r.end(); },
+        (_q, r) => { nd(r, ...say("Done.")); r.end(); }
+      ]
+    });
+    const api = await fakeAgentApi();
+    const runner = await makeRunner(o, api);
+    const { events, finished } = await chat(runner, "fill the name");
+    expect(finished.outcome).toBe("completed");
+    // the blind type never reached the agent API; only the click after a look did
+    const cmds = commandHits(api);
+    expect(cmds).toHaveLength(1);
+    expect(JSON.stringify(cmds[0].body)).not.toContain("Ada");
+    // the refusal carries the real page view, so the model is grounded without asking for it
+    const second = chatReqs(o)[1].body;
+    const refusal = second.messages.find((m: any) => m.role === "tool" && /^ERROR: .*not looked at the page/s.test(m.content));
+    expect(refusal).toBeTruthy();
+    expect(refusal.content).toMatch(/NEXT: .*call type again/s);
+    expect(refusal.content).toMatch(/\[1\] button "Send"/);
+    const tools = events.filter((e) => e.type === "tool_call") as Extract<AgentChatEvent, { type: "tool_call" }>[];
+    expect(tools.filter((t) => t.status === "error").map((t) => t.name)).toEqual(["type"]);
+    expect(tools.some((t) => t.name === "look" && t.status === "ok")).toBe(true);
+    expect(JSON.stringify(tools)).not.toContain("Ada");
+  });
+
+  it("a look and a click in the same step is still a blind click", async () => {
+    const both = {
+      message: {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ function: { name: "look", arguments: {} } }, { function: { name: "click", arguments: { n: 1 } } }]
+      },
+      done: false
+    };
+    const o = await fakeOllama({
+      chat: [
+        (_q, r) => { nd(r, both); r.end(); },
+        (_q, r) => { nd(r, ...say("Looked.")); r.end(); }
+      ]
+    });
+    const api = await fakeAgentApi();
+    const runner = await makeRunner(o, api);
+    const { finished } = await chat(runner, "press it");
+    expect(finished.outcome).toBe("completed");
+    expect(commandHits(api)).toHaveLength(0);
+    const second = chatReqs(o)[1].body;
+    const toolMsgs = second.messages.filter((m: any) => m.role === "tool");
+    expect(toolMsgs).toHaveLength(2);
+    expect(toolMsgs.some((m: any) => /^ERROR: .*not looked at the page/s.test(m.content))).toBe(true);
+  });
+
   it("rejects unknown tools and extra/invalid args without executing", async () => {
     const o = await fakeOllama({
       chat: [
