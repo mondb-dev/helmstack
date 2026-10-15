@@ -360,7 +360,7 @@ Common command types:
 // ── Agent-substrate tools (opt-in: HELMSTACK_AGENT_SUBSTRATE, default off) ─────
 // Accounts/TOTP, approvals, handoffs, and intent are autonomous-agent surfaces a
 // front-end developer never needs. Registered only when the capability is on, so
-// the default MCP tool surface stays lean (see docs/positioning.md).
+// the default MCP tool surface stays lean (see docs/profiles-and-toolsets.md).
 if (agentSubstrate && toolset === "full") registerAgentSubstrateTools();
 
 function registerAgentSubstrateTools(): void {

@@ -24,17 +24,6 @@ export interface OverrideChip {
   details: Array<[key: string, value: string]>;
 }
 
-/** Canonical chip order. */
-export const OVERRIDE_KINDS: TabOverrideKind[] = [
-  "viewport",
-  "media",
-  "resourceBudget",
-  "location",
-  "networkMock",
-  "recording",
-  "watches",
-];
-
 const MEDIA_TYPE_LABEL: Record<string, string> = { print: "Print", screen: "Screen" };
 
 function capitalize(value: string): string {

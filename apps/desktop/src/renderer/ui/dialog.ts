@@ -1,5 +1,5 @@
 /**
- * Focus management for modal dialogs (styleguide §3.5).
+ * Focus management for modal dialogs.
  *
  * `openDialog` stores the currently-focused element, moves focus into the
  * dialog, traps Tab/Shift+Tab inside it, optionally closes on Escape, and

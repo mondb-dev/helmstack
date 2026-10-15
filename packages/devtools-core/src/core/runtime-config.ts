@@ -18,8 +18,8 @@ function isFlagOn(raw: string | undefined): boolean {
  *  - `agent-substrate` / `full` — autonomous-agent use; all agent surfaces on.
  *
  * An explicit per-flag env var (e.g. `HELMSTACK_STEALTH`) always overrides the
- * profile. Mirrored in `@helmstack/mcp-server`'s `capabilities.ts` (the MCP
- * server is a separate process). See docs/positioning.md.
+ * profile. Mirrored in `@helmstack/mcp-server` (the MCP
+ * server is a separate process). See docs/profiles-and-toolsets.md.
  */
 export type HelmstackProfile = "fe-dev" | "agent-substrate" | "full";
 
@@ -50,7 +50,7 @@ export function isStealthEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
  * social-feed/profile/thread classification (`collectSocialSurface`), so a plain
  * web app is never mislabelled `social-feed` and pays nothing for feed-scraping
  * heuristics. Enable with `HELMSTACK_SOCIAL=1` or
- * `HELMSTACK_PROFILE=agent-substrate`. See docs/positioning.md.
+ * `HELMSTACK_PROFILE=agent-substrate`. See docs/profiles-and-toolsets.md.
  */
 export function isSocialPerceptionEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return resolveAgentFlag(env, "HELMSTACK_SOCIAL");

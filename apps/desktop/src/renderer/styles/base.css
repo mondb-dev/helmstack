@@ -1,5 +1,5 @@
 /* ── Base: reset + element defaults + a11y ──────────────────────
-   See docs/styleguide.md §2 (base layer). Loaded after tokens.css.
+   See docs/styleguide.md "Layers". Loaded after tokens.css.
    ──────────────────────────────────────────────────────────────── */
 
 *,

@@ -1,5 +1,5 @@
 /**
- * Theme resolution + persistence (styleguide §1.1, §5.1).
+ * Theme resolution + persistence.
  *
  * Choice is one of light/dark/system; `system` follows the OS via
  * `prefers-color-scheme`. The resolved theme is written to

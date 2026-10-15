@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the data-display components (styleguide §3.8–3.12):
+ * Pure helpers for the data-display components:
  * the score → semantic meter level thresholds. Kept DOM-free so they unit-test directly.
  */
 

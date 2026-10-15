@@ -402,7 +402,7 @@
   color: var(--color-text-secondary);
 }
 
-/* ── Data display: table / key-value / stat / meter (§3.8–3.10) ─── */
+/* ── Data display: table / key-value / stat / meter ─── */
 
 .table {
   width: 100%;
@@ -704,7 +704,7 @@
   color: var(--color-text);
 }
 
-/* ── Code block (§3.11) ──────────────────────────────────────── */
+/* ── Code block ──────────────────────────────────────── */
 
 .code {
   margin: 0;

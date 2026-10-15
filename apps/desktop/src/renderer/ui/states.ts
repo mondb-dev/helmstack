@@ -1,5 +1,5 @@
 /**
- * Pure DOM builders for empty / loading states (styleguide §3.13).
+ * Pure DOM builders for empty / loading states.
  * Deterministic — they only touch `document`, no app state — so they unit-test
  * cleanly under jsdom and are reused by the render functions in shell.ts.
  */

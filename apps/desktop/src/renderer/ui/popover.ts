@@ -1,5 +1,5 @@
 /**
- * Non-modal popover anchored to a trigger button (styleguide §4 "Overlays":
+ * Non-modal popover anchored to a trigger button (the middle tier of
  * menu → popover → dialog). The panel gets `role="dialog"` + a label, the
  * trigger `aria-haspopup="dialog"` / `aria-expanded` / `aria-controls`.
  *
@@ -147,9 +147,4 @@ export function createPopover(trigger: HTMLElement, panel: HTMLElement, options:
   window.addEventListener("resize", onResize);
 
   return controller;
-}
-
-/** The currently open popover, if any (for tests / global Escape handling). */
-export function currentPopover(): PopoverController | null {
-  return openPopover;
 }

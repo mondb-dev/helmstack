@@ -1,5 +1,5 @@
 /**
- * Transient toast notifications (styleguide §3.6).
+ * Transient toast notifications.
  *
  * Info/success toasts auto-dismiss after a few seconds; error toasts persist
  * with a manual close button (an error you didn't see is an error you can't

@@ -1,5 +1,5 @@
 /**
- * Minimal inline-SVG icon set (Lucide paths, styleguide §1.7).
+ * Minimal inline-SVG icon set (Lucide paths, see docs/styleguide.md "Typography and icons").
  *
  * `icon(name)` returns a fresh `<svg aria-hidden stroke="currentColor">` built
  * with `createElementNS` (robust in both jsdom and the renderer). Icons inherit

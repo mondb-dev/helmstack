@@ -1,7 +1,6 @@
 /* ── Design Tokens ───────────────────────────────────────────────
-   The decided system. See docs/styleguide.md §1–§2. Components reference
-   ONLY semantic --color-* tokens (and the scales). The legacy-alias block at
-   the bottom keeps the current components working until task 2.1 migrates them.
+   The decided system. See docs/styleguide.md "Layers" and "Tokens". Components reference
+   ONLY semantic --color-* tokens (and the scales).
    ──────────────────────────────────────────────────────────────── */
 
 :root {
