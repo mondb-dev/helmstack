@@ -31,6 +31,9 @@
     "pngjs": "^7.0.0"
   },
   "devDependencies": {
+    "@helmstack/agent-sdk": "*",
+    "@helmstack/perception": "*",
+    "@helmstack/shared": "*",
     "@types/pngjs": "^6.0.5"
   }
 }

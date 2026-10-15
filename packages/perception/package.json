@@ -30,6 +30,7 @@
     "access": "public"
   },
   "devDependencies": {
+    "@helmstack/shared": "*",
     "esbuild": "^0.25.12"
   }
 }

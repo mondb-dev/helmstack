@@ -38,5 +38,9 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@helmstack/devtools-core": "*",
+    "@helmstack/perception": "*"
   }
 }
