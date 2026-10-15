@@ -19,7 +19,9 @@ import { createBrowserClient } from "../../../packages/agent-sdk/src/index.js";
 import { tryFindChrome } from "../src/chrome.js";
 import { startDaemon, type RunningDaemon } from "../src/main.js";
 
-const chrome = tryFindChrome();
+// Real-Chrome tests flake on the Windows runner ("The browser is already running for …") and the
+// daemon is not verified on Windows; set HELMSTACK_TEST_WINDOWS_CHROME=1 to run them there.
+const chrome = process.platform === "win32" && process.env.HELMSTACK_TEST_WINDOWS_CHROME !== "1" ? null : tryFindChrome();
 const here = path.dirname(fileURLToPath(import.meta.url));
 const daemonDir = path.resolve(here, "..");
 const repoRoot = path.resolve(daemonDir, "../..");

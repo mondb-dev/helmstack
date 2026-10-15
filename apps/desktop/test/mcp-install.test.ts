@@ -169,14 +169,15 @@ describe("writeConfigAtomic", () => {
     expect(fs.readFileSync(file, "utf8")).toBe('{"new":true}');
     expect(backupPath).toBe(`${file}.20260102T030405Z.bak`);
     expect(fs.readFileSync(backupPath as string, "utf8")).toBe('{"old":true}');
-    expect(fs.statSync(file).mode & 0o777).toBe(0o640);
+    // Windows has no POSIX file modes.
+    if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o640);
     expect(fs.readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
   });
 
   it("creates a new file 0600 with no backup, and follows a symlink to its target", () => {
     const file = path.join(dir, "sub", "mcp.json");
     expect(writeConfigAtomic(file, "{}")).toEqual({});
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     const real = path.join(dir, "real.json");
     fs.writeFileSync(real, "{}");
     const link = path.join(dir, "link.json");

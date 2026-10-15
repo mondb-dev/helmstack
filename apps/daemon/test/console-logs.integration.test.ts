@@ -13,7 +13,9 @@ import { PERCEPTION_WORLD_NAME } from "../../../packages/devtools-core/src/perce
 import { ChromeBackend } from "../src/chrome-backend.js";
 import { tryFindChrome } from "../src/chrome.js";
 
-const chrome = tryFindChrome();
+// Real-Chrome tests flake on the Windows runner ("The browser is already running for …") and the
+// daemon is not verified on Windows; set HELMSTACK_TEST_WINDOWS_CHROME=1 to run them there.
+const chrome = process.platform === "win32" && process.env.HELMSTACK_TEST_WINDOWS_CHROME !== "1" ? null : tryFindChrome();
 
 const PAGE = `<!doctype html><title>Console</title><main><h1>Console test</h1><button>Go</button></main>`;
 

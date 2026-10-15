@@ -6,7 +6,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchChrome, tryFindChrome, type ChromeHandle } from "../src/chrome.js";
 import { ChromeTabs } from "../src/tabs.js";
 
-const chrome = tryFindChrome();
+// Real-Chrome tests flake on the Windows runner ("The browser is already running for …") and the
+// daemon is not verified on Windows; set HELMSTACK_TEST_WINDOWS_CHROME=1 to run them there.
+const chrome = process.platform === "win32" && process.env.HELMSTACK_TEST_WINDOWS_CHROME !== "1" ? null : tryFindChrome();
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function dataUrl(html: string): string {

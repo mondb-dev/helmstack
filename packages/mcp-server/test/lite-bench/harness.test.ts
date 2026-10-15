@@ -15,7 +15,7 @@ describe("lite-bench harness (offline)", () => {
 
   it("serves only inside the fixture directories", () => {
     expect(resolvePagePath("/../../package.json")).toBeNull();
-    expect(resolvePagePath("/contact-form.html")).toMatch(/test-pages\/contact-form\.html$/);
+    expect(resolvePagePath("/contact-form.html")).toMatch(/test-pages[\\/]contact-form\.html$/);
   });
 
   it("plans a confined claude invocation without leaking the token or scrubbed vars", () => {
