@@ -228,6 +228,17 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="mcp-install-modal" hidden>
+      <div class="modal-backdrop" id="mcp-install-backdrop"></div>
+      <div class="modal modal--wide" role="dialog" aria-modal="true" aria-labelledby="mcp-install-title">
+        <div class="modal-header modal-header--row">
+          <h2 id="mcp-install-title" class="modal-title">Connect an agent</h2>
+          <button class="btn btn--sm btn--ghost" id="mcp-install-close" type="button">Close</button>
+        </div>
+        <div class="mcp-install" id="mcp-install-body"></div>
+      </div>
+    </div>
+
     <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
 
     <script type="module" src="./shell.js"></script>

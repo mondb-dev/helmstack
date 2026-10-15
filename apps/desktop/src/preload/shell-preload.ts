@@ -71,6 +71,9 @@ const browserShell: BrowserShellBridge = {
     ipcRenderer.invoke(BrowserShellChannel.ClearTabOverrides, tabId, kind),
   listAgentActivity: () => ipcRenderer.invoke(BrowserShellChannel.ListAgentActivity),
   getConnectionStatus: () => ipcRenderer.invoke(BrowserShellChannel.GetConnectionStatus),
+  // Connect an agent
+  getMcpInstallOverview: () => ipcRenderer.invoke(BrowserShellChannel.GetMcpInstallOverview),
+  runMcpInstall: (request) => ipcRenderer.invoke(BrowserShellChannel.RunMcpInstall, request),
   // In-window agent chat
   getAgentRunnerStatus: () => ipcRenderer.invoke(BrowserShellChannel.GetAgentRunnerStatus),
   refreshAgentRunner: () => ipcRenderer.invoke(BrowserShellChannel.RefreshAgentRunner),

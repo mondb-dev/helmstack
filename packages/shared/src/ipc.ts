@@ -6,6 +6,7 @@ import type { ApprovalPolicyRecord } from "./policy.js";
 import type { AgentChatEvent, AgentConversationSummary, AgentRunnerStatus, StartAgentConversationInput } from "./agent-chat.js";
 import type { AgentActivityEntry, AgentConnectionStatus, TabOverrideKind, TabOverrides } from "./shell-status.js";
 import type { ShortcutId } from "./shortcuts.js";
+import type { McpInstallOverview, McpInstallRequest, McpInstallResult } from "./mcp-install.js";
 import type { FixturePageName, VaultSecretInput, VaultSecretSummary, VaultStatus } from "./vault.js";
 
 export const BrowserShellChannel = {
@@ -62,6 +63,9 @@ export const BrowserShellChannel = {
   ListAgentConversations: "browser-shell:list-agent-conversations",
   GetAgentConversationEvents: "browser-shell:get-agent-conversation-events",
   CloseAgentConversation: "browser-shell:close-agent-conversation",
+  // Connect an agent (MCP client install; shell only)
+  GetMcpInstallOverview: "browser-shell:get-mcp-install-overview",
+  RunMcpInstall: "browser-shell:run-mcp-install",
 
   // Browser navigation, find and zoom (human-initiated, shell only)
   GoBack: "browser-shell:go-back",
@@ -189,6 +193,10 @@ export type BrowserShellApi = {
    */
   getAgentConversationEvents(conversationId: string, afterSeq?: number): Promise<AgentChatEvent[]>;
   closeAgentConversation(conversationId: string): Promise<void>;
+  // Connect an agent: detect clients / build, preview and run installs. The
+  // renderer names a client and an action; main builds every command and path.
+  getMcpInstallOverview(): Promise<McpInstallOverview>;
+  runMcpInstall(request: McpInstallRequest): Promise<McpInstallResult>;
 };
 
 export type AgentLogEntry = {

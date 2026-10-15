@@ -4,6 +4,7 @@ export * from "./ai.js";
 export * from "./browser.js";
 export * from "./cdp.js";
 export * from "./ipc.js";
+export * from "./mcp-install.js";
 export * from "./perception.js";
 export * from "./policy.js";
 export * from "./shell-status.js";

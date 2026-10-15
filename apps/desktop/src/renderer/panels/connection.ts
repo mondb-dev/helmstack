@@ -99,6 +99,8 @@ export interface ConnectionOptions {
   onPopoverClose?: () => void;
   /** Clipboard writer (defaults to navigator.clipboard). */
   writeClipboard?: (text: string) => Promise<void>;
+  /** Opens the "Connect an agent" dialog (the popover closes first). Button hidden when absent. */
+  onConnectAgents?: () => void;
 }
 
 export interface ConnectionController {
@@ -199,6 +201,19 @@ export function mountConnection(options: ConnectionOptions = {}): ConnectionCont
           toast(`Couldn't copy — ${error instanceof Error ? error.message : String(error)}`, "error");
         }
       });
+    }
+    if (options.onConnectAgents) {
+      const connect = document.createElement("button");
+      connect.type = "button";
+      connect.className = "btn btn--sm btn--primary";
+      connect.id = "connect-agents";
+      connect.setAttribute("aria-haspopup", "dialog");
+      connect.append(icon("bot", { size: 14 }), document.createTextNode("Connect agents…"));
+      connect.addEventListener("click", () => {
+        popover.close();
+        options.onConnectAgents?.();
+      });
+      actions.append(connect);
     }
     actions.append(copy);
     nodes.push(actions);

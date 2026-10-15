@@ -1507,3 +1507,121 @@
   font-size: var(--text-xs);
   white-space: nowrap;
 }
+
+/* ── Connect an agent dialog ─────────────────────────────────── */
+
+.mcp-install {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  overflow-y: auto;
+}
+
+.mcp-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.mcp-options__sources {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.mcp-options__legend {
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.mcp-source {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.mcp-source__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.mcp-source__cmd {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+}
+
+.mcp-clients {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.mcp-client {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.mcp-client__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.mcp-client__name {
+  font-weight: var(--weight-semibold);
+}
+
+.mcp-client__version,
+.mcp-client__path {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mcp-client__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.mcp-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.mcp-preview__title {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.mcp-preview__label {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.mcp-preview__warning {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-warning-text);
+}

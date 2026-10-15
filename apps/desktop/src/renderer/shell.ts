@@ -15,6 +15,7 @@ import { createTabLabelCache } from "./ui/tab-labels.js";
 import { createViewportSync } from "./panels/viewport-sync.js";
 import { renderTabStrip } from "./panels/tabs.js";
 import { mountConnection } from "./panels/connection.js";
+import { mountMcpInstall } from "./panels/mcp-install.js";
 import { mountOverridesStrip } from "./panels/overrides.js";
 import { mountApprovals } from "./panels/approvals.js";
 import { mountActivity } from "./panels/activity.js";
@@ -84,9 +85,11 @@ async function bootstrap(): Promise<void> {
   const overlayClosed = (key: string) => () => viewport.release(key);
 
   // ── panels ────────────────────────────────────────────────────────────────
+  const connectAgents: { open: () => void } = { open: () => undefined };
   const connection = mountConnection({
     onPopoverOpen: overlayOpened("connection"),
     onPopoverClose: overlayClosed("connection"),
+    onConnectAgents: () => connectAgents.open(),
   });
 
   const overrides = mountOverridesStrip({
@@ -197,6 +200,13 @@ async function bootstrap(): Promise<void> {
     onClose: overlayClosed("shortcuts"),
     focusPage,
   });
+
+  const mcpInstall = mountMcpInstall({
+    bridge,
+    onOpen: overlayOpened("mcp-install"),
+    onClose: overlayClosed("mcp-install"),
+  });
+  connectAgents.open = () => void mcpInstall.open();
 
   const settings = mountSettings({
     bridge,

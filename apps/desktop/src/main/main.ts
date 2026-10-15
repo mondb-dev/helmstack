@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, session, shell as electronShell, type IpcMainInvokeEvent } from "electron";
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -21,6 +22,7 @@ import {
 } from "../../../../packages/shared/src/index.js";
 import { ElectronBackend } from "./tab-manager.js";
 import { ZoomStore } from "./zoom-store.js";
+import { McpInstallService, createMcpInstallIpc } from "./mcp-install-service.js";
 import { parseFindOptions, parseFindText, parseReloadMode, parseZoomAction } from "./ipc-validate.js";
 import { installAppMenu } from "./app-menu.js";
 import { createShortcutRunner, routeKeyInput, type ShortcutHost } from "./shortcut-controller.js";
@@ -180,7 +182,9 @@ async function createMainWindow() {
     disabledReason: "The HelmStack MCP server bundle is missing from this build, so agent chat is unavailable.",
     defaultWorkingDirectory: path.join(userDataPath, "agent-chat-workspace"),
     isTabAlive: (tabId) => chatCore.listTabs().some((tab) => tab.id === tabId),
-    electron: true
+    electron: true,
+    // Local model servers (Ollama, LM Studio, llama.cpp): loopback only, same agent API + token.
+    local: true
   });
   const runner = agentRunner;
   void runner.refresh();
@@ -282,6 +286,25 @@ function registerIpcHandlers(
   server: AgentServer,
   runner: AgentRunner
 ) {
+  // ── Connect an agent (MCP client install) ─────────────────────────────────
+  const mcpInstall = new McpInstallService({
+    homedir: os.homedir(),
+    platform: process.platform,
+    env: process.env,
+    execPath: process.execPath,
+    electron: true,
+    mcpEntry: path.join(appDir, "../mcp/helmstack-mcp.mjs"),
+    isPackaged: app.isPackaged,
+    getConnection: () => {
+      const status = server.getConnectionStatus();
+      return { port: status.listening ? status.port : null, tokenFile: status.tokenPath, profile: status.profile };
+    },
+    extraPathDirs:
+      process.platform === "win32"
+        ? []
+        : ["/opt/homebrew/bin", "/usr/local/bin", path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".claude", "local"), path.join(os.homedir(), ".npm-global", "bin")]
+  });
+
   const handlers: BrowserShellApi = {
     openTab: async (url?: string) => manager.createTab(url),
     navigate: async (tabId: TabId, url: string) => manager.navigate(tabId, url),
@@ -364,7 +387,10 @@ function registerIpcHandlers(
     listAgentConversations: async (tabId?: TabId) => runner.listConversations(tabId),
     getAgentConversationEvents: async (conversationId: string, afterSeq?: number) =>
       runner.getEvents(conversationId, afterSeq ?? 0),
-    closeAgentConversation: async (conversationId: string) => runner.closeConversation(conversationId)
+    closeAgentConversation: async (conversationId: string) => runner.closeConversation(conversationId),
+    // Connect an agent (MCP client install); see mcp-install-service.ts
+    getMcpInstallOverview: async () => mcpInstall.overview(),
+    runMcpInstall: async (request) => mcpInstall.handle(request)
   };
 
   // Chat IPC is accepted only from the shell window's own renderer and every
@@ -510,6 +536,14 @@ function registerIpcHandlers(
   );
   ipcMain.handle(BrowserShellChannel.ListAgentActivity, () => handlers.listAgentActivity());
   ipcMain.handle(BrowserShellChannel.GetConnectionStatus, () => handlers.getConnectionStatus());
+  // Connect an agent: shell window only; the service validates the request
+  // (client id, action and options are allowlisted) and builds every command.
+  const mcpIpc = createMcpInstallIpc(
+    mcpInstall,
+    (sender) => Boolean(mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents)
+  );
+  ipcMain.handle(BrowserShellChannel.GetMcpInstallOverview, (event) => mcpIpc.overview(event.sender));
+  ipcMain.handle(BrowserShellChannel.RunMcpInstall, (event, request: unknown) => mcpIpc.run(event.sender, request));
 
   ipcMain.on(BrowserShellChannel.PageObserved, (_event, observation: PageObservation) => {
     shell.recordObservation(observation);
