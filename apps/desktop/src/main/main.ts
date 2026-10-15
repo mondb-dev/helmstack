@@ -169,8 +169,13 @@ async function createMainWindow() {
     // e.g. to run the contract suite against the desktop.
     approvals: isAgentApprovalsEnabled() ? "agent" : "human"
   });
-  console.log(`[AgentServer] auth token: ${authToken}`);
-  console.log(`[AgentServer] token file: ${agentTokenPath(userDataPath)}`);
+  // Never print the token itself: console output ends up in terminals, crash reports and
+  // shared logs. Say where it lives instead.
+  console.log(
+    process.env.HELMSTACK_AUTH_TOKEN
+      ? "[AgentServer] auth token: taken from HELMSTACK_AUTH_TOKEN"
+      : `[AgentServer] token file: ${agentTokenPath(userDataPath)}`
+  );
   // ── In-window agent chat ──────────────────────────────────────────────────
   // Owned here (not by the core/daemon) and reachable only through the shell
   // IPC below: there is no HTTP route that starts or controls a conversation.
