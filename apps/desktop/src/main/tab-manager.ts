@@ -184,7 +184,8 @@ export class ElectronTab implements BackendTab {
     try {
       await this.view.webContents.loadURL(url);
     } catch (error) {
-      this.markFailed(`Failed to load ${url}`);
+      if (isAbortError(error)) this.markAborted();
+      else this.markFailed(`Failed to load ${url}`);
       throw error;
     }
   }
@@ -193,6 +194,15 @@ export class ElectronTab implements BackendTab {
     this.pendingUrl = url;
     this.currentSummary = { ...this.currentSummary, url, status: "loading", statusMessage: `Loading ${url}` };
     this.emitSummaryChanged();
+  }
+
+  /**
+   * A user stop or a navigation superseded by another one (ERR_ABORTED, -3) is not
+   * a failure: settle back to the live idle/loading state with the URL as it stands.
+   */
+  markAborted(): void {
+    if (!this.view.webContents.isLoading()) this.pendingUrl = null;
+    this.refreshSummary();
   }
 
   markFailed(statusMessage: string, url?: string): void {
@@ -225,6 +235,14 @@ export class ElectronTab implements BackendTab {
     };
     this.emitSummaryChanged();
   }
+}
+
+/** Chromium net error -3: the load was cancelled (user stop or superseded navigation). */
+const ERR_ABORTED = -3;
+
+function isAbortError(error: unknown): boolean {
+  const e = error as { code?: unknown; errno?: unknown; message?: unknown } | null;
+  return e?.errno === ERR_ABORTED || e?.code === "ERR_ABORTED" || (typeof e?.message === "string" && e.message.includes("ERR_ABORTED"));
 }
 
 /** `webContents.navigationHistory` (Electron 35+), tolerant of its absence. */
@@ -338,7 +356,10 @@ export class ElectronBackend implements BrowserBackend {
       console.warn("[ElectronBackend] focusTab failed during createTab:", err);
     }
 
-    void view.webContents.loadURL(url).catch(() => tab.markFailed(`Failed to load ${url}`));
+    void view.webContents.loadURL(url).catch((error) => {
+      if (isAbortError(error)) tab.markAborted();
+      else tab.markFailed(`Failed to load ${url}`);
+    });
     return tab;
   }
 
@@ -633,6 +654,10 @@ export class ElectronBackend implements BrowserBackend {
     webContents.on("did-stop-loading", update);
     webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame) return;
+      if (errorCode === ERR_ABORTED) {
+        tab.markAborted();
+        return;
+      }
       tab.markFailed(`Load failed (${errorCode}): ${errorDescription || validatedURL || "Unknown error"}`, validatedURL);
     });
 

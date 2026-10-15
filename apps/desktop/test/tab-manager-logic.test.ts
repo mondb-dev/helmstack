@@ -101,6 +101,39 @@ describe("ElectronBackend", () => {
     expect(types(events)).toEqual(["summary-changed"]);
   });
 
+  it("did-fail-load ERR_ABORTED (user stop) returns the tab to idle, not error", async () => {
+    const { backend } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    const wc = wcOf(tab);
+    wc.url = "https://a.test/";
+    wc.title = "A";
+    wc.emit("did-start-navigation", { defaultPrevented: false }, "https://b.test/", false, true);
+    expect(tab.summary().status).toBe("loading");
+    wc.loading = false;
+    wc.emit("did-fail-load", {}, -3, "ERR_ABORTED", "https://b.test/", true);
+    expect(tab.summary()).toMatchObject({ status: "idle", url: "https://a.test/", title: "A" });
+    expect(tab.summary().statusMessage).not.toMatch(/fail/i);
+  });
+
+  it("ERR_ABORTED from a superseded navigation does not mark the tab failed", async () => {
+    const { backend } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    const wc = wcOf(tab);
+    wc.emit("did-start-navigation", { defaultPrevented: false }, "https://b.test/", false, true);
+    wc.emit("did-start-navigation", { defaultPrevented: false }, "https://c.test/", false, true);
+    wc.loading = true;
+    wc.emit("did-fail-load", {}, -3, "ERR_ABORTED", "https://b.test/", true);
+    expect(tab.summary()).toMatchObject({ status: "loading", url: "https://c.test/" });
+  });
+
+  it("a loadURL rejected with ERR_ABORTED is not an error summary", async () => {
+    const { backend } = makeBackend();
+    const tab = await backend.createTab("https://a.test/");
+    wcOf(tab).loadURL.mockRejectedValueOnce(Object.assign(new Error("ERR_ABORTED (-3) loading 'https://b.test/'"), { errno: -3 }));
+    await expect(tab.navigate("https://b.test/")).rejects.toThrow();
+    expect(tab.summary().status).not.toBe("error");
+  });
+
   it("maps webContents lifecycle to main-frame-navigation and load-finished", async () => {
     const { backend, events } = makeBackend();
     const tab = await backend.createTab("https://a.test/");

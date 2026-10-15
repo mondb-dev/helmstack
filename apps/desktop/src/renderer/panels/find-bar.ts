@@ -36,7 +36,11 @@ export interface FindBarController {
   handleResult(result: FindInPageResult): void;
   /** The active tab changed or navigated: drop find state for the page that went away. */
   tabChanged(previousTabId: TabId | undefined): void;
+  /** The active tab finished loading: re-run a pending search against the new page. */
+  pageLoaded(tabId: TabId | undefined): void;
 }
+
+const RESEARCH_DEBOUNCE_MS = 150;
 
 const ignore = (promise: Promise<unknown> | undefined): void => {
   void promise?.catch(() => {
@@ -71,6 +75,15 @@ export function mountFindBar(options: FindBarOptions): FindBarController {
 
   let searchedTabId: TabId | undefined;
   let lastQuery = "";
+  /** A navigation cleared the results while the bar had a query: search again once the page loads. */
+  let researchTabId: TabId | undefined;
+  let researchTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const cancelResearch = (): void => {
+    researchTabId = undefined;
+    if (researchTimer !== undefined) clearTimeout(researchTimer);
+    researchTimer = undefined;
+  };
 
   const setCount = (text: string, none = false): void => {
     count.textContent = text;
@@ -97,6 +110,7 @@ export function mountFindBar(options: FindBarOptions): FindBarController {
 
   const hide = (clear: boolean): void => {
     if (bar.hidden) return;
+    cancelResearch();
     if (clear && searchedTabId) ignore(options.bridge.stopFindInPage(searchedTabId));
     searchedTabId = undefined;
     lastQuery = "";
@@ -149,6 +163,7 @@ export function mountFindBar(options: FindBarOptions): FindBarController {
         lastQuery = "";
         searchedTabId = undefined;
         setCount("");
+        researchTabId = !bar.hidden && input.value ? result.tabId : undefined;
         return;
       }
       if (!input.value) return;
@@ -156,6 +171,7 @@ export function mountFindBar(options: FindBarOptions): FindBarController {
       else setCount(`${result.activeMatchOrdinal} of ${result.matches}`);
     },
     tabChanged(previousTabId) {
+      cancelResearch();
       if (bar.hidden) return;
       // Per-tab state: leave the previous page clean and restart for the new one.
       if (previousTabId) ignore(options.bridge.stopFindInPage(previousTabId));
@@ -163,6 +179,16 @@ export function mountFindBar(options: FindBarOptions): FindBarController {
       lastQuery = "";
       setCount("");
       if (input.value) search(true, false);
+    },
+    pageLoaded(tabId) {
+      if (!tabId || researchTabId !== tabId || bar.hidden) return;
+      if (researchTimer !== undefined) clearTimeout(researchTimer);
+      researchTimer = setTimeout(() => {
+        researchTimer = undefined;
+        const pending = researchTabId;
+        researchTabId = undefined;
+        if (!bar.hidden && pending && pending === options.activeTabId() && input.value) search(true, false);
+      }, RESEARCH_DEBOUNCE_MS);
     }
   };
 }

@@ -195,8 +195,8 @@ const KEY_NAMES: Record<string, { mac: string; other: string }> = {
   right: { mac: "→", other: "Right" },
   up: { mac: "↑", other: "Up" },
   down: { mac: "↓", other: "Down" },
-  escape: { mac: "⎋", other: "Esc" },
-  esc: { mac: "⎋", other: "Esc" },
+  escape: { mac: "Esc", other: "Esc" },
+  esc: { mac: "Esc", other: "Esc" },
   tab: { mac: "⇥", other: "Tab" },
   pagedown: { mac: "⇟", other: "PgDn" },
   pageup: { mac: "⇞", other: "PgUp" }

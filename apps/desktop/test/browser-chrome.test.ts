@@ -225,6 +225,32 @@ describe("find bar", () => {
     expect(bridge.findInPage).toHaveBeenCalledWith("t2", "needle", { forward: true, findNext: false });
   });
 
+  it("re-runs the search on the new page once it loads (debounced); empty query does nothing", () => {
+    vi.useFakeTimers();
+    try {
+      const { bar, bridge, type } = setup();
+      bar.open();
+      type("needle");
+      bar.handleResult({ tabId: "t1", activeMatchOrdinal: 0, matches: 0, finalUpdate: true, cleared: true });
+      bridge.findInPage.mockClear();
+      bar.pageLoaded("t1");
+      bar.pageLoaded("t1");
+      expect(bridge.findInPage).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(300);
+      expect(bridge.findInPage).toHaveBeenCalledTimes(1);
+      expect(bridge.findInPage).toHaveBeenCalledWith("t1", "needle", { forward: true, findNext: false });
+
+      type("");
+      bar.handleResult({ tabId: "t1", activeMatchOrdinal: 0, matches: 0, finalUpdate: true, cleared: true });
+      bridge.findInPage.mockClear();
+      bar.pageLoaded("t1");
+      vi.advanceTimersByTime(300);
+      expect(bridge.findInPage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("swallows a rejected stop for a tab that already closed", async () => {
     const { bar, bridge, type, setActive } = setup();
     bridge.stopFindInPage.mockRejectedValue(new Error("Unknown tab."));
@@ -283,6 +309,36 @@ describe("keyboard shortcuts dialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(dialog.isOpen()).toBe(false);
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("returns focus to the page on close when the page had focus", () => {
+    const focusPage = vi.fn();
+    const dialog = mountShortcutsDialog({ platform: "mac", focusPage, pageHadFocus: () => true });
+    dialog.open();
+    const modal = document.getElementById("shortcuts-modal")!;
+    modal.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(focusPage).toHaveBeenCalledTimes(1);
+
+    dialog.open();
+    document.getElementById("shortcuts-close")!.click();
+    expect(focusPage).toHaveBeenCalledTimes(2);
+    dialog.open();
+    document.getElementById("shortcuts-backdrop")!.click();
+    expect(focusPage).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not steal focus when opened from a shell control", () => {
+    const focusPage = vi.fn();
+    const dialog = mountShortcutsDialog({ platform: "mac", focusPage, pageHadFocus: () => false });
+    dialog.open();
+    document.getElementById("shortcuts-close")!.click();
+    expect(focusPage).not.toHaveBeenCalled();
+  });
+
+  it("uses the text Esc, never the ⎋ glyph", () => {
+    const text = [...renderShortcutSections(shortcutSections("mac")).querySelectorAll("kbd")].map((k) => k.textContent);
+    expect(text).toContain("Esc");
+    expect(text.join("")).not.toContain("⎋");
   });
 
   it("closes from the close button and backdrop, once", () => {

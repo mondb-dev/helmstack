@@ -130,6 +130,7 @@ async function bootstrap(): Promise<void> {
 
   const renderTabs = (next: TabSummary[]): void => {
     const previousActive = activeTab()?.id;
+    const wasLoading = activeTab()?.status === "loading";
     tabs = next;
     tabLabels.remember(next);
     renderTabStrip(tabsNode, tabs, activity.agentsByTab(), {
@@ -138,6 +139,9 @@ async function bootstrap(): Promise<void> {
     });
 
     const current = activeTab();
+    if (wasLoading && current && current.id === previousActive && current.status !== "loading") {
+      findBar.pageLoaded(current.id);
+    }
     if (current && current.status !== "loading") {
       pendingAddressValue = null;
     }
@@ -191,6 +195,7 @@ async function bootstrap(): Promise<void> {
     platform,
     onOpen: overlayOpened("shortcuts"),
     onClose: overlayClosed("shortcuts"),
+    focusPage,
   });
 
   const settings = mountSettings({

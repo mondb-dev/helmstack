@@ -11,6 +11,10 @@ export interface ShortcutsDialogOptions {
   platform: ShortcutPlatform;
   onOpen?: () => void;
   onClose?: () => void;
+  /** Return keyboard focus to the page (used when it had focus before the dialog opened). */
+  focusPage?: () => void;
+  /** True when the shell document does not have focus, i.e. the page does. Defaults to `!document.hasFocus()`. */
+  pageHadFocus?: () => boolean;
 }
 
 export interface ShortcutsDialogController {
@@ -60,6 +64,15 @@ export function mountShortcutsDialog(options: ShortcutsDialogOptions): Shortcuts
   if (!modal || !body || !closeButton) throw new Error("Shortcuts dialog markup missing.");
 
   let dialog: DialogHandle | null = null;
+  let returnToPage = false;
+
+  const finish = (): void => {
+    options.onClose?.();
+    if (returnToPage) {
+      returnToPage = false;
+      options.focusPage?.();
+    }
+  };
 
   const hide = (): void => {
     if (!dialog) return;
@@ -67,7 +80,7 @@ export function mountShortcutsDialog(options: ShortcutsDialogOptions): Shortcuts
     dialog = null;
     modal.hidden = true;
     handle.close();
-    options.onClose?.();
+    finish();
   };
 
   closeButton.addEventListener("click", hide);
@@ -77,6 +90,7 @@ export function mountShortcutsDialog(options: ShortcutsDialogOptions): Shortcuts
     open() {
       if (dialog) return;
       body.replaceChildren(renderShortcutSections(shortcutSections(options.platform)));
+      returnToPage = (options.pageHadFocus ?? (() => !document.hasFocus()))();
       modal.hidden = false;
       options.onOpen?.();
       dialog = openDialog(modal, { dismissable: true, initialFocus: closeButton, onClose: () => {
@@ -84,7 +98,7 @@ export function mountShortcutsDialog(options: ShortcutsDialogOptions): Shortcuts
         if (dialog) {
           dialog = null;
           modal.hidden = true;
-          options.onClose?.();
+          finish();
         }
       } });
     },
