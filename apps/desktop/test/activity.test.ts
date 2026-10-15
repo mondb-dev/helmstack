@@ -287,7 +287,12 @@ describe("approval rows upsert in place", () => {
     activeTab = "tab-1";
     controller.refreshForTab();
     expect(rows()[0].className).toContain("activity-row--muted");
-    for (let i = 0; i < ACTIVITY_RENDER_CAP + 5; i += 1) controller.addActivity(activityEntry({ tabId: "tab-1" }));
+    // One batched render proves the cap; adding one more row afterwards proves it holds
+    // incrementally. (Adding 200+ rows one by one re-renders the feed each time, which is
+    // slow under jsdom on a CI runner and says nothing more.)
+    controller.setActivity(Array.from({ length: ACTIVITY_RENDER_CAP + 5 }, () => activityEntry({ tabId: "tab-1" })));
+    expect(rows()).toHaveLength(ACTIVITY_RENDER_CAP);
+    controller.addActivity(activityEntry({ tabId: "tab-1" }));
     expect(rows()).toHaveLength(ACTIVITY_RENDER_CAP);
   });
 });
