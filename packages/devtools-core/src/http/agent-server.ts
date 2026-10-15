@@ -179,12 +179,19 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/extensions
  * POST /api/extensions                    { path: string }
  * DELETE /api/extensions/:id
+ * GET  /api/accounts                      → AccountSummary[]            (desktop only; the daemon answers 501)
+ * POST /api/accounts                     AccountInput → AccountSummary
+ * PATCH /api/accounts/:id                AccountUpdate → AccountSummary
+ * DELETE /api/accounts/:id               → { deleted: id }
+ * GET  /api/accounts/lookup/:origin      → AccountSummary[]            (origin is URL-encoded)
+ * GET  /api/accounts/:id/totp            → TotpResult
  * GET  /api/intent
  * PUT  /api/intent                          { intent: string }
  * POST /api/log                             { level?, message }
  * GET  /api/tabs/:id/logs                  → TabLogSnapshot
  * GET  /api/tabs/:id/har                   → HarArchive (HAR 1.2)
- * DELETE /api/tabs/:id/logs               clears buffered logs * GET  /api/tabs/:id/mock                 → { rules }
+ * DELETE /api/tabs/:id/logs               clears buffered logs
+ * GET  /api/tabs/:id/mock                 → { rules }
  * POST /api/tabs/:id/mock                 { rules: NetworkInterceptRule[] }
  * DELETE /api/tabs/:id/mock              disables interception
  * POST /api/tabs/:id/screenshot/named    { snapshotId } → PageScreenshot
@@ -238,6 +245,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/tabs/:id/storage/:area      area=local|session → StorageEntry[]  (optional ?key=X)
  * POST /api/tabs/:id/storage/:area      { entries: Record<string,string> } → { ok: true }
  * DELETE /api/tabs/:id/storage/:area    body? { keys: string[] } — omit to clear all
+ * POST /api/tabs/:id/evaluate           { expression: string } → { value } — evaluates JavaScript in the page; 400 if expression is not a string
  * POST /api/tabs/:id/insert-text        { text } → { ok: true } — CDP Input.insertText into the focused element
  * POST /api/tabs/:id/key                 { key, modifiers?, code?, keyCode?, text? } → { ok: true } — CDP key press (chords via modifiers bitmask: Alt=1 Ctrl=2 Meta=4 Shift=8)
  * POST /api/tabs/:id/click               { x, y } → { ok: true } — CDP left mouse click at viewport CSS coords (reaches cross-origin iframes)

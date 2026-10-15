@@ -6,7 +6,7 @@ What the GitHub Actions workflows in `.github/workflows` run.
 
 ## `ci.yml`
 
-Runs on pushes and pull requests to `main` and `develop`.
+Runs on pushes and pull requests to `main`.
 
 | Job | Runs on | What it does |
 | --- | --- | --- |
