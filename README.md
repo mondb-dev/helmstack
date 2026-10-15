@@ -109,7 +109,7 @@ Start at the [documentation index](docs/README.md). Contributors: [CONTRIBUTING.
 | `packages/agent-sdk` | TypeScript HTTP client and the lite toolset |
 | `packages/perception` | In-page extractor that builds the perception graph |
 | `packages/shared` | Types, shortcut table, CDP target contract |
-| `apps/agent-example` | Example LLM agents (not published) |
+| `apps/agent-example` | Example agents: an intent-driven one and LLM-backed variants (not published) |
 
 ## License
 

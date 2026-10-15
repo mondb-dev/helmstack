@@ -13,7 +13,6 @@
   "dependencies": {
     "@google/genai": "^1.48.0",
     "@helmstack/agent-sdk": "*",
-    "@helmstack/shared": "*",
     "openai": "^4.79.0"
   }
 }

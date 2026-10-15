@@ -41,6 +41,7 @@
   },
   "devDependencies": {
     "@helmstack/devtools-core": "*",
-    "@helmstack/perception": "*"
+    "@helmstack/perception": "*",
+    "@modelcontextprotocol/sdk": "^1.10.2"
   }
 }
