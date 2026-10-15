@@ -35,6 +35,33 @@ jobs:
       - name: Build packages
         run: npm run build:packages
 
+      # Each preflight check is its own step so a failed release says exactly which
+      # prerequisite is missing (step names are visible without opening the logs).
+      # `if: always()` keeps later checks running so all problems show in one run.
+      - name: Preflight 1/4 - NPM_TOKEN secret is set
+        if: always()
+        run: test -n "$NPM_TOKEN" || { echo "::error::The NPM_TOKEN repository secret is empty or missing."; exit 1; }
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Preflight 2/4 - npm token authenticates
+        if: always()
+        run: npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Preflight 3/4 - token can see the @helmstack scope
+        if: always()
+        run: npm access list packages @helmstack --json
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Preflight 4/4 - GITHUB_TOKEN can push to main
+        if: always()
+        run: git push --dry-run "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Release
         run: npx multi-semantic-release
         env:

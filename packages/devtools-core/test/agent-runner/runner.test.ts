@@ -9,6 +9,9 @@ import { claudeAdapter } from "../../src/agent-runner/adapters/claude.js";
 import { geminiAdapter } from "../../src/agent-runner/adapters/gemini.js";
 import { scrubbedEnv } from "../../src/agent-runner/env.js";
 
+// The runner drives POSIX-style fake CLIs here; Windows reports itself unsupported (see getStatus).
+const d = process.platform === "win32" ? describe.skip : describe;
+
 // A fake `claude`: behaviour is chosen by "MODE:<x>" in the stdin prompt.
 const FAKE = `#!${process.execPath}
 const fs = require("fs");
@@ -104,7 +107,7 @@ async function start(r: AgentRunner, over: Record<string, unknown> = {}) {
   return r.startConversation({ tabId: "tab-1", cliId: "claude", model: "sonnet", ...over });
 }
 
-describe("detection", () => {
+d("detection", () => {
   it("finds the allowlisted binary and its version, ignoring relative PATH entries", async () => {
     const r = makeRunner({ env: { PATH: `relative/dir:${bin}`, HOME: root } });
     const status = await r.refresh();
@@ -133,7 +136,7 @@ describe("detection", () => {
   });
 });
 
-describe("validation", () => {
+d("validation", () => {
   it("rejects model ids with shell metacharacters", async () => {
     const r = makeRunner();
     for (const model of ["a; rm -rf ~", "$(id)", "a b", "`x`", "x".repeat(81), "a|b", "--dangerously-skip-permissions", "-m", "--model"]) {
@@ -164,7 +167,7 @@ describe("validation", () => {
   });
 });
 
-describe("unconfined CLIs", () => {
+d("unconfined CLIs", () => {
   it("require an explicit per-conversation acknowledgement", async () => {
     const r = makeRunner({ adapters: [{ ...claudeAdapter, confined: false, experimental: true }] });
     await expect(start(r)).rejects.toThrow(/explicit acknowledgement/);
@@ -186,7 +189,7 @@ describe("unconfined CLIs", () => {
   });
 });
 
-describe("turns", () => {
+d("turns", () => {
   it("streams events, hides tool arguments and results, and emits before sendMessage resolves", async () => {
     const r = makeRunner();
     const events = collect(r);
@@ -339,7 +342,7 @@ describe("turns", () => {
   });
 });
 
-describe("replay semantics", () => {
+d("replay semantics", () => {
   it("replays the in-progress turn and joins live events without gaps or duplicates", async () => {
     const r = makeRunner({ replayLimit: 500 });
     const live = collect(r);
@@ -370,7 +373,7 @@ describe("replay semantics", () => {
   });
 });
 
-describe("env scrubbing", () => {
+d("env scrubbing", () => {
   it("removes HelmStack and Electron variables", () => {
     const env = scrubbedEnv({ PATH: "/bin", HELMSTACK_AUTH_TOKEN: "x", HELMSTACK_PORT: "1", ELECTRON_RUN_AS_NODE: "1", NODE_OPTIONS: "--r", HOME: "/h" });
     expect(env).toEqual({ PATH: "/bin", HOME: "/h" });
@@ -388,3 +391,12 @@ function alive(pid: number): boolean {
 function readlink(p: string): string {
   return realpathSync(p);
 }
+
+describe("platform support", () => {
+  it("reports Windows as unsupported instead of half-working", () => {
+    const r = makeRunner({ platform: "win32" });
+    const status = r.getStatus();
+    expect(status.enabled).toBe(false);
+    expect(status.reason).toMatch(/Windows/);
+  });
+});

@@ -59,6 +59,8 @@ export type AgentRunnerOptions = {
   /** True under Electron: sets ELECTRON_RUN_AS_NODE for the MCP server. */
   electron?: boolean;
   env?: NodeJS.ProcessEnv;
+  /** Override for tests. Default `process.platform`. */
+  platform?: NodeJS.Platform;
   adapters?: readonly AgentCliAdapter[];
   detect?: DetectOptions;
   tmpRoot?: string;
@@ -139,10 +141,16 @@ export class AgentRunner {
   }
 
   getStatus(): AgentRunnerStatus {
-    const enabled = !!this.opts.mcpEntry && existsSync(this.opts.mcpEntry);
+    // Windows installs agent CLIs as .cmd shims, which Node can no longer spawn without a
+    // shell; resolving them safely is not done yet, so say so instead of half-working.
+    const unsupportedPlatform = (this.opts.platform ?? process.platform) === "win32";
+    const enabled = !unsupportedPlatform && !!this.opts.mcpEntry && existsSync(this.opts.mcpEntry);
+    const reason = unsupportedPlatform
+      ? "In-window agent chat isn't supported on Windows yet."
+      : (this.opts.disabledReason ?? "The HelmStack MCP server entry was not found.");
     return {
       enabled,
-      ...(enabled ? {} : { reason: this.opts.disabledReason ?? "The HelmStack MCP server entry was not found." }),
+      ...(enabled ? {} : { reason }),
       clis: this.clis,
       defaultWorkingDirectory: this.opts.defaultWorkingDirectory
     };
