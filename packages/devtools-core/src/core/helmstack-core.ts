@@ -7,6 +7,8 @@
  */
 import type {
   A11yAuditReport,
+  SeoAuditOptions,
+  SeoAuditReport,
   ApprovalDecision,
   ApprovalPolicyKey,
   ApprovalPolicyRecord,
@@ -623,15 +625,28 @@ export class HelmstackCore implements AgentApi {
   // ── Inspection ────────────────────────────────────────────────────────────
 
   /** Core Web Vitals + WCAG audit + console errors + failed requests + layout overflow. */
-  async captureHealthReport(tabId: TabId): Promise<HealthReport> {
+  async captureHealthReport(tabId: TabId, options: { includeSeo?: boolean } = {}): Promise<HealthReport> {
     const session = this.requireSession(tabId);
-    const [performance, accessibility, layout] = await Promise.all([
+    const includeSeo = options.includeSeo !== false;
+    const [performance, accessibility, layout, seo] = await Promise.all([
       session.capturePerformanceMetrics(),
       session.auditAccessibility(),
-      session.detectLayoutIssues()
+      session.detectLayoutIssues(),
+      // The SEO category is best-effort: an audit failure must not break the report.
+      includeSeo ? session.captureSeoAudit().catch(() => undefined) : Promise.resolve(undefined)
     ]);
     const logs = session.getTabLogs();
-    return buildHealthReport({ performance, accessibility, logs, layout }, tabId, session.cdp.url(), Date.now());
+    return buildHealthReport(
+      { performance, accessibility, logs, layout, ...(seo ? { seo } : {}) },
+      tabId,
+      session.cdp.url(),
+      Date.now()
+    );
+  }
+
+  /** Deterministic SEO audit; see `TabSession.captureSeoAudit`. */
+  seoAudit(tabId: TabId, options: SeoAuditOptions = {}): Promise<SeoAuditReport> {
+    return this.requireSession(tabId).captureSeoAudit(options);
   }
 
   capturePerformanceMetrics(tabId: TabId): Promise<PerformanceReport> {

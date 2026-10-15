@@ -197,6 +197,7 @@ The browser is now running and waiting on `127.0.0.1:7070`.
 | `browser_list_screenshots` / `browser_delete_screenshot` | Manage cached screenshot snapshots |
 | `browser_viewport_suite` | Capture responsive screenshots across viewport presets |
 | `browser_performance` / `browser_a11y_audit` | Capture performance metrics and accessibility findings |
+| `browser_seo_audit` | Deterministic SEO audit: metadata, indexability (robots meta, X-Robots-Tag, robots.txt), headings/links/alt text, Open Graph, JSON-LD; optional bounded same-origin link check. Scores 0-100 and feeds the health report's SEO category |
 | `browser_inspect_element_styles` | Inspect computed styles, box model, contrast, bounds, and style issues for matched elements |
 | `browser_assert_element_styles` | Assert CSS values or numeric thresholds for matched elements |
 | `browser_component_tree` / `browser_threejs_scene` | Inspect framework component trees and Three.js scenes |
@@ -862,11 +863,11 @@ npx tsc --noEmit -p apps/desktop/tsconfig.json
 
 ### Agent API contract suite
 
-`packages/devtools-core/test/contract/` holds one HTTP scenario set for the agent API (tabs, perception + snapshot diff, screenshots + viewport suite + screenshot diff, a11y, element styles, layout issues, design tokens, focus order, network mock, logs + HAR, coverage, storage, cookies, assertion watches, approvals, health, 501 slices). It runs against several backends:
+`packages/devtools-core/test/contract/` holds one HTTP scenario set for the agent API (tabs, perception + snapshot diff, screenshots + viewport suite + screenshot diff, a11y, SEO audit, element styles, layout issues, design tokens, focus order, network mock, logs + HAR, coverage, storage, cookies, assertion watches, approvals, health, 501 slices). It runs against several backends:
 
 | Factory | File | Runs |
 | --- | --- | --- |
-| core + scripted backend | `scripted.contract.test.ts` | Always. No browser, so scenarios that read in-page collector results (a11y, styles, layout, tokens, focus order, coverage, storage, cookies, console) are skipped. |
+| core + scripted backend | `scripted.contract.test.ts` | Always. No browser, so scenarios that read in-page collector results (a11y, styles, layout, tokens, focus order, coverage, storage, cookies, console) are skipped. The SEO scenarios run on both: the scripted backend answers the collector with equivalent signals, and only the active `checkLinks` scenario needs a real browser. |
 | daemon (headless Chrome) | `daemon.contract.test.ts` | When Chrome is found (`HELMSTACK_CHROME_PATH`, a system install, or `npx @puppeteer/browsers install chrome@stable`). With `CI_REQUIRE_CHROME=1`, a missing Chrome fails the run instead of skipping. |
 | external instance | `external.contract.test.ts` | Only when `HELMSTACK_CONTRACT_URL` is set. |
 

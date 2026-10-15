@@ -258,6 +258,11 @@ describe("activity table", () => {
     const a11y = matchActivityRoute("GET", "/api/tabs/t/a11y").summarize;
     expect(summarizeResponse(a11y, { violations: "nope" })).toBeUndefined();
     expect(summarizeResponse(a11y, null)).toBeUndefined();
+    const seo = matchActivityRoute("GET", "/api/tabs/t/seo");
+    expect(seo.label).toBe("SEO audit");
+    expect(summarizeResponse(seo.summarize, { counts: { error: 3, warning: 5, info: 9 } })).toBe("3 errors · 5 warnings");
+    expect(summarizeResponse(seo.summarize, { counts: { error: 1, warning: 1 } })).toBe("1 error · 1 warning");
+    expect(summarizeResponse(seo.summarize, { counts: "nope" })).toBeUndefined();
     const perception = matchActivityRoute("GET", "/api/tabs/t/perception").summarize;
     expect(summarizeResponse(perception, { result: { graph: { forms: [1], actions: [1, 2] } } })).toBe("1 form, 2 actions");
     const diff = matchActivityRoute("POST", "/api/screenshots/diff").summarize;

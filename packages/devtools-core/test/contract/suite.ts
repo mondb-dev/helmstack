@@ -24,6 +24,7 @@ const POLL = { timeout: 15_000, interval: 200 };
 const isNumber = expect.any(Number);
 const isString = expect.any(String);
 const isArray = expect.any(Array);
+const isObject = expect.any(Object);
 
 /** Unique per run so scenarios never collide with state on an external instance. */
 const runTag = randomBytes(4).toString("hex");
@@ -262,6 +263,92 @@ export function defineContractSuite(factory: BackendFactory): void {
         });
         expect(audit.score).toBeGreaterThanOrEqual(0);
         expect(audit.score).toBeLessThanOrEqual(100);
+      });
+    }, SLOW);
+
+    // SEO audit: the fixture pages are served by the local fixture server; the
+    // scripted backend answers the collector with equivalent signals.
+    it("seo audit: a clean page passes and reports section summaries", async () => {
+      await withTab(pages.seoGood, async (tabId) => {
+        await perceive(tabId, (p) => p.result.graph.url === pages.seoGood);
+        const seo = await ok("GET", `/api/tabs/${tabId}/seo`);
+        expect(seo).toMatchObject({
+          tabId, url: pages.seoGood, capturedAt: isNumber, score: isNumber, pass: true,
+          issues: isArray, counts: { error: 0, warning: isNumber, info: isNumber },
+          skipped: isArray, unsupported: isArray, truncated: false,
+          options: { checkLinks: false, maxLinks: 25 },
+          sections: {
+            metadata: { status: isString, counts: isObject, data: { canonical: { status: "self" } } },
+            indexability: { data: { indexable: true, robotsTxt: { fetched: true, allowedForAll: true, allowedForGooglebot: true } } },
+            content: { data: { h1Count: 1 } },
+            social: { data: { openGraph: expect.objectContaining({ "og:title": isString }) } },
+            structuredData: { data: { types: ["Organization"] } },
+            links: { data: { checked: null } }
+          }
+        });
+        expect(seo.counts.warning).toBe(0);
+        expect(seo.score).toBe(100);
+        expect(seo.sections.indexability.data.robotsTxt.sitemaps).toEqual([`${pages.origin}/sitemap.xml`]);
+      });
+    }, SLOW);
+
+    it("seo audit: a problem page fails with actionable issues and is blocked by robots.txt", async () => {
+      await withTab(pages.seoBad, async (tabId) => {
+        await perceive(tabId, (p) => p.result.graph.url === pages.seoBad);
+        const seo = await ok("GET", `/api/tabs/${tabId}/seo`);
+        const byId = (id: string): Json => seo.issues.find((i: Json) => i.id === id);
+        expect(seo.pass).toBe(false);
+        for (const id of ["title-missing", "noindex", "h1-multiple", "jsonld-parse-error", "robots-txt-disallowed", "image-alt-missing", "link-text-generic-ambiguous"]) {
+          expect(byId(id), id).toMatchObject({ section: isString, severity: isString, message: isString, fix: isString });
+        }
+        expect(byId("title-missing").severity).toBe("error");
+        expect(byId("noindex").severity).toBe("error");
+        expect(byId("jsonld-parse-error").message).toContain("block 0");
+        expect(seo.sections.indexability.data.robotsTxt).toMatchObject({ allowedForAll: false, allowedForGooglebot: false });
+        expect(seo.counts.error).toBe(3);
+        expect(seo.score).toBeLessThan(60);
+        // Opt-in only: a default audit never actively checks links.
+        expect(seo.sections.links.data.checked).toBeNull();
+      });
+    }, SLOW);
+
+    it("seo audit: X-Robots-Tag comes from the network log and only allowlisted headers are exposed", async () => {
+      await withTab(pages.seoHeaderNoindex, async (tabId) => {
+        await perceive(tabId, (p) => p.result.graph.url === pages.seoHeaderNoindex);
+        let seo: Json = null;
+        await expect
+          .poll(async () => {
+            seo = await ok("GET", `/api/tabs/${tabId}/seo`);
+            return seo.sections.indexability.data.xRobotsTag;
+          }, POLL)
+          .toBe("noindex");
+        const noindex = seo.issues.find((i: Json) => i.id === "noindex");
+        expect(noindex.evidence).toContain("X-Robots-Tag");
+        expect(seo.sections.indexability.data.indexable).toBe(false);
+        const headerNames = Object.keys(seo.sections.indexability.data.headers);
+        for (const name of headerNames) expect(["x-robots-tag", "content-type", "link", "location"]).toContain(name);
+        expect(JSON.stringify(seo)).not.toContain("contract-secret");
+      });
+    }, SLOW);
+
+    it("seo audit: validates maxLinks", async () => {
+      await withTab(pages.seoGood, async (tabId) => {
+        expect((await call("GET", `/api/tabs/${tabId}/seo?maxLinks=0`)).status).toBe(400);
+        expect((await call("GET", `/api/tabs/${tabId}/seo?maxLinks=101`)).status).toBe(400);
+        expect((await call("GET", `/api/tabs/${tabId}/seo?maxLinks=abc`)).status).toBe(400);
+      });
+    }, SLOW);
+
+    it.skipIf(needsBrowser)("seo audit: checkLinks reports broken same-origin links through the page", async () => {
+      await withTab(pages.seoBad, async (tabId) => {
+        await perceive(tabId, (p) => p.result.graph.url === pages.seoBad);
+        const seo = await ok("GET", `/api/tabs/${tabId}/seo?checkLinks=true&maxLinks=5`);
+        expect(seo.options).toEqual({ checkLinks: true, maxLinks: 5 });
+        const checked: Json[] = seo.sections.links.data.checked;
+        expect(checked.length).toBeLessThanOrEqual(5);
+        expect(checked.find((c) => c.url === `${pages.origin}/missing.html`)).toMatchObject({ status: 404 });
+        expect(checked.find((c) => c.url === `${pages.origin}/blank.html`)).toMatchObject({ status: 200 });
+        expect(seo.issues.find((i: Json) => i.id === "link-broken-4xx")).toMatchObject({ severity: "error" });
       });
     }, SLOW);
 

@@ -62,6 +62,7 @@ describe("MCP tool gating", () => {
     // Core front-end-dev tools remain available without the capability.
     expect(tools).toContain("browser_screenshot");
     expect(tools).toContain("browser_a11y_audit");
+    expect(tools).toContain("browser_seo_audit");
     expect(tools).toContain("browser_css_coverage");
   });
 

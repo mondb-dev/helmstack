@@ -189,8 +189,9 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * POST /api/tabs/:id/changed-elements     { regions: DiffRegion[] } → ChangedElement[]
  * POST /api/tabs/:id/viewport-suite      { presets?, includeDiffs?, includeLayoutIssues? } → ViewportSuiteReport
  * GET  /api/tabs/:id/performance         → PerformanceReport
- * GET  /api/tabs/:id/health               → HealthReport (aggregated scorecard)
+ * GET  /api/tabs/:id/health               → HealthReport (aggregated scorecard; ?seo=false omits the SEO category)
  * GET  /api/tabs/:id/a11y               → A11yAuditReport (?selector= scopes to a subtree)
+ * GET  /api/tabs/:id/seo                → SeoAuditReport (?checkLinks=true&maxLinks=25 opts into a bounded link check)
  * GET  /api/tabs/:id/focus-order        → FocusOrderReport
  * POST /api/tabs/:id/styles/inspect     { selector, limit? } → ElementStyleInspectionReport
  * POST /api/tabs/:id/styles/assert      { selector, assertions, limit? } → ElementStyleAssertionReport
@@ -1012,7 +1013,23 @@ export class AgentServer {
     // ── Aggregated page-health scorecard ──────────────────────────────────────
     const healthMatch = p.match(/^\/api\/tabs\/([^/]+)\/health$/);
     if (method === "GET" && healthMatch) {
-      return json(res, await this.tabs.captureHealthReport(healthMatch[1] as TabId));
+      const includeSeo = url.searchParams.get("seo") !== "false";
+      return json(res, await this.tabs.captureHealthReport(healthMatch[1] as TabId, { includeSeo }));
+    }
+
+    // ── SEO audit ─────────────────────────────────────────────────────────────
+    const seoMatch = p.match(/^\/api\/tabs\/([^/]+)\/seo$/);
+    if (method === "GET" && seoMatch) {
+      const checkLinks = url.searchParams.get("checkLinks") === "true";
+      const rawMax = url.searchParams.get("maxLinks");
+      let maxLinks: number | undefined;
+      if (rawMax !== null) {
+        maxLinks = Number(rawMax);
+        if (!Number.isInteger(maxLinks) || maxLinks < 1 || maxLinks > 100) {
+          return error(res, 400, "maxLinks must be an integer between 1 and 100");
+        }
+      }
+      return json(res, await this.tabs.seoAudit(seoMatch[1] as TabId, { checkLinks, ...(maxLinks !== undefined ? { maxLinks } : {}) }));
     }
 
     // ── Accessibility audit ───────────────────────────────────────────────────

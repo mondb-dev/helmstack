@@ -5,6 +5,7 @@ import type {
   A11yAuditReport,
   LayoutIssuesReport,
   PerformanceReport,
+  SeoAuditReport,
   TabLogSnapshot
 } from "../../shared/src/index.js";
 
@@ -35,6 +36,10 @@ function logs(over: Partial<TabLogSnapshot> = {}): TabLogSnapshot {
 
 function layout(over: Partial<LayoutIssuesReport> = {}): LayoutIssuesReport {
   return { tabId: "t", url: "u", capturedAt: 0, viewport: { width: 1440, height: 900 }, hasHorizontalOverflow: false, documentScrollWidth: 1440, issues: [], ...over };
+}
+
+function seo(score: number, errors: number, warnings: number): SeoAuditReport {
+  return { score, pass: errors === 0, counts: { error: errors, warning: warnings, info: 0 } } as unknown as SeoAuditReport;
 }
 
 const healthy: HealthInputs = {
@@ -88,5 +93,26 @@ describe("buildHealthReport", () => {
   it("skips missing vitals rather than penalizing them", () => {
     const report = buildHealthReport({ ...healthy, performance: perf({}) }, "t", "u", 1);
     expect(report.categories.find((c) => c.id === "performance")!.score).toBe(100);
+  });
+
+  it("adds an SEO category only when SEO signals are supplied", () => {
+    const without = buildHealthReport(healthy, "t", "u", 1);
+    expect(without.categories.map((c) => c.id)).not.toContain("seo");
+
+    const withSeo = buildHealthReport({ ...healthy, seo: seo(100, 0, 0) }, "t", "u", 1);
+    expect(withSeo.categories).toHaveLength(6);
+    expect(withSeo.categories.at(-1)).toMatchObject({ id: "seo", label: "SEO", score: 100, pass: true });
+    expect(withSeo.pass).toBe(true);
+  });
+
+  it("fails the gate on an SEO error but not on SEO warnings alone", () => {
+    const warnOnly = buildHealthReport({ ...healthy, seo: seo(88, 0, 3) }, "t", "u", 1);
+    expect(warnOnly.categories.find((c) => c.id === "seo")).toMatchObject({ score: 88, pass: true });
+    expect(warnOnly.pass).toBe(true);
+
+    const failing = buildHealthReport({ ...healthy, seo: seo(76, 1, 3) }, "t", "u", 1);
+    expect(failing.categories.find((c) => c.id === "seo")!.pass).toBe(false);
+    expect(failing.pass).toBe(false);
+    expect(failing.summary).toMatch(/Failing: SEO/);
   });
 });

@@ -14,6 +14,8 @@
  */
 import type {
   A11yAuditReport,
+  SeoAuditOptions,
+  SeoAuditReport,
   AccountInput,
   AccountSummary,
   AccountUpdate,
@@ -151,7 +153,9 @@ export interface ScreenshotApi {
 /** Read-only page inspection / audit tools. */
 export interface InspectApi {
   capturePerformanceMetrics(tabId: TabId): Promise<PerformanceReport>;
-  captureHealthReport(tabId: TabId): Promise<HealthReport>;
+  /** `includeSeo` defaults to true; pass false to keep the scorecard to its original five categories. */
+  captureHealthReport(tabId: TabId, options?: { includeSeo?: boolean }): Promise<HealthReport>;
+  seoAudit(tabId: TabId, options?: SeoAuditOptions): Promise<SeoAuditReport>;
   auditAccessibility(tabId: TabId, selector?: string): Promise<A11yAuditReport>;
   auditFocusOrder(tabId: TabId): Promise<FocusOrderReport>;
   inspectElementStyles(tabId: TabId, selector: string, options?: { limit?: number }): Promise<ElementStyleInspectionReport>;

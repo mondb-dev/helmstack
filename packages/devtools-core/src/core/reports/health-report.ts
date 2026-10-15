@@ -4,6 +4,7 @@ import type {
   HealthReport,
   LayoutIssuesReport,
   PerformanceReport,
+  SeoAuditReport,
   TabId,
   TabLogSnapshot
 } from "../../../../shared/src/index.js";
@@ -13,6 +14,8 @@ export type HealthInputs = {
   accessibility: A11yAuditReport;
   logs: TabLogSnapshot;
   layout: LayoutIssuesReport;
+  /** When present, adds the "seo" category. */
+  seo?: SeoAuditReport;
 };
 
 const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
@@ -52,6 +55,20 @@ function accessibilityCategory(a11y: A11yAuditReport): HealthCategory {
   };
 }
 
+/**
+ * SEO category: the audit's own 0-100 score; passes when the audit has no
+ * error-severity issues (warnings lower the score but do not fail the gate).
+ */
+function seoCategory(seo: SeoAuditReport): HealthCategory {
+  return {
+    id: "seo",
+    label: "SEO",
+    score: clamp(seo.score),
+    pass: seo.pass,
+    details: `${seo.counts.error} error(s), ${seo.counts.warning} warning(s); score ${seo.score}/100`
+  };
+}
+
 function consoleCategory(logs: TabLogSnapshot): HealthCategory {
   const errors = logs.jsErrors.length + logs.consoleLogs.filter((l) => l.level === "error").length;
   return {
@@ -88,9 +105,12 @@ function layoutCategory(layout: LayoutIssuesReport): HealthCategory {
 }
 
 /**
- * Fuse performance, accessibility, console, network, and layout signals into a
+ * Fuse performance, accessibility, console, network, layout (and, when supplied,
+ * SEO) signals into a
  * single Lighthouse-style scorecard. Pure — unit-testable from hand-built
  * inputs. `pass` is true only when every category passes (a CI gate).
+ * `overallScore` is the unweighted mean of the category scores, so adding the
+ * SEO category rebalances the mean from 5 to 6 equal parts.
  */
 export function buildHealthReport(inputs: HealthInputs, tabId: TabId, url: string, capturedAt: number): HealthReport {
   const categories = [
@@ -98,7 +118,8 @@ export function buildHealthReport(inputs: HealthInputs, tabId: TabId, url: strin
     accessibilityCategory(inputs.accessibility),
     consoleCategory(inputs.logs),
     networkCategory(inputs.logs),
-    layoutCategory(inputs.layout)
+    layoutCategory(inputs.layout),
+    ...(inputs.seo ? [seoCategory(inputs.seo)] : [])
   ];
   const overallScore = clamp(categories.reduce((a, c) => a + c.score, 0) / categories.length);
   const pass = categories.every((c) => c.pass);

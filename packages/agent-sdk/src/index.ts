@@ -54,6 +54,14 @@ function readDefaultAuthToken(): string | undefined {
 
 // ── Re-export shared types agents need ────────────────────────────────────────
 export type {
+  SeoAuditOptions,
+  SeoAuditReport,
+  SeoCanonicalStatus,
+  SeoIssue,
+  SeoSectionId,
+  SeoSeverity,
+  SeoSeverityCounts,
+  SeoSkippedCheck,
   A11yAuditReport,
   A11yImpact,
   A11yRuleSummary,
@@ -126,6 +134,8 @@ export type {
 } from "../../shared/src/index.js";
 
 import type {
+  SeoAuditOptions,
+  SeoAuditReport,
   A11yAuditReport,
   FocusOrderReport,
   AccountInput,
@@ -667,10 +677,36 @@ export class BrowserClient {
 
   /**
    * Aggregated page-health scorecard: Core Web Vitals + WCAG audit + console
-   * errors + failed requests + layout overflow, with a pass/fail CI gate.
+   * errors + failed requests + layout overflow + SEO, with a pass/fail CI gate.
+   * Pass `{ includeSeo: false }` to omit the SEO category (the original five).
    */
-  async getHealthReport(tabId: TabId): Promise<HealthReport> {
-    return this.get(`/api/tabs/${tabId}/health`);
+  async getHealthReport(tabId: TabId, options: { includeSeo?: boolean } = {}): Promise<HealthReport> {
+    const qs = options.includeSeo === false ? "?seo=false" : "";
+    return this.get(`/api/tabs/${tabId}/health${qs}`);
+  }
+
+  /**
+   * Deterministic SEO audit of the loaded page: metadata (title, description,
+   * canonical, lang, viewport, charset, hreflang), indexability (robots meta,
+   * X-Robots-Tag, HTTP status, robots.txt), content structure (h1, heading
+   * order, alt text, link text), Open Graph / Twitter cards and JSON-LD.
+   * Returns a 0-100 score, `pass` (no error-severity issues), issues with fix
+   * hints, per-section summaries and notes for checks that could not run.
+   *
+   * Makes no requests of its own beyond same-origin `fetch` from the page
+   * (`/robots.txt`; with `checkLinks`, up to `maxLinks` same-origin links).
+   *
+   * @example
+   * const seo = await browser.seoAudit(tabId);
+   * console.log(`SEO ${seo.score}/100`, seo.counts);
+   * for (const i of seo.issues.filter((i) => i.severity === "error")) console.log(i.id, i.fix);
+   */
+  async seoAudit(tabId: TabId, options: SeoAuditOptions = {}): Promise<SeoAuditReport> {
+    const params = new URLSearchParams();
+    if (options.checkLinks) params.set("checkLinks", "true");
+    if (options.maxLinks !== undefined) params.set("maxLinks", String(options.maxLinks));
+    const qs = params.toString();
+    return this.get(`/api/tabs/${tabId}/seo${qs ? `?${qs}` : ""}`);
   }
 
   /**

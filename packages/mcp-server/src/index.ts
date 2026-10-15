@@ -595,9 +595,12 @@ server.tool(
 
 server.tool(
   "browser_health_report",
-  "Aggregated page-health scorecard fusing Core Web Vitals, the WCAG audit, console/JS errors, failed network requests, and layout overflow into per-category scores plus an overall score and a pass/fail gate (suitable for CI).",
-  { tabId: z.string().describe("Tab ID") },
-  async ({ tabId }) => jsonResult(await browser.getHealthReport(tabId))
+  "Aggregated page-health scorecard fusing Core Web Vitals, the WCAG audit, console/JS errors, failed network requests, layout overflow and SEO (metadata, indexability, structured data) into per-category scores plus an overall score and a pass/fail gate (suitable for CI). Set includeSeo=false to omit the SEO category.",
+  {
+    tabId: z.string().describe("Tab ID"),
+    includeSeo: z.boolean().optional().describe("Include the SEO category (default true)")
+  },
+  async ({ tabId, includeSeo }) => jsonResult(await browser.getHealthReport(tabId, { includeSeo }))
 );
 
 server.tool(
@@ -638,6 +641,26 @@ Pass an optional 'selector' to scope the audit to that element's subtree (page-l
     selector: z.string().optional().describe("Optional CSS selector to scope the audit to one element's subtree")
   },
   async ({ tabId, selector }) => jsonResult(await browser.auditAccessibility(tabId, selector))
+);
+
+server.tool(
+  "browser_seo_audit",
+  `Deterministic SEO audit of the loaded page. Use it after changing page metadata, headings, structured data, or before shipping a page.
+
+Covers:
+- metadata: title and meta description presence/length, canonical (absolute, single, self vs different), html lang, viewport, charset, hreflang set
+- indexability: meta robots / googlebot noindex/nofollow, X-Robots-Tag header, main document HTTP status and redirects, robots.txt rules for * and Googlebot, Sitemap lines
+- content: single h1, heading level skips, empty headings, images missing alt, generic or ambiguous link text, links without href or with javascript:, nofollow counts, word count
+- social / structured data: Open Graph and Twitter card tags, JSON-LD parse errors, @types and missing required properties for Article, Product, Organization, BreadcrumbList, FAQPage, WebSite
+- links: internal/external inventory; with checkLinks=true, a bounded same-origin HEAD/GET check (default 25, max 100 links) reporting 4xx/5xx and redirects
+
+Returns score 0-100 (100 - 12 per error - 4 per warning, floor 0), pass (no error-severity issues), issues (id, severity, message, evidence, fix, selectors), per-section summaries, and skipped/unsupported notes for checks that could not run. Only same-origin fetches from the page are made; checkLinks defaults off.`,
+  {
+    tabId: z.string().describe("Tab ID"),
+    checkLinks: z.boolean().optional().describe("Actively check same-origin links through the page (default false)"),
+    maxLinks: z.number().int().min(1).max(100).optional().describe("Max links to check when checkLinks is true; default 25, max 100")
+  },
+  async ({ tabId, checkLinks, maxLinks }) => jsonResult(await browser.seoAudit(tabId, { checkLinks, maxLinks }))
 );
 
 server.tool(

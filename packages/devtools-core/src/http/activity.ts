@@ -140,6 +140,14 @@ export const ACTIVITY_ROUTES: readonly ActivityRoute[] = [
     summarize: (d) => (typeof d.overallScore === "number" ? `Score ${Math.round(d.overallScore)}` : undefined)
   },
   { method: "GET", pattern: "/api/tabs/:id/a11y", label: "Accessibility audit", summarize: (d) => count(len(d.violations), "issue") },
+  {
+    method: "GET", pattern: "/api/tabs/:id/seo", label: "SEO audit",
+    summarize: (d) => {
+      const c = d.counts as Record<string, unknown> | undefined;
+      if (!c || typeof c.error !== "number" || typeof c.warning !== "number") return undefined;
+      return `${count(c.error, "error")} · ${count(c.warning, "warning")}`;
+    }
+  },
   { method: "GET", pattern: "/api/tabs/:id/focus-order", label: "Focus order audit" },
   { method: "POST", pattern: "/api/tabs/:id/styles/inspect", label: "Inspect element styles", summarize: (d) => count(d.matchedCount, "element") },
   { method: "POST", pattern: "/api/tabs/:id/styles/assert", label: "Assert element styles", summarize: passFail },

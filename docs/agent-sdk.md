@@ -468,6 +468,35 @@ console.log(`LCP: ${perf.lcp}ms  CLS: ${perf.cls}  TBT: ${perf.tbt}ms`);
 console.log(`JS heap: ${(perf.jsHeapUsed / 1e6).toFixed(1)} MB`);
 ```
 
+### SEO Audit
+
+```typescript
+const seo = await browser.seoAudit(tabId);           // add { checkLinks: true, maxLinks: 25 } to opt into a link check
+console.log(`SEO ${seo.score}/100, pass=${seo.pass}`, seo.counts);   // { error, warning, info }
+for (const issue of seo.issues.filter((i) => i.severity !== "info")) {
+  console.log(`[${issue.severity}] ${issue.id}: ${issue.message}`);
+  console.log(`  fix: ${issue.fix}`);
+}
+```
+
+Covers metadata (title, description, canonical, `lang`, viewport, charset, hreflang), indexability
+(meta robots/googlebot, `X-Robots-Tag`, document status, `robots.txt` for `*` and Googlebot), content
+(single h1, heading skips, alt text, generic link text, no-href/`javascript:` links), Open Graph / Twitter
+cards and JSON-LD (parse errors, `@type`s, required properties for Article, Product, Organization,
+BreadcrumbList, FAQPage, WebSite). Route: `GET /api/tabs/:id/seo?checkLinks=&maxLinks=` (max 100).
+
+- **Score:** `max(0, 100 - 12 x errors - 4 x warnings)`; info issues do not deduct and every issue counts
+  once, so the score is monotonic. `pass` means no error-severity issues.
+- **Network:** no requests of its own. `/robots.txt` (and, only with `checkLinks`, up to `maxLinks`
+  same-origin links; concurrency 4, 5s timeout) are fetched through the page. Redirects report the final URL
+  only; intermediate hops are not observable from page `fetch`.
+- **Headers:** `X-Robots-Tag` and the status come from the tab's network log. Only `x-robots-tag`,
+  `content-type`, `link` and `location` are copied into the report; cookies and auth headers never are.
+- **Not checkable offline:** reciprocal hreflang links (listed under `unsupported`). Checks that could not
+  run (e.g. robots.txt unreachable) are listed under `skipped` and are info, not errors.
+- **Health report:** `getHealthReport(tabId)` includes an `seo` category (equal weight in `overallScore`,
+  fails the gate on any SEO error). Pass `{ includeSeo: false }` (`?seo=false`) to get the previous five categories.
+
 ### Accessibility Audit
 
 ```typescript

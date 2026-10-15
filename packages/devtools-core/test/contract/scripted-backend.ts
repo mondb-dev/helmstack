@@ -13,6 +13,61 @@ import type { CdpTarget, PageObservation, TabId, TabSummary } from "../../../sha
 import type { BackendTab, BrowserBackend, TabLifecycleEvent } from "../../src/backend.js";
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
+
+/**
+ * What the SEO collector would read from the fixture SEO pages (see
+ * fixture-server.ts): `seo-bad` has deliberate problems, anything else is clean.
+ */
+function seoSignalsFor(url: string): Record<string, unknown> {
+  const origin = new URL(url).origin;
+  const good = {
+    url, origin,
+    titles: ["Clean SEO fixture page for contract tests"],
+    descriptions: ["A deliberately clean fixture page whose metadata, headings and structured data are all valid."],
+    canonicals: [{ href: url, resolved: url }],
+    lang: "en", viewport: "width=device-width, initial-scale=1",
+    charset: { meta: "utf-8", httpEquiv: null, document: "UTF-8" },
+    hreflang: [], robotsMeta: [],
+    headings: [{ level: 1, text: "Clean SEO fixture", selector: "h1", empty: false }, { level: 2, text: "Details", selector: "h2", empty: false }],
+    images: { total: 1, missingAlt: 0, missingAltSelectors: [] },
+    links: [{ href: "/blank.html", abs: `${origin}/blank.html`, text: "Blank fixture page", rel: "", selector: "a" }],
+    linkTotal: 1, wordCount: 320,
+    openGraph: { "og:title": "t", "og:description": "d", "og:image": `${origin}/og.png`, "og:url": url, "og:type": "website" },
+    twitter: { "twitter:card": "summary_large_image" },
+    jsonLd: [JSON.stringify({ "@context": "https://schema.org", "@type": "Organization", name: "Fixture Co", url: origin, logo: `${origin}/logo.png` })],
+    microdataItems: 0, rdfaItems: 0,
+    navigation: { responseStatus: 200, redirectCount: 0 }
+  };
+  if (!url.includes("seo-bad")) return good;
+  return {
+    ...good,
+    titles: [], descriptions: [], canonicals: [], lang: null, viewport: null,
+    charset: { meta: "utf-8", httpEquiv: null, document: "UTF-8" },
+    robotsMeta: [{ name: "robots", content: "noindex, nofollow" }],
+    headings: [
+      { level: 1, text: "First", selector: "h1", empty: false },
+      { level: 1, text: "Second", selector: "h1", empty: false },
+      { level: 4, text: "Skipped", selector: "h4", empty: false }
+    ],
+    images: { total: 1, missingAlt: 1, missingAltSelectors: ["img"] },
+    links: [
+      { href: "/blank.html", abs: `${origin}/blank.html`, text: "Read more", rel: "", selector: "a.one" },
+      { href: "/seo-good.html", abs: `${origin}/seo-good.html`, text: "Read more", rel: "", selector: "a.two" },
+      { href: "/missing.html", abs: `${origin}/missing.html`, text: "Gone page", rel: "", selector: "a.three" }
+    ],
+    linkTotal: 3, wordCount: 5, openGraph: {}, twitter: {},
+    jsonLd: ['{ "@type": "Product", ']
+  };
+}
+
+/** /robots.txt as `fixture-server.ts` serves it. */
+function robotsFor(url: string): Record<string, unknown> {
+  const origin = new URL(url).origin;
+  return {
+    ok: true, status: 200, url: `${origin}/robots.txt`, contentType: "text/plain",
+    text: `User-agent: *\nDisallow: /private/\nSitemap: ${origin}/sitemap.xml\n`
+  };
+}
 const PERCEPTION_CONTEXT_ID = 4242;
 
 type Listener = (method: string, params: Record<string, unknown>) => void;
@@ -82,6 +137,12 @@ class ScriptedCdpTarget implements CdpTarget {
         if (params.contextId === PERCEPTION_CONTEXT_ID) {
           return { result: { type: "string", value: JSON.stringify(observationFor(this.tab.url, this.tab.title())) } };
         }
+        if (typeof params.expression === "string" && params.expression.includes("application/ld+json")) {
+          return { result: { type: "object", value: seoSignalsFor(this.tab.url) } };
+        }
+        if (typeof params.expression === "string" && params.expression.includes('fetch("/robots.txt"')) {
+          return { result: { type: "object", value: robotsFor(this.tab.url) } };
+        }
         return { result: { type: "undefined" } };
       case "Emulation.setDeviceMetricsOverride":
         this.metrics = { width: Number(params.width), height: Number(params.height) };
@@ -136,7 +197,12 @@ class ScriptedCdpTarget implements CdpTarget {
       requestId,
       type: "Document",
       timestamp: monotonic + 0.01,
-      response: { url, status: 200, statusText: "OK", mimeType: "text/html", headers: { "content-type": "text/html" } }
+      response: { url, status: 200, statusText: "OK", mimeType: "text/html", headers: {
+          "content-type": "text/html",
+          "set-cookie": "contract-secret=1",
+          ...(url.includes("seo-header") ? { "x-robots-tag": "noindex" } : {})
+        }
+      }
     });
     this.emit("Network.loadingFinished", { requestId, timestamp: monotonic + 0.02, encodedDataLength: 512 });
   }

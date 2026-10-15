@@ -11,6 +11,8 @@
 import { normalizePerception } from "../../../perception/src/normalize.js";
 import type {
   A11yAuditReport,
+  SeoAuditOptions,
+  SeoAuditReport,
   BrowserCommandResult,
   CdpTarget,
   ChangedElement,
@@ -57,6 +59,7 @@ import type {
 import type { BackendTab } from "../backend.js";
 import { requestObservation } from "../perception/injector.js";
 import { runA11yAudit } from "./cdp/a11y-audit.js";
+import { runSeoAudit } from "./cdp/seo-audit.js";
 import { handleCdpMessage } from "./cdp/cdp-events.js";
 import { runComponentTree } from "./cdp/component-tree.js";
 import { applyLocationOverride, applyMediaEmulation, applyResourceBudget } from "./cdp/overrides.js";
@@ -392,6 +395,16 @@ export class TabSession {
 
   async auditAccessibility(selector?: string): Promise<A11yAuditReport> {
     return runA11yAudit(this.cdp, this.id, selector);
+  }
+
+  /**
+   * Deterministic SEO audit of the loaded document. Reads the page through
+   * `Runtime.evaluate`, the main document's headers/status from the buffered
+   * network log, and fetches `/robots.txt` (plus, opt-in, a bounded set of
+   * same-origin links) through the page's own `fetch`.
+   */
+  async captureSeoAudit(opts: SeoAuditOptions = {}): Promise<SeoAuditReport> {
+    return runSeoAudit(this.cdp, this.id, [...this.state.networkRequests.values()], opts);
   }
 
   async inspectElementStyles(selector: string, options: { limit?: number } = {}): Promise<ElementStyleInspectionReport> {

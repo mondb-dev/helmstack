@@ -45,12 +45,57 @@ const STYLED_HTML = `<!doctype html>
 /** A page whose only job is to be a same-origin context for `fetch()` calls. */
 const BLANK_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Blank fixture</title></head><body><p>blank</p></body></html>`;
 
+/**
+ * SEO fixtures. `seoGood` is deliberately clean; `seoBad` (served under
+ * /private/, which robots.txt disallows) has deliberate problems. Both are
+ * built per request so absolute URLs use the fixture server's own origin.
+ */
+function seoGoodHtml(origin: string): string {
+  const url = `${origin}/seo-good.html`;
+  const words = Array.from({ length: 320 }, (_, i) => `word${i}`).join(" ");
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Clean SEO fixture page for contract tests</title>
+<meta name="description" content="A deliberately clean fixture page whose metadata, headings and structured data are all valid.">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="canonical" href="${url}">
+<meta property="og:title" content="Clean SEO fixture">
+<meta property="og:description" content="Clean fixture description">
+<meta property="og:image" content="${origin}/og.png">
+<meta property="og:url" content="${url}">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "Organization", name: "Fixture Co", url: origin, logo: `${origin}/logo.png` })}</script>
+</head><body>
+<main><h1>Clean SEO fixture</h1><h2>Details</h2><p>${words}</p>
+<img src="/logo.png" alt="Fixture logo">
+<a href="/blank.html">Blank fixture page</a>
+</main></body></html>`;
+}
+
+const SEO_BAD_HTML = `<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
+<script type="application/ld+json">{ "@type": "Product", </script>
+</head><body>
+<h1>First</h1><h1>Second</h1><h4>Skipped</h4>
+<img src="/logo.png">
+<a href="/blank.html">Read more</a><a href="/seo-good.html">Read more</a>
+<a href="/missing.html">Gone page</a>
+</body></html>`;
+
 export type FixtureServer = {
   origin: string;
   /** `apps/desktop/test-pages/contact-form.html` */
   contactForm: string;
   styled: string;
   blank: string;
+  /** Clean SEO page: no errors expected. */
+  seoGood: string;
+  /** SEO page with deliberate problems; under /private/ (disallowed by robots.txt). */
+  seoBad: string;
+  /** Clean page served with `X-Robots-Tag: noindex`. */
+  seoHeaderNoindex: string;
   /** A JSON endpoint the network-mock scenario intercepts (the real one returns `{ source: "server" }`). */
   dataEndpoint: string;
   close(): Promise<void>;
@@ -63,7 +108,18 @@ export async function startFixtureServer(): Promise<FixtureServer> {
       res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
       res.end(body);
     };
+    const origin = `http://${req.headers.host ?? "127.0.0.1"}`;
     switch (url.pathname) {
+      case "/seo-good.html":
+        return send(200, "text/html; charset=utf-8", seoGoodHtml(origin));
+      case "/private/seo-bad.html":
+        return send(200, "text/html; charset=utf-8", SEO_BAD_HTML);
+      case "/seo-header-noindex.html":
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" });
+        res.end(seoGoodHtml(origin));
+        return;
+      case "/robots.txt":
+        return send(200, "text/plain", `User-agent: *\nDisallow: /private/\nSitemap: ${origin}/sitemap.xml\n`);
       case "/styled.html":
         return send(200, "text/html; charset=utf-8", STYLED_HTML);
       case "/blank.html":
@@ -94,6 +150,9 @@ export async function startFixtureServer(): Promise<FixtureServer> {
     contactForm: `${origin}/contact-form.html`,
     styled: `${origin}/styled.html`,
     blank: `${origin}/blank.html`,
+    seoGood: `${origin}/seo-good.html`,
+    seoBad: `${origin}/private/seo-bad.html`,
+    seoHeaderNoindex: `${origin}/seo-header-noindex.html`,
     dataEndpoint: `${origin}/api/data.json`,
     close: () =>
       new Promise<void>((resolve) => {

@@ -239,7 +239,7 @@ export type PageSnapshot = {
 
 // ── Aggregated page health ────────────────────────────────────────────────────
 
-export type HealthCategoryId = "performance" | "accessibility" | "console" | "network" | "layout";
+export type HealthCategoryId = "performance" | "accessibility" | "console" | "network" | "layout" | "seo";
 
 export type HealthCategory = {
   id: HealthCategoryId;
@@ -263,6 +263,168 @@ export type HealthReport = {
   pass: boolean;
   categories: HealthCategory[];
   summary: string;
+};
+
+// ── SEO audit ────────────────────────────────────────────────────────────────
+
+export type SeoSeverity = "error" | "warning" | "info";
+
+export type SeoSectionId = "metadata" | "indexability" | "content" | "social" | "structuredData" | "links";
+
+export type SeoSeverityCounts = { error: number; warning: number; info: number };
+
+export type SeoIssue = {
+  /** Stable machine id, e.g. "title-missing". */
+  id: string;
+  section: SeoSectionId;
+  severity: SeoSeverity;
+  message: string;
+  /** What was observed (short, human readable). */
+  evidence?: string;
+  /** How to fix it. */
+  fix: string;
+  /** Selectors of the offending elements, when applicable (capped at 50). */
+  selectors?: string[];
+  /** Total occurrences when `selectors` was capped. */
+  count?: number;
+  /** True when `selectors` / evidence lists were cut at the cap. */
+  truncated?: boolean;
+};
+
+/** A check that could not run (`skipped`) or cannot be done by this audit (`unsupported`). */
+export type SeoSkippedCheck = { check: string; reason: string };
+
+export type SeoSectionSummary<T> = {
+  /** "fail" when the section has an error, "warn" when only warnings, else "pass". */
+  status: "pass" | "warn" | "fail";
+  counts: SeoSeverityCounts;
+  data: T;
+};
+
+export type SeoCanonicalStatus = "missing" | "self" | "different" | "multiple" | "relative" | "invalid";
+
+export type SeoMetadataSummary = {
+  title: string | null;
+  titleLength: number;
+  description: string | null;
+  descriptionLength: number;
+  canonical: { href: string | null; resolved: string | null; status: SeoCanonicalStatus };
+  lang: string | null;
+  viewport: string | null;
+  charset: string | null;
+  hreflang: Array<{ hreflang: string; href: string }>;
+};
+
+export type SeoRobotsTxtSummary = {
+  /** False when /robots.txt could not be fetched (network, CSP, timeout). */
+  fetched: boolean;
+  status: number | null;
+  /** Whether this page's path may be crawled by `*`; null when unknown. */
+  allowedForAll: boolean | null;
+  /** Whether this page's path may be crawled by Googlebot; null when unknown. */
+  allowedForGooglebot: boolean | null;
+  sitemaps: string[];
+};
+
+export type SeoIndexabilitySummary = {
+  statusCode: number | null;
+  redirectCount: number | null;
+  metaRobots: Array<{ name: string; content: string }>;
+  /** `X-Robots-Tag` response header of the main document, when observed. */
+  xRobotsTag: string | null;
+  /** Allowlisted response headers of the main document (x-robots-tag, content-type, link, location). */
+  headers: Record<string, string>;
+  /** False when a noindex directive applies to Google (meta robots/googlebot or X-Robots-Tag). */
+  indexable: boolean;
+  robotsTxt: SeoRobotsTxtSummary;
+};
+
+export type SeoContentSummary = {
+  h1Count: number;
+  headingCount: number;
+  headings: Array<{ level: number; text: string }>;
+  wordCount: number;
+  imageCount: number;
+  imagesMissingAlt: number;
+  linkCount: number;
+};
+
+export type SeoSocialSummary = {
+  openGraph: Record<string, string>;
+  twitter: Record<string, string>;
+};
+
+export type SeoJsonLdBlock = {
+  index: number;
+  valid: boolean;
+  types: string[];
+  error?: string;
+};
+
+export type SeoStructuredDataSummary = {
+  jsonLd: SeoJsonLdBlock[];
+  types: string[];
+  microdataItems: number;
+  rdfaItems: number;
+};
+
+export type SeoLinkCheckResult = {
+  url: string;
+  /** HTTP status, or null when the request failed. */
+  status: number | null;
+  /** Set when the request followed a redirect: the final URL (intermediate hops are not observable from page fetch). */
+  redirectedTo?: string;
+  error?: string;
+};
+
+export type SeoLinksSummary = {
+  total: number;
+  internal: number;
+  external: number;
+  uniqueInternal: number;
+  nofollow: number;
+  /** Present only when `checkLinks` was requested. */
+  checked: SeoLinkCheckResult[] | null;
+};
+
+export type SeoAuditOptions = {
+  /** Actively HEAD/GET same-origin links through the page. Default false. */
+  checkLinks?: boolean;
+  /** Max links to check when `checkLinks` is on. Default 25, max 100. */
+  maxLinks?: number;
+};
+
+/**
+ * Deterministic SEO audit of the loaded document.
+ *
+ * Score: `max(0, 100 - 12 * errors - 4 * warnings)`; info issues do not
+ * deduct. Each issue counts once regardless of how many elements it lists, so
+ * the score is monotonic (more issues never raise it). `pass` is true when
+ * there are no error-severity issues.
+ */
+export type SeoAuditReport = {
+  tabId: TabId;
+  url: string;
+  capturedAt: number;
+  score: number;
+  pass: boolean;
+  issues: SeoIssue[];
+  counts: SeoSeverityCounts;
+  sections: {
+    metadata: SeoSectionSummary<SeoMetadataSummary>;
+    indexability: SeoSectionSummary<SeoIndexabilitySummary>;
+    content: SeoSectionSummary<SeoContentSummary>;
+    social: SeoSectionSummary<SeoSocialSummary>;
+    structuredData: SeoSectionSummary<SeoStructuredDataSummary>;
+    links: SeoSectionSummary<SeoLinksSummary>;
+  };
+  /** Checks that were attempted but could not run (e.g. robots.txt unreachable). */
+  skipped: SeoSkippedCheck[];
+  /** Checks this audit cannot perform at all (e.g. reciprocal hreflang). */
+  unsupported: SeoSkippedCheck[];
+  /** True when any list in the report was cut at its cap. */
+  truncated: boolean;
+  options: { checkLinks: boolean; maxLinks: number };
 };
 
 // ── Performance metrics ───────────────────────────────────────────────────────
