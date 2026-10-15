@@ -5,7 +5,9 @@
  * MCP server receives only the token *file path*.
  */
 const BLOCKED_PREFIXES = ["HELMSTACK_", "ELECTRON_"];
-const BLOCKED_NAMES = new Set(["NODE_OPTIONS", "NODE_PATH", "MCP_CONNECTION_NONBLOCKING"]);
+// DISABLE_MICROCOMPACT is a Claude Code internal flag that makes tool-using turns fail with
+// "tool_use ids must be unique" when it leaks in from a parent Claude Code session.
+const BLOCKED_NAMES = new Set(["NODE_OPTIONS", "NODE_PATH", "MCP_CONNECTION_NONBLOCKING", "DISABLE_MICROCOMPACT"]);
 
 export function scrubbedEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};

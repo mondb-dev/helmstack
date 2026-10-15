@@ -115,7 +115,7 @@ export type AgentChatEvent =
 export type StartAgentConversationInput = {
   tabId: TabId;
   cliId: AgentCliId;
-  /** One of the listed model ids, or a custom id matching /^[A-Za-z0-9._:\/-]{1,80}$/. */
+  /** One of the listed model ids, or a custom id matching /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,79}$/ (it can never start with "-", so it cannot be read as a CLI flag). */
   model: string;
   /** Defaults to `AgentRunnerStatus.defaultWorkingDirectory`. Must be an existing directory. */
   workingDirectory?: string;

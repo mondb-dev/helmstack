@@ -77,7 +77,7 @@ export interface AgentCliAdapter {
 }
 
 /** Model ids are validated against this before ever reaching an argv. */
-export const MODEL_ID_PATTERN = /^[A-Za-z0-9._:/-]{1,80}$/;
+export const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
 
 export function isValidModelId(model: string): boolean {
   return model === "" || MODEL_ID_PATTERN.test(model);

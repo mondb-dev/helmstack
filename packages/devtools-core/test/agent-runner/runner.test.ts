@@ -136,7 +136,7 @@ describe("detection", () => {
 describe("validation", () => {
   it("rejects model ids with shell metacharacters", async () => {
     const r = makeRunner();
-    for (const model of ["a; rm -rf ~", "$(id)", "a b", "`x`", "x".repeat(81), "a|b"]) {
+    for (const model of ["a; rm -rf ~", "$(id)", "a b", "`x`", "x".repeat(81), "a|b", "--dangerously-skip-permissions", "-m", "--model"]) {
       await expect(start(r, { model })).rejects.toThrow(/Invalid model/);
     }
   });

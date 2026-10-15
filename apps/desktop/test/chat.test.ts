@@ -219,6 +219,10 @@ describe("chat panel", () => {
       expect(validateCustomModel("")).not.toBeNull();
       expect(validateCustomModel("a".repeat(81))).not.toBeNull();
       expect(validateCustomModel("gemini-2.5-pro")).toBeNull();
+      // A leading "-" could be read as a CLI flag, so it is never a valid id.
+      for (const flagLike of ["--dangerously-skip-permissions", "-m", "--model"]) {
+        expect(validateCustomModel(flagLike)).not.toBeNull();
+      }
       expect(validateWorkingDirectory("  ")).not.toBeNull();
       expect(validateWorkingDirectory("relative/dir")).not.toBeNull();
       expect(validateWorkingDirectory("/tmp/x")).toBeNull();

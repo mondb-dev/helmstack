@@ -39,7 +39,7 @@ export type ChatBridge = Pick<
 export const CHAT_CHAR_LIMIT = 8000;
 /** The counter appears from here on. */
 export const CHAT_COUNTER_FROM = 7000;
-export const CUSTOM_MODEL_PATTERN = /^[A-Za-z0-9._:/-]{1,80}$/;
+export const CUSTOM_MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
 export const SELECTION_STORAGE_KEY = "helmstack-chat-selection";
 export const CUSTOM_OPTION = "__custom__";
 export const EXAMPLE_PROMPTS = [
