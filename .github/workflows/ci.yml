@@ -65,6 +65,16 @@ jobs:
         # Desktop build requires Electron which needs a display on Linux
         if: runner.os != 'Linux'
 
+      - name: Allow Chrome's sandbox (Ubuntu AppArmor userns restriction)
+        # Same fix as the daemon-headless job: the stock runner Chrome can hang at
+        # launch ("Target.setDiscoverTargets timed out") when unprivileged user
+        # namespaces are restricted.
+        if: runner.os == 'Linux'
+        run: |
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
       - name: Run tests
         # Real-Chrome tests (apps/daemon/test/*.integration.test.ts and the
         # daemon contract suite) run wherever the runner image ships Chrome
