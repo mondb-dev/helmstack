@@ -218,10 +218,18 @@ export type LaunchChromeOptions = {
   browserURL?: string;
   /** Connect to an already-running Chrome via its DevTools WebSocket URL. */
   wsEndpoint?: string;
-  /** Launch / connect timeout in ms. Default 30000. */
+  /** Launch / connect timeout in ms, in total across launch attempts. Default 30000. */
   timeoutMs?: number;
+  /**
+   * How many times to try launching a Chrome that never answers its first CDP command
+   * (seen intermittently on CI). Each attempt gets a fresh temp profile and an equal
+   * share of `timeoutMs`. Default 2.
+   */
+  launchAttempts?: number;
   /** Discovery overrides (tests). */
   discovery?: FindChromeOptions;
+  /** Replaces puppeteer's launch/connect (tests only). */
+  launcher?: Pick<typeof puppeteer, "launch" | "connect">;
 };
 
 export type ChromeHandle = {
@@ -239,7 +247,7 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<C
   const timeout = options.timeoutMs ?? 30_000;
 
   if (options.browserURL || options.wsEndpoint) {
-    const browser = await puppeteer.connect({
+    const browser = await (options.launcher ?? puppeteer).connect({
       browserURL: options.wsEndpoint ? undefined : options.browserURL,
       browserWSEndpoint: options.wsEndpoint,
       defaultViewport: null,
@@ -259,49 +267,62 @@ export async function launchChrome(options: LaunchChromeOptions = {}): Promise<C
 
   const executablePath = options.executablePath ?? findChrome(options.discovery).path;
   const ownsProfile = !options.userDataDir;
-  const userDataDir = options.userDataDir ?? (await mkdtemp(path.join(tmpdir(), "helmstack-chrome-")));
   const size = options.windowSize ?? { width: 1280, height: 800 };
+  const attempts = Math.max(1, Math.floor(options.launchAttempts ?? 2));
+  // The total budget is unchanged; a hang is simply discovered sooner and retried.
+  const attemptTimeout = Math.max(1_000, Math.floor(timeout / attempts));
 
-  let browser: Browser;
-  try {
-    browser = await puppeteer.launch({
-      executablePath,
-      headless: options.headless ?? true,
-      userDataDir,
-      // Leave the viewport to Chrome (window size) so our own CDP session's
-      // Emulation overrides are the only ones in play.
-      defaultViewport: null,
-      // ADR 0001 §6.2: talk to Chrome over a pipe; no remote-debugging port is opened.
-      pipe: true,
-      args: [
-        `--window-size=${size.width},${size.height}`,
-        "--no-first-run",
-        "--no-default-browser-check",
-        ...(options.args ?? [])
-      ],
-      timeout,
-      protocolTimeout: timeout,
-      // The daemon owns signal handling; puppeteer still kills Chrome on process exit.
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      handleSIGHUP: false
-    });
-  } catch (error) {
-    if (ownsProfile) await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
-    throw new Error(`Failed to launch Chrome at ${executablePath}: ${(error as Error).message}`, { cause: error });
+  let browser: Browser | undefined;
+  let userDataDir = "";
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts && !browser; attempt += 1) {
+    userDataDir = options.userDataDir ?? (await mkdtemp(path.join(tmpdir(), "helmstack-chrome-")));
+    try {
+      browser = await (options.launcher ?? puppeteer).launch({
+        executablePath,
+        headless: options.headless ?? true,
+        userDataDir,
+        // Leave the viewport to Chrome (window size) so our own CDP session's
+        // Emulation overrides are the only ones in play.
+        defaultViewport: null,
+        // ADR 0001 §6.2: talk to Chrome over a pipe; no remote-debugging port is opened.
+        pipe: true,
+        args: [
+          `--window-size=${size.width},${size.height}`,
+          "--no-first-run",
+          "--no-default-browser-check",
+          ...(options.args ?? [])
+        ],
+        timeout: attemptTimeout,
+        protocolTimeout: attemptTimeout,
+        // The daemon owns signal handling; puppeteer still kills Chrome on process exit.
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false
+      });
+    } catch (error) {
+      lastError = error;
+      if (ownsProfile) await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
+  if (!browser) {
+    const reason = (lastError as Error | undefined)?.message ?? "unknown error";
+    const tried = attempts > 1 ? ` after ${attempts} attempts` : "";
+    throw new Error(`Failed to launch Chrome at ${executablePath}${tried}: ${reason}`, { cause: lastError });
+  }
+  const launched = browser;
 
   let closing: Promise<void> | null = null;
   return {
-    browser,
+    browser: launched,
     mode: "launched",
     executablePath,
     userDataDir,
     close() {
       closing ??= (async () => {
-        const proc = browser.process();
+        const proc = launched.process();
         await Promise.race([
-          browser.close().catch(() => {}),
+          launched.close().catch(() => {}),
           new Promise((resolve) => setTimeout(resolve, 5_000).unref())
         ]);
         if (proc && proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
