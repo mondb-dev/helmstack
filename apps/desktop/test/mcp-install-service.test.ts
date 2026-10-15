@@ -295,7 +295,9 @@ d("CLI install flow (fake claude / gemini)", () => {
     fs.mkdirSync(path.join(setup.home, ".codex"));
     const noCli = mk();
     const overview = await noCli.overview();
-    expect(client(overview, "codex-cli")).toMatchObject({ detected: true, canInstall: false, provenance: "docs-only" });
+    // A leftover config folder is not an installed client: not "detected", only a note.
+    expect(client(overview, "codex-cli")).toMatchObject({ detected: false, canInstall: false, provenance: "docs-only" });
+    expect(client(overview, "codex-cli").note).toMatch(/config folder but its command isn't on PATH/);
     expect((await noCli.handle({ clientId: "codex-cli", action: "install" })).ok).toBe(false);
     expect(fs.existsSync(path.join(setup.home, ".codex", "config.toml"))).toBe(false);
 
@@ -328,6 +330,9 @@ d("JSON clients", () => {
     expect(p.preview?.diff).toContain("+ ");
     expect(fs.readFileSync(file, "utf8")).toBe(original); // nothing written yet
     const done = await service.handle({ clientId: "claude-desktop", action: "install", options: { toolset: "lite", confirm: p.preview?.previewId } });
+    // The home directory is shown as ~ so the message stays short and does not leak the user name.
+    expect(done.message).toMatch(/helmstack in ~[\\/]/);
+    expect(done.message).not.toContain(setup.home);
     expect(done.ok).toBe(true);
     expect(done.backupPath).toBe(`${file}.20260304T050607Z.bak`);
     expect(fs.readFileSync(done.backupPath as string, "utf8")).toBe(original);

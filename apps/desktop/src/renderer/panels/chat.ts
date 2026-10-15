@@ -324,7 +324,7 @@ export function mountChat(options: ChatOptions): ChatController {
     for (const cli of status?.clis ?? []) {
       const group = document.createElement("optgroup");
       const tags: string[] = [];
-      if (!cli.available) tags.push(cli.reason ?? "Unavailable");
+      // An unavailable CLI shows its reason once, as the disabled option under the group.
       if (cli.experimental) tags.push("Experimental");
       const isLocal = cli.kind === "local";
       const title = isLocal ? `Local models · ${cli.label}` : cli.label;

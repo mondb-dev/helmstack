@@ -168,8 +168,10 @@ describe("chat panel", () => {
       setup();
       await open();
       const groups = Array.from(select().querySelectorAll("optgroup"));
-      expect(groups.map((g) => g.label)).toEqual(["Claude Code", "Gemini CLI — Not installed, Experimental"]);
+      // The reason is shown once, as the disabled option; it is not repeated in the group label.
+      expect(groups.map((g) => g.label)).toEqual(["Claude Code", "Gemini CLI — Experimental"]);
       expect(groups[1].disabled).toBe(true);
+      expect(Array.from(groups[1].querySelectorAll("option")).map((o) => o.textContent)).toEqual(["Not installed"]);
       expect(Array.from(groups[0].querySelectorAll("option")).map((o) => o.textContent)).toEqual([
         "Default",
         "Sonnet",

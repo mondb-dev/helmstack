@@ -407,12 +407,13 @@ export class McpInstallService {
           : id === "codex-cli"
             ? exists(this.deps.env.CODEX_HOME ?? path.join(this.deps.homedir, ".codex"))
             : false;
-      base.detected = binary !== null || configHint;
+      // A leftover config folder is not an installed client: Verify and Install need the command.
+      base.detected = binary !== null;
       if (this.deps.platform === "win32" && binary && /\.(cmd|bat)$/i.test(binary)) {
         return { ...base, binaryPath: binary, note: "Installed as a .cmd shim, which HelmStack can't run safely. Use Copy config and run it in a terminal." };
       }
       if (!binary) {
-        return { ...base, note: base.detected ? `${LABELS[id]} has a config folder but its command isn't on PATH. Use Copy config.` : undefined };
+        return { ...base, note: configHint ? `${LABELS[id]} has a config folder but its command isn't on PATH. Use Copy config.` : undefined };
       }
       const version = await this.run(binary, ["--version"]);
       const read = await this.readCliEntry(id, binary);
@@ -515,6 +516,13 @@ export class McpInstallService {
       }
     }
     return this.clientStatus(id, expected, blocked);
+  }
+
+  /** A path for messages: the user's home directory shown as ~ so results stay short. */
+  private shortPath(file: string): string {
+    const home = this.deps.homedir;
+    if (home && (file === home || file.startsWith(home + path.sep) || file.startsWith(`${home}/`))) return `~${file.slice(home.length)}`;
+    return file;
   }
 
   private async run_(request: McpInstallRequest): Promise<McpInstallResult> {
@@ -628,7 +636,7 @@ export class McpInstallService {
         ok: true,
         clientId,
         action,
-        message: action === "remove" ? `Removed helmstack from ${file}.` : `${merged.change === "add" ? "Installed" : "Updated"} helmstack in ${file}.`,
+        message: action === "remove" ? `Removed helmstack from ${this.shortPath(file)}.` : `${merged.change === "add" ? "Installed" : "Updated"} helmstack in ${this.shortPath(file)}.`,
         backupPath,
         preview,
         status: await this.statusOf(clientId)
