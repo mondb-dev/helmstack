@@ -5,6 +5,8 @@
  * listener sets and the cross-tab methods. Served by `createAgentServer` on
  * both the Electron desktop and the headless daemon.
  */
+import { readFileSync } from "node:fs";
+
 import type {
   A11yAuditReport,
   SeoAuditOptions,
@@ -23,6 +25,8 @@ import type {
   ComponentSourceReport,
   ComponentTreeReport,
   CookieEntry,
+  CreateReportInput,
+  CreateReportResult,
   CssCoverageReport,
   DesignTokensReport,
   DiffRegion,
@@ -55,6 +59,9 @@ import type {
   PerformanceReport,
   RecordingSession,
   RecordingStopResult,
+  ReportEvidenceKind,
+  ReportFormat,
+  ReportSummary,
   ResourceBudget,
   ScreenshotDiff,
   ScreenshotOptions,
@@ -82,12 +89,15 @@ import { passthroughSecrets, type SecretResolver } from "./commands/types.js";
 import { evaluateAssertionAgainstGraph } from "./perception/assertions.js";
 import { computePerceptionDiff } from "./perception/diff.js";
 import { buildHealthReport } from "./reports/health-report.js";
+import { buildReport, type ReportEvidence } from "./reports/page-report.js";
+import { ReportInputError, parseCreateReportInput } from "./reports/report-input.js";
 import { ApprovalPolicyStore } from "./stores/approval-policy-store.js";
 import { ApprovalStore, DEFAULT_APPROVAL_TTL_MS, PAGE_CHANGED_REASON, isSameApprovalPage } from "./stores/approval-store.js";
 import { AssertionWatchStore } from "./stores/assertion-watch.js";
 import { PerceptionBaselineStore, type PerceptionBaselineEntry } from "./stores/baseline-store.js";
 import { HandoffStore } from "./stores/handoff-store.js";
 import { HumanPickStore } from "./stores/human-pick-store.js";
+import { ReportStore, newReportId, type ReportStoreOptions } from "./stores/report-store.js";
 import { SitePatternStore } from "./stores/site-pattern-store.js";
 import { VisualDiffStore } from "./stores/visual-diff-store.js";
 import { TabSession } from "./tab-session.js";
@@ -111,7 +121,16 @@ export type HelmstackCoreOptions = {
    * `expired` (ms; `0` disables). Default: `HELMSTACK_APPROVAL_TTL_MS`, else 10 min.
    */
   approvalTtlMs?: number;
+  /** HelmStack version printed on reports. Default "unknown". */
+  helmstackVersion?: string;
+  /** Report store caps (default newest 100 reports / 200 MB). */
+  reportStore?: Pick<ReportStoreOptions, "maxReports" | "maxBytes" | "log">;
+  /** Per-collector time limit while creating a report (ms). Default 20 000. */
+  reportCollectorTimeoutMs?: number;
 };
+
+/** Default time limit for one report collector. */
+const REPORT_COLLECTOR_TIMEOUT_MS = 20_000;
 
 function resolveApprovalTtl(option: number | undefined): number {
   if (option !== undefined) return option;
@@ -143,6 +162,10 @@ export class HelmstackCore implements AgentApi {
   private readonly perceptionCache = new Map<string, PerceptionBaselineEntry>();
   private readonly assertionWatches = new AssertionWatchStore();
   private readonly humanPicks = new HumanPickStore();
+  private readonly reports: ReportStore;
+  private readonly helmstackVersion: string;
+  private readonly reportCollectorTimeoutMs: number;
+  private readonly reportsChangedListeners = new Set<(reports: ReportSummary[], created?: ReportSummary) => void>();
 
   private readonly tabsListeners = new Set<(tabs: TabSummary[]) => void>();
   private readonly observationListeners = new Set<(observation: PageObservation) => void>();
@@ -158,6 +181,9 @@ export class HelmstackCore implements AgentApi {
     this.backend = browser.kind;
     this.includeSocial = options.includeSocial ?? false;
     this.pullObservations = options.pullObservations ?? true;
+    this.helmstackVersion = options.helmstackVersion ?? "unknown";
+    this.reportCollectorTimeoutMs = options.reportCollectorTimeoutMs ?? REPORT_COLLECTOR_TIMEOUT_MS;
+    this.reports = new ReportStore(options.dataDir, options.reportStore);
 
     this.approvals = new ApprovalStore({ ttlMs: resolveApprovalTtl(options.approvalTtlMs) });
     this.policies = new ApprovalPolicyStore(options.dataDir);
@@ -1064,6 +1090,143 @@ export class HelmstackCore implements AgentApi {
     return () => this.elementPickedListeners.delete(listener);
   }
 
+  // ── Reports ───────────────────────────────────────────────────────────────
+
+  /**
+   * Create a page analysis report: the agent's own findings (validated, never
+   * trimmed silently) plus measurements HelmStack collects now. A collector
+   * that throws or exceeds the time limit is recorded under `skipped`; the
+   * report is still written.
+   */
+  async createReport(tabId: TabId, rawInput: CreateReportInput, ctx: { agentId?: string } = {}): Promise<CreateReportResult> {
+    const parsed = parseCreateReportInput(rawInput);
+    if (!parsed.ok) throw new ReportInputError(parsed.error);
+    const input = parsed.value;
+    const session = this.requireSession(tabId);
+    const capturedAt = Date.now();
+    const timeoutMs = this.reportCollectorTimeoutMs;
+
+    const wants = new Set<ReportEvidenceKind>(input.include);
+    const skipped: Array<{ kind: ReportEvidenceKind; reason: string }> = [];
+    const evidence: ReportEvidence = {};
+    const attempt = async <T>(kind: ReportEvidenceKind | "screenshot", run: () => Promise<T> | T): Promise<T | undefined> => {
+      try {
+        return await withTimeout(Promise.resolve().then(run), timeoutMs, `timed out after ${Math.round(timeoutMs / 1000)} s`);
+      } catch (err) {
+        if (kind !== "screenshot" && wants.has(kind)) skipped.push({ kind, reason: shortReason(err) });
+        return undefined;
+      }
+    };
+    // Health reuses the other collectors' results when they all succeeded.
+    const needsParts = wants.has("health");
+    const need = (k: ReportEvidenceKind) => wants.has(k) || needsParts;
+
+    const [a11y, seo, layout, perf, logs, shot] = await Promise.all([
+      need("accessibility") ? attempt("accessibility", () => session.auditAccessibility()) : undefined,
+      need("seo") ? attempt("seo", () => session.captureSeoAudit()) : undefined,
+      need("layout") ? attempt("layout", () => session.detectLayoutIssues()) : undefined,
+      need("performance") ? attempt("performance", () => session.capturePerformanceMetrics()) : undefined,
+      wants.has("console") || wants.has("network") || needsParts
+        ? Promise.resolve(session.getTabLogs())
+        : undefined,
+      input.screenshot ? attempt("screenshot", () => session.captureScreenshot({})) : undefined
+    ]);
+
+    if (wants.has("accessibility") && a11y) evidence.accessibility = a11y;
+    if (wants.has("seo") && seo) evidence.seo = seo;
+    if (wants.has("layout") && layout) evidence.layout = layout;
+    if (wants.has("performance") && perf) evidence.performance = perf;
+    if (wants.has("console") && logs) evidence.logs = { ...evidence.logs, console: logs };
+    if (wants.has("network") && logs) evidence.logs = { ...evidence.logs, network: logs };
+
+    if (wants.has("health")) {
+      if (perf && a11y && layout && logs) {
+        evidence.health = buildHealthReport(
+          { performance: perf, accessibility: a11y, logs, layout, ...(seo ? { seo } : {}) },
+          tabId,
+          session.cdp.url(),
+          capturedAt
+        );
+      } else {
+        const health = await attempt("health", () => this.captureHealthReport(tabId));
+        if (health) evidence.health = health;
+      }
+    }
+    if (shot) evidence.screenshotPng = Buffer.from(shot.data, "base64");
+
+    const summaryInfo = session.tab.summary();
+    const overrides = describeOverrides(this.getTabOverrides(tabId));
+    const viewport = layout?.viewport ?? session.getEmulatedViewport() ?? this.browser.defaultViewport();
+    const id = newReportId(capturedAt);
+    const built = buildReport({
+      id,
+      page: {
+        tabId,
+        url: summaryInfo.url || session.cdp.url(),
+        title: summaryInfo.title,
+        capturedAt,
+        viewport: { width: viewport.width, height: viewport.height },
+        overrides,
+        helmstackVersion: this.helmstackVersion
+      },
+      input,
+      evidence,
+      skipped,
+      ...(ctx.agentId ? { fallbackAuthor: ctx.agentId } : {})
+    });
+
+    this.reports.add(built.summary, { html: built.html, md: built.markdown });
+    this.emitReportsChanged(built.summary);
+    const filePath = this.reports.resolvePath(id, "html") ?? "";
+    return { report: built.summary, path: filePath, preview: built.preview };
+  }
+
+  /** Stored reports, newest first. */
+  listReports(): ReportSummary[] {
+    return this.reports.list();
+  }
+
+  /**
+   * A stored report file, addressed only by id (validated, then looked up in the
+   * index). Returns null for an unknown id; throws `ReportInputError` for a
+   * malformed id or format. Never accepts a path.
+   */
+  getReportFile(id: string, format: ReportFormat): { path: string; bytes: Buffer; summary: ReportSummary } | null {
+    const filePath = this.reports.resolvePath(id, format);
+    const summary = this.reports.get(id);
+    if (!filePath || !summary) return null;
+    try {
+      return { path: filePath, bytes: readFileSync(filePath), summary };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Absolute path of a stored report file (for the shell's save/open/reveal), or null when unknown. */
+  resolveReportPath(id: string, format: ReportFormat): string | null {
+    return this.reports.resolvePath(id, format);
+  }
+
+  /** Human-only (no agent route). Returns whether a report was removed. */
+  deleteReport(id: string): boolean {
+    const removed = this.reports.delete(id);
+    if (removed) this.emitReportsChanged();
+    return removed;
+  }
+
+  /** Full list on every create/delete; `created` names a new report. Returns an unsubscribe function. */
+  onReportsChanged(listener: (reports: ReportSummary[], created?: ReportSummary) => void): () => void {
+    this.reportsChangedListeners.add(listener);
+    return () => this.reportsChangedListeners.delete(listener);
+  }
+
+  private emitReportsChanged(created?: ReportSummary): void {
+    const list = this.reports.list();
+    for (const listener of this.reportsChangedListeners) {
+      try { listener(list, created); } catch { /* a listener must not break report creation */ }
+    }
+  }
+
   // ── Human element picks ("Select for agent") ──────────────────────────────
 
   /**
@@ -1107,6 +1270,44 @@ function emptyOverrides(tabId: TabId): TabOverrides {
     recording: false,
     watches: { total: 0, passing: 0, failing: 0 }
   };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  if (!(ms > 0)) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    timer.unref?.();
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e: unknown) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
+/** Short, single-line reason for the report; never a stack. */
+function shortReason(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  const line = text.split("\n")[0]!.replace(/\s+/g, " ").trim();
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line || "failed";
+}
+
+/** Plain descriptions of agent-applied overrides; no coordinates or other private values. */
+function describeOverrides(o: TabOverrides): string[] {
+  const out: string[] = [];
+  if (o.viewport) out.push(`Viewport ${o.viewport.width}×${o.viewport.height}${o.viewport.mobile ? " (mobile)" : ""}`);
+  if (o.media) {
+    const parts = [
+      o.media.colorScheme ? `color scheme ${o.media.colorScheme}` : "",
+      o.media.reducedMotion ? `reduced motion ${o.media.reducedMotion}` : "",
+      o.media.forcedColors ? `forced colors ${o.media.forcedColors}` : "",
+      o.media.media ? `media ${o.media.media}` : ""
+    ].filter(Boolean);
+    out.push(`Media emulation${parts.length ? `: ${parts.join(", ")}` : ""}`);
+  }
+  if (o.resourceBudget) out.push("Resource budget (CPU/network throttling)");
+  if (o.location) out.push("Location override");
+  if (o.networkMockRuleCount > 0) out.push(`Network mocks (${o.networkMockRuleCount} rule${o.networkMockRuleCount === 1 ? "" : "s"})`);
+  return out;
 }
 
 function originFromUrl(url: string): string {

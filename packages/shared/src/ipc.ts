@@ -3,6 +3,7 @@ import type { BrowserCommandResult, BrowserOutputCommand, BrowserPerceptionPacke
 import type { PageObservation, PerceptionResult } from "./perception.js";
 import type { ElementPickResult, PageScreenshot, PageSnapshot, TabId, TabSummary, ViewportRect } from "./browser.js";
 import type { ApprovalPolicyRecord } from "./policy.js";
+import type { ReportFormat, ReportSummary } from "./report.js";
 import type { AgentChatEvent, AgentConversationSummary, AgentRunnerStatus, StartAgentConversationInput } from "./agent-chat.js";
 import type { AgentActivityEntry, AgentConnectionStatus, TabOverrideKind, TabOverrides } from "./shell-status.js";
 import type { ShortcutId } from "./shortcuts.js";
@@ -54,6 +55,12 @@ export const BrowserShellChannel = {
   ClearTabOverrides: "browser-shell:clear-tab-overrides",
   ListAgentActivity: "browser-shell:list-agent-activity",
   GetConnectionStatus: "browser-shell:get-connection-status",
+  // Reports (files live in the app's data directory; the shell never reads their contents)
+  ListReports: "browser-shell:list-reports",
+  SaveReportAs: "browser-shell:save-report-as",
+  OpenReport: "browser-shell:open-report",
+  RevealReport: "browser-shell:reveal-report",
+  DeleteReport: "browser-shell:delete-report",
   // In-window agent chat (human-initiated only)
   GetAgentRunnerStatus: "browser-shell:get-agent-runner-status",
   RefreshAgentRunner: "browser-shell:refresh-agent-runner",
@@ -87,7 +94,8 @@ export const BrowserShellChannel = {
   TabOverridesChanged: "browser-shell:tab-overrides-changed",
   AgentActivity: "browser-shell:agent-activity",
   ConnectionStatusChanged: "browser-shell:connection-status-changed",
-  AgentChatEvent: "browser-shell:agent-chat-event"
+  AgentChatEvent: "browser-shell:agent-chat-event",
+  ReportsChanged: "browser-shell:reports-changed"
 } as const;
 
 /** Zoom steps the human can request for a tab. */
@@ -171,6 +179,15 @@ export type BrowserShellApi = {
   /** Most recent agent API calls, oldest first (bounded buffer). */
   listAgentActivity(): Promise<AgentActivityEntry[]>;
   getConnectionStatus(): Promise<AgentConnectionStatus>;
+  // Reports. Save/open/reveal/delete are human actions through the shell only.
+  listReports(): Promise<ReportSummary[]>;
+  /** Shows a native save dialog and copies the report there. Resolves with the chosen path, or null if cancelled. */
+  saveReportAs(id: string, format: ReportFormat): Promise<string | null>;
+  /** Opens the HTML report in the system's default browser. */
+  openReport(id: string): Promise<void>;
+  /** Reveals the HTML report in the system file manager. */
+  revealReport(id: string): Promise<void>;
+  deleteReport(id: string): Promise<void>;
   // In-window agent chat. Started by the human only; there is no agent HTTP route for this.
   getAgentRunnerStatus(): Promise<AgentRunnerStatus>;
   /** Re-detect installed CLIs and their settings. */
@@ -219,4 +236,6 @@ export type BrowserShellBridge = BrowserShellApi & {
   onAgentActivity(callback: (entry: AgentActivityEntry) => void): () => void;
   onConnectionStatusChanged(callback: (status: AgentConnectionStatus) => void): () => void;
   onAgentChatEvent(callback: (event: AgentChatEvent) => void): () => void;
+  /** Fires with the full list whenever a report is created or deleted; `created` names a new one. */
+  onReportsChanged(callback: (reports: ReportSummary[], created?: ReportSummary) => void): () => void;
 };

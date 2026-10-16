@@ -100,6 +100,29 @@ describe("MCP tool gating", () => {
     }
   });
 
+  it("report tools are part of the default FE-dev surface and not in lite", async () => {
+    for (const name of ["browser_create_report", "browser_list_reports"]) {
+      expect(AGENT_SUBSTRATE_TOOLS).not.toContain(name);
+      expect(await registeredTools(undefined)).toContain(name);
+      expect(LITE_TOOLS).not.toContain(name);
+    }
+    expect(await registeredToolsWith({ HELMSTACK_TOOLSET: "lite" })).not.toContain("browser_create_report");
+  });
+
+  it("audit-style tools tell the model to offer a report, and the create tool says what to pass", async () => {
+    vi.resetModules();
+    const mod = await import("../src/index.js");
+    const tools = (mod.server as unknown as { _registeredTools: Record<string, { description?: string }> })._registeredTools;
+    for (const name of ["browser_a11y_audit", "browser_seo_audit", "browser_health_report", "browser_layout_issues", "browser_performance", "browser_focus_order", "browser_network_audit"]) {
+      expect(tools[name]?.description, name).toContain("offer to prepare a report (browser_create_report)");
+    }
+    const create = tools.browser_create_report!.description!;
+    expect(create).toMatch(/user asked for a report/);
+    expect(create).toMatch(/YOUR OWN/);
+    expect(create).toMatch(/not verified by HelmStack/);
+    expect(create).toMatch(/Returns:/);
+  });
+
   it("HELMSTACK_PROFILE=fe-dev keeps them off", async () => {
     const tools = await registeredToolsWith({ HELMSTACK_PROFILE: "fe-dev" });
     for (const name of AGENT_SUBSTRATE_TOOLS) expect(tools).not.toContain(name);

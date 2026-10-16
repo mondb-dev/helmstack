@@ -7,6 +7,7 @@ export * from "./ipc.js";
 export * from "./mcp-install.js";
 export * from "./perception.js";
 export * from "./policy.js";
+export * from "./report.js";
 export * from "./shell-status.js";
 export * from "./shortcuts.js";
 export * from "./substrate.js";

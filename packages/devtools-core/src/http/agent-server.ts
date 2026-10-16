@@ -13,6 +13,7 @@ import type {
   HumanHandoffRecord,
   LocationOverride,
   MediaEmulation,
+  ReportFormat,
   StorageArea,
   StyleAssertion,
   TabId,
@@ -20,6 +21,8 @@ import type {
   ViewportPresetName,
 } from "../../../shared/src/index.js";
 import type { AccountsApi, AgentApi, BackendKind, ExtensionsApi, OptionalCapability } from "../api.js";
+import { ReportInputError, parseCreateReportInput } from "../core/reports/report-input.js";
+import { isValidReportId } from "../core/stores/report-store.js";
 import { resolveProfile } from "../core/runtime-config.js";
 import {
   ActivityLog,
@@ -261,11 +264,14 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * POST /api/perception/diff             { beforeId, afterId } → PerceptionDiff
  * GET  /api/perception                  → PerceptionSnapshotEntry[]
  * DELETE /api/perception/:id            removes perception snapshot from cache
+ * POST /api/tabs/:id/report             CreateReportInput (body limit 256 KB) → CreateReportResult (the agent's findings + HelmStack's measurements; 400 on limits)
+ * GET  /api/reports                     → ReportSummary[] (newest first)
+ * GET  /api/reports/:id                 ?format=html|md → the report file (attachment, nosniff). There is no agent route to delete a report.
  *
  * SSE stream
  * ----------
  * GET  /api/stream
- * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked
+ * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked | report_created
  *
  * `approval_resolved` carries an `ApprovalResolution` `{ requestId, tabId, outcome,
  * reason?, status?, url?, origin?, resolvedAt }`; `outcome` is approved | rejected |
@@ -274,6 +280,8 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * `element_picked` carries `{ tabId, pickedAt, pick }` when the human selects
  * an element with "Select for agent". Reading picks is never unsupported: a
  * backend without the `pick` capability (the daemon) simply has none.
+ *
+ * `report_created` carries the `ReportSummary` of a report just written.
  */
 export class AgentServer {
   private readonly server: http.Server;
@@ -343,6 +351,9 @@ export class AgentServer {
     });
     tabs.onHandoffRequested((h: HumanHandoffRecord) => this.broadcastTabEvent("human_handoff_requested", h, h.tabId));
     tabs.onElementPicked?.((pick) => this.handleHumanPick(pick));
+    tabs.onReportsChanged?.((_reports, created) => {
+      if (created) this.broadcastTabEvent("report_created", created, created.tabId);
+    });
   }
 
   /** A shell "Select for agent" pick: tell listening agents and note it in the feed. */
@@ -1492,6 +1503,59 @@ export class AgentServer {
       return json(res, { ok: true });
     }
 
+    // ── Reports ──────────────────────────────────────────────────────────────
+    const reportCreateMatch = p.match(/^\/api\/tabs\/([^/]+)\/report$/);
+    if (method === "POST" && reportCreateMatch) {
+      if (!this.tabs.createReport) return unsupported(res, "reports", this.backend);
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req, REPORT_BODY_LIMIT_BYTES);
+      } catch (err) {
+        if (err instanceof BodyTooLargeError) return tooLarge(req, res, REPORT_BODY_LIMIT_BYTES);
+        return error(res, 400, "Invalid JSON body");
+      }
+      const parsed = parseCreateReportInput(body);
+      if (!parsed.ok) return error(res, 400, parsed.error);
+      try {
+        const agentId = this.agentIdOf(req);
+        return json(res, await this.tabs.createReport(reportCreateMatch[1] as TabId, parsed.value, agentId ? { agentId } : {}));
+      } catch (err) {
+        if (err instanceof ReportInputError) return error(res, 400, err.message);
+        throw err;
+      }
+    }
+
+    if (method === "GET" && p === "/api/reports") {
+      if (!this.tabs.listReports) return unsupported(res, "reports", this.backend);
+      const agentId = this.agentIdOf(req);
+      const all = this.tabs.listReports();
+      return json(res, agentId === null ? all : all.filter((r) => this.isTabAccessible(r.tabId, agentId)));
+    }
+
+    const reportFileMatch = p.match(/^\/api\/reports\/([^/]+)$/);
+    if (method === "GET" && reportFileMatch) {
+      if (!this.tabs.getReportFile) return unsupported(res, "reports", this.backend);
+      const formatParam = url.searchParams.get("format") ?? "html";
+      if (formatParam !== "html" && formatParam !== "md") return error(res, 400, "format must be html or md");
+      let id = reportFileMatch[1]!;
+      try { id = decodeURIComponent(id); } catch { /* validated below */ }
+      if (!isValidReportId(id)) return error(res, 400, "invalid report id");
+      const format: ReportFormat = formatParam;
+      const file = this.tabs.getReportFile(id, format);
+      if (!file) return error(res, 404, "Report not found");
+      if (!this.isTabAccessible(file.summary.tabId, this.agentIdOf(req))) return error(res, 403, "report belongs to another agent");
+      res.writeHead(200, {
+        "Content-Type": format === "html" ? "text/html; charset=utf-8" : "text/markdown; charset=utf-8",
+        "Content-Disposition": `attachment; filename="helmstack-report-${id}.${format}"`,
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
+        "Cache-Control": "no-store",
+        "Content-Length": String(file.bytes.length)
+      });
+      res.end(file.bytes);
+      return;
+    }
+
     // ── 404 ──────────────────────────────────────────────────────────────────
     return error(res, 404, "Not found");
   }
@@ -1607,7 +1671,7 @@ function error(res: http.ServerResponse, code: number, message: string) {
 }
 
 /** 501 for a route whose optional API slice this backend does not provide. */
-function unsupported(res: http.ServerResponse, feature: OptionalCapability, backend: BackendKind) {
+function unsupported(res: http.ServerResponse, feature: OptionalCapability | "reports", backend: BackendKind) {
   res.writeHead(501, { "Content-Type": "application/json" });
   res.end(JSON.stringify({
     error: `${feature} is not supported on the ${backend} backend`,
@@ -1617,11 +1681,44 @@ function unsupported(res: http.ServerResponse, feature: OptionalCapability, back
   }));
 }
 
-async function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+/** Largest `POST /api/tabs/:id/report` body accepted. */
+export const REPORT_BODY_LIMIT_BYTES = 256 * 1024;
+
+class BodyTooLargeError extends Error {
+  constructor() {
+    super("request body too large");
+  }
+}
+
+/** 413 and drop the connection instead of reading the rest of an oversized upload. */
+function tooLarge(req: http.IncomingMessage, res: http.ServerResponse, limit: number) {
+  res.writeHead(413, { "Content-Type": "application/json", Connection: "close" });
+  res.end(JSON.stringify({ error: `request body exceeds ${Math.round(limit / 1024)} KB` }), () => req.socket.destroy());
+}
+
+async function readBody(req: http.IncomingMessage, maxBytes = Infinity): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    const declared = Number(req.headers["content-length"]);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      reject(new BodyTooLargeError());
+      return;
+    }
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let size = 0;
+    let aborted = false;
+    req.on("data", (chunk: Buffer) => {
+      if (aborted) return;
+      size += chunk.length;
+      if (size > maxBytes) {
+        aborted = true;
+        chunks.length = 0;
+        reject(new BodyTooLargeError());
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => {
+      if (aborted) return;
       const raw = Buffer.concat(chunks).toString("utf8");
       try {
         resolve(raw.length ? (JSON.parse(raw) as Record<string, unknown>) : {});

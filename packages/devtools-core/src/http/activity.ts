@@ -168,6 +168,18 @@ export const ACTIVITY_ROUTES: readonly ActivityRoute[] = [
   { method: "GET", pattern: "/api/tabs/:id/pick", label: "Pick element" },
   { method: "GET", pattern: "/api/tabs/:id/picks/latest", label: "Read selected element", summarize: tagSummary },
   { method: "GET", pattern: "/api/picks", label: "List selected elements", summarize: arrayCount("element") },
+  // Reports
+  {
+    method: "POST", pattern: "/api/tabs/:id/report", label: "Create report",
+    summarize: (d) => {
+      const r = d.report as { findingCount?: unknown; evidence?: unknown } | undefined;
+      const findings = count(r?.findingCount, "finding");
+      const measurements = count(len(r?.evidence), "measurement");
+      return findings && measurements ? `${findings} · ${measurements}` : findings ?? measurements;
+    }
+  },
+  { method: "GET", pattern: "/api/reports", label: "List reports", summarize: arrayCount("report") },
+  { method: "GET", pattern: "/api/reports/:id", label: "Download report" },
   // Input
   { method: "POST", pattern: "/api/tabs/:id/evaluate", label: "Evaluate script" },
   { method: "POST", pattern: "/api/tabs/:id/insert-text", label: "Type text" },

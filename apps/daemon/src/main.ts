@@ -4,7 +4,7 @@
  * the desktop app, so `@helmstack/mcp-server` works unchanged) on top of a
  * plain Chrome driven over CDP (ADR 0001, WP-F).
  */
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -20,6 +20,19 @@ import {
 } from "../../../packages/devtools-core/src/http/index.js";
 import { ChromeBackend, DEFAULT_VIEWPORT, defaultDataDir } from "./chrome-backend.js";
 import { ChromeNotFoundError } from "./chrome.js";
+
+/**
+ * The daemon's own version, from its package.json (one level above both src/ and dist/).
+ * Used on generated reports. Undefined when it cannot be read; never throws.
+ */
+export function daemonVersion(): string | undefined {
+  try {
+    const manifest = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
+    return typeof manifest.version === "string" ? manifest.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export const USAGE = `Usage: helmstack-daemon [options]
 
@@ -147,7 +160,7 @@ export async function startDaemon(config: DaemonConfig, env: NodeJS.ProcessEnv =
         : { browserURL: config.connect }
       : { executablePath: config.chromePath, headless: !config.headful }
   });
-  const core = new HelmstackCore(backend, { dataDir: config.dataDir });
+  const core = new HelmstackCore(backend, { dataDir: config.dataDir, helmstackVersion: daemonVersion() });
   // Headless: there is no human window, so the agent (token holder) approves.
   const server = createAgentServer({ api: core, backend: "daemon", authToken, port: config.port, host, approvals: "agent" });
   try {

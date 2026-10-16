@@ -114,6 +114,13 @@ export type {
   RecordingSession,
   RecordingStopResult,
   ResourceBudget,
+  CreateReportInput,
+  CreateReportResult,
+  ReportEvidenceKind,
+  ReportFinding,
+  ReportFormat,
+  ReportSeverity,
+  ReportSummary,
   TabId,
   TabLogSnapshot,
   TabSummary,
@@ -130,7 +137,10 @@ export type {
   ViewportPresetName,
   ViewportSuiteReport,
   WebSocketFrameEntry,
-  VIEWPORT_PRESETS
+  VIEWPORT_PRESETS,
+  REPORT_EVIDENCE_KINDS,
+  REPORT_LIMITS,
+  REPORT_OFFER_HINT
 } from "../../shared/src/index.js";
 
 import type {
@@ -178,6 +188,10 @@ import type {
   ScreenshotOptions,
   RecordingSession,
   RecordingStopResult,
+  ReportFormat,
+  ReportSummary,
+  CreateReportInput,
+  CreateReportResult,
   ResourceBudget,
   ScreenshotDiff,
   SiteCapabilityManifest,
@@ -236,6 +250,8 @@ export type StreamHandlers = {
   onAssertionChanged?: (transition: AssertionTransition) => void;
   /** The human selected an element with "Select for agent" in the HelmStack window. */
   onElementPicked?: (pick: HumanElementPick) => void;
+  /** A report finished writing (from any agent that can see the tab). */
+  onReportCreated?: (report: ReportSummary) => void;
   onError?: (err: Error) => void;
 };
 
@@ -922,6 +938,28 @@ export class BrowserClient {
     return this.get("/api/picks");
   }
 
+  // ── Reports ───────────────────────────────────────────────────────────────
+
+  /**
+   * Create a page analysis report: pass **your own** findings and
+   * recommendations; HelmStack adds its own measurements of the page and writes
+   * one self-contained HTML file (plus Markdown). Over-limit input is rejected
+   * with a 400, never shortened. See `REPORT_LIMITS`.
+   */
+  async createReport(tabId: TabId, input: CreateReportInput): Promise<CreateReportResult> {
+    return this.post(`/api/tabs/${tabId}/report`, input);
+  }
+
+  /** Reports stored on this machine, newest first (those this agent can see). */
+  async listReports(): Promise<ReportSummary[]> {
+    return this.get("/api/reports");
+  }
+
+  /** The report file as text: the self-contained HTML (default) or the Markdown twin. */
+  async getReport(id: string, format: ReportFormat = "html"): Promise<string> {
+    return this.request("GET", `/api/reports/${encodeURIComponent(id)}?format=${format}`, undefined, true);
+  }
+
   /**
    * Map rendered DOM nodes back to their authoring component + source `file:line`
    * (React `_debugSource`, Svelte `__svelte_meta`, Vue `__file`). Requires a dev
@@ -1243,11 +1281,11 @@ export class BrowserClient {
     return this.request("DELETE", path, body);
   }
 
-  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private request<T>(method: string, path: string, body?: unknown, rawText = false): Promise<T> {
     return new Promise((resolve, reject) => {
       const bodyStr = body !== undefined ? JSON.stringify(body) : undefined;
       const headers: Record<string, string | number> = {
-        "Accept": "application/json",
+        "Accept": rawText ? "*/*" : "application/json",
         "Content-Type": "application/json"
       };
       if (bodyStr) headers["Content-Length"] = Buffer.byteLength(bodyStr);
@@ -1270,6 +1308,7 @@ export class BrowserClient {
             if ((res.statusCode ?? 0) >= 400) {
               return reject(new HelmstackHttpError(res.statusCode ?? 0, method, path, text));
             }
+            if (rawText) return resolve(text as T);
             try {
               resolve(JSON.parse(text) as T);
             } catch {
@@ -1336,6 +1375,9 @@ function dispatch(eventType: string, data: unknown, handlers: StreamHandlers) {
       break;
     case "approval_resolved":
       handlers.onApprovalResolved?.(data as ApprovalResolution);
+      break;
+    case "report_created":
+      handlers.onReportCreated?.(data as ReportSummary);
       break;
   }
 }

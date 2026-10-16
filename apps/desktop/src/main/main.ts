@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, shell as electronShell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session, shell as electronShell, type IpcMainInvokeEvent } from "electron";
 import os from "node:os";
 import path from "node:path";
 
@@ -24,6 +24,7 @@ import {
 import { ElectronBackend } from "./tab-manager.js";
 import { ZoomStore } from "./zoom-store.js";
 import { McpInstallService, createMcpInstallIpc } from "./mcp-install-service.js";
+import { createReportIpc } from "./report-ipc.js";
 import { parseFindOptions, parseFindText, parseReloadMode, parseZoomAction } from "./ipc-validate.js";
 import { installAppMenu } from "./app-menu.js";
 import { createShortcutRunner, routeKeyInput, type ShortcutHost } from "./shortcut-controller.js";
@@ -141,7 +142,8 @@ async function createMainWindow() {
     dataDir: userDataPath,
     secrets: createDesktopSecrets(vault, accountStore),
     // The page preload already pushes fresh observations; skip the CDP pull.
-    pullObservations: false
+    pullObservations: false,
+    helmstackVersion: app.getVersion()
   });
 
   // ── Browser shortcuts: application menu + in-page key routing ────────────
@@ -311,6 +313,17 @@ function registerIpcHandlers(
         : ["/opt/homebrew/bin", "/usr/local/bin", path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".claude", "local"), path.join(os.homedir(), ".npm-global", "bin")]
   });
 
+  // Reports: shell window only; the renderer sends an id (and a format), never a path.
+  const reportIpc = createReportIpc({
+    core: manager,
+    isShellSender: (sender) => Boolean(mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents),
+    showSaveDialog: (options) =>
+      mainWindow && !mainWindow.isDestroyed() ? dialog.showSaveDialog(mainWindow, options) : dialog.showSaveDialog(options),
+    openPath: (file) => electronShell.openPath(file),
+    showItemInFolder: (file) => electronShell.showItemInFolder(file),
+    defaultDirectory: () => app.getPath("downloads"),
+    joinPath: (dir, name) => path.join(dir, name)
+  });
   const handlers: BrowserShellApi = {
     openTab: async (url?: string) => manager.createTab(url),
     navigate: async (tabId: TabId, url: string) => manager.navigate(tabId, url),
@@ -394,6 +407,12 @@ function registerIpcHandlers(
     getAgentConversationEvents: async (conversationId: string, afterSeq?: number) =>
       runner.getEvents(conversationId, afterSeq ?? 0),
     closeAgentConversation: async (conversationId: string) => runner.closeConversation(conversationId),
+    // Reports (the IPC layer re-checks the sender; here the sender is the shell itself)
+    listReports: async () => reportIpc.list(mainWindow?.webContents),
+    saveReportAs: async (id, format) => reportIpc.saveAs(mainWindow?.webContents, id, format),
+    openReport: async (id) => reportIpc.open(mainWindow?.webContents, id),
+    revealReport: async (id) => reportIpc.reveal(mainWindow?.webContents, id),
+    deleteReport: async (id) => reportIpc.delete(mainWindow?.webContents, id),
     // Connect an agent (MCP client install); see mcp-install-service.ts
     getMcpInstallOverview: async () => mcpInstall.overview(),
     runMcpInstall: async (request) => mcpInstall.handle(request)
@@ -541,6 +560,14 @@ function registerIpcHandlers(
     handlers.clearTabOverrides(tabId, kind)
   );
   ipcMain.handle(BrowserShellChannel.ListAgentActivity, () => handlers.listAgentActivity());
+  ipcMain.handle(BrowserShellChannel.ListReports, (event) => reportIpc.list(event.sender));
+  ipcMain.handle(BrowserShellChannel.SaveReportAs, (event, id: unknown, format: unknown) => reportIpc.saveAs(event.sender, id, format));
+  ipcMain.handle(BrowserShellChannel.OpenReport, (event, id: unknown) => reportIpc.open(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.RevealReport, (event, id: unknown) => reportIpc.reveal(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.DeleteReport, (event, id: unknown) => reportIpc.delete(event.sender, id));
+  manager.onReportsChanged((reports, created) => {
+    sendToShell(BrowserShellChannel.ReportsChanged, reports, created);
+  });
   ipcMain.handle(BrowserShellChannel.GetConnectionStatus, () => handlers.getConnectionStatus());
   // Connect an agent: shell window only; the service validates the request
   // (client id, action and options are allowlisted) and builds every command.

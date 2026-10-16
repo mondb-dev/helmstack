@@ -11,6 +11,7 @@ import {
   type BrowserShellBridge,
   type HumanHandoffRecord,
   type PendingApproval,
+  type ReportSummary,
   type TabId,
   type TabOverrideKind,
   type TabOverrides,
@@ -71,6 +72,12 @@ const browserShell: BrowserShellBridge = {
     ipcRenderer.invoke(BrowserShellChannel.ClearTabOverrides, tabId, kind),
   listAgentActivity: () => ipcRenderer.invoke(BrowserShellChannel.ListAgentActivity),
   getConnectionStatus: () => ipcRenderer.invoke(BrowserShellChannel.GetConnectionStatus),
+  // Reports
+  listReports: () => ipcRenderer.invoke(BrowserShellChannel.ListReports),
+  saveReportAs: (id, format) => ipcRenderer.invoke(BrowserShellChannel.SaveReportAs, id, format),
+  openReport: (id) => ipcRenderer.invoke(BrowserShellChannel.OpenReport, id),
+  revealReport: (id) => ipcRenderer.invoke(BrowserShellChannel.RevealReport, id),
+  deleteReport: (id) => ipcRenderer.invoke(BrowserShellChannel.DeleteReport, id),
   // Connect an agent
   getMcpInstallOverview: () => ipcRenderer.invoke(BrowserShellChannel.GetMcpInstallOverview),
   runMcpInstall: (request) => ipcRenderer.invoke(BrowserShellChannel.RunMcpInstall, request),
@@ -124,7 +131,13 @@ const browserShell: BrowserShellBridge = {
   onTabOverridesChanged: (callback) => subscribe<TabOverrides>(BrowserShellChannel.TabOverridesChanged, callback),
   onAgentActivity: (callback) => subscribe<AgentActivityEntry>(BrowserShellChannel.AgentActivity, callback),
   onConnectionStatusChanged: (callback) =>
-    subscribe<AgentConnectionStatus>(BrowserShellChannel.ConnectionStatusChanged, callback)
+    subscribe<AgentConnectionStatus>(BrowserShellChannel.ConnectionStatusChanged, callback),
+  onReportsChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, reports: ReportSummary[], created?: ReportSummary) =>
+      callback(reports, created);
+    ipcRenderer.on(BrowserShellChannel.ReportsChanged, listener);
+    return () => ipcRenderer.removeListener(BrowserShellChannel.ReportsChanged, listener);
+  }
 };
 
 /** Forward one main-process event channel to `callback`; returns the unsubscribe. */

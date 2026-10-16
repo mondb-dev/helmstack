@@ -29,6 +29,8 @@ import type {
   ComponentSourceReport,
   ComponentTreeReport,
   CookieEntry,
+  CreateReportInput,
+  CreateReportResult,
   CssCoverageReport,
   DesignTokensReport,
   DiffRegion,
@@ -59,6 +61,8 @@ import type {
   PerformanceReport,
   RecordingSession,
   RecordingStopResult,
+  ReportFormat,
+  ReportSummary,
   ResourceBudget,
   ScreenshotDiff,
   ScreenshotOptions,
@@ -259,6 +263,21 @@ export interface EventsApi {
 
 // ── Optional slices ─────────────────────────────────────────────────────────
 
+/**
+ * Page analysis reports (`docs/reports.md`). There is deliberately no agent
+ * route for deleting a report: deletion is a human action in the shell.
+ */
+export interface ReportsApi {
+  /** Validates `input` (throws `ReportInputError`), collects measurements, writes the files. */
+  createReport(tabId: TabId, input: CreateReportInput, ctx?: { agentId?: string }): Promise<CreateReportResult>;
+  /** Newest first. */
+  listReports(): ReportSummary[];
+  /** Addressed by id only (never a path). `null` when the id is unknown. */
+  getReportFile(id: string, format: ReportFormat): { path: string; bytes: Buffer; summary: ReportSummary } | null;
+  /** Fires on create/delete with the full list; `created` names a new report. Returns an unsubscribe function. */
+  onReportsChanged(listener: (reports: ReportSummary[], created?: ReportSummary) => void): () => void;
+}
+
 /** Credential accounts + TOTP (desktop: `AccountStore` over `safeStorage`). */
 export interface AccountsApi {
   listAccounts(): AccountSummary[];
@@ -295,7 +314,7 @@ export interface ExtensionsApi {
  * (e.g. `HelmstackCore`); the server option takes precedence.
  */
 export interface AgentApi extends TabsApi, PerceptionApi, CommandApi, ScreenshotApi, InspectApi,
-  InputApi, LogsApi, OverridesApi, StorageApi, RecordingApi, WatchApi, EventsApi {
+  InputApi, LogsApi, OverridesApi, StorageApi, RecordingApi, WatchApi, EventsApi, Partial<ReportsApi> {
   readonly backend?: BackendKind;
   /** Human inspect-and-click element picker. Needs a visible window → desktop only. */
   pickElement?(tabId: TabId): Promise<ElementPickResult>;

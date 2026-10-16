@@ -5,7 +5,9 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { CliUsageError, main, parseCliArgs, USAGE } from "../src/main.js";
+import { readFileSync } from "node:fs";
+
+import { CliUsageError, daemonVersion, main, parseCliArgs, USAGE } from "../src/main.js";
 
 describe("parseCliArgs", () => {
   it("defaults: port 7070, ~/.helmstack/daemon, headless, launch", () => {
@@ -69,5 +71,13 @@ describe("main", () => {
     } finally {
       await new Promise((resolve) => blocker.close(resolve));
     }
+  });
+});
+
+describe("daemonVersion", () => {
+  it("reads the version from the daemon's package.json", () => {
+    const manifest = JSON.parse(readFileSync(path.resolve(__dirname, "../package.json"), "utf8"));
+    expect(daemonVersion()).toBe(manifest.version);
+    expect(daemonVersion()).toMatch(/^\d+\.\d+\.\d+/);
   });
 });

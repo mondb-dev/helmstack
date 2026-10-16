@@ -131,6 +131,15 @@ const browser = createBrowserClient({ host, port, authToken, agentId });
 // Autonomous-agent tool surface (accounts/TOTP, approvals, handoffs, intent) is opt-in.
 const agentSubstrate = isAgentSubstrateEnabled(process.env);
 
+
+/**
+ * Appended to audit-style tool descriptions so a model offers a report after
+ * presenting findings. Mirrors `REPORT_OFFER_HINT` in @helmstack/shared (kept
+ * inline: this file runs directly under --experimental-strip-types).
+ */
+const REPORT_OFFER =
+  "After you present these findings, offer to prepare a report (browser_create_report) and, if the user agrees, pass your findings and recommendations to it.";
+
 const viewportPresetSchema = z.enum([
   "mobile-sm",
   "mobile",
@@ -520,7 +529,9 @@ full.tool(
 - Whether the response was served from disk cache or a Service Worker
 - HTTP status codes and failed requests
 
-Use this after navigating to a page to audit its security posture and caching configuration.`,
+Use this after navigating to a page to audit its security posture and caching configuration.
+
+` + REPORT_OFFER,
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => {
     const logs = await browser.getLogs(tabId);
@@ -673,14 +684,18 @@ full.tool(
 
 full.tool(
   "browser_performance",
-  "Capture Core Web Vitals, navigation timing, slow resources, and raw CDP performance metrics for a tab.",
+  `Capture Core Web Vitals, navigation timing, slow resources, and raw CDP performance metrics for a tab.
+
+` + REPORT_OFFER,
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.getPerformanceMetrics(tabId))
 );
 
 full.tool(
   "browser_health_report",
-  "Aggregated page-health scorecard fusing Core Web Vitals, the WCAG audit, console/JS errors, failed network requests, layout overflow and SEO (metadata, indexability, structured data) into per-category scores plus an overall score and a pass/fail gate (suitable for CI). Set includeSeo=false to omit the SEO category.",
+  `Aggregated page-health scorecard fusing Core Web Vitals, the WCAG audit, console/JS errors, failed network requests, layout overflow and SEO (metadata, indexability, structured data) into per-category scores plus an overall score and a pass/fail gate (suitable for CI). Set includeSeo=false to omit the SEO category.
+
+` + REPORT_OFFER,
   {
     tabId: z.string().describe("Tab ID"),
     includeSeo: z.boolean().optional().describe("Include the SEO category (default true)")
@@ -689,8 +704,54 @@ full.tool(
 );
 
 full.tool(
+  "browser_create_report",
+  `Prepare a downloadable report of a page analysis: ONE self-contained HTML file (plus a Markdown copy) that the user can open, save and share.
+
+When to call it: the user asked for a report ("prepare a report", "write this up", "give me something I can share"), or they said yes after you offered one. Do not create reports unprompted; after you present audit results, offer one first.
+
+What you pass: YOUR OWN analysis. HelmStack cannot know your conclusions; it only adds what it can measure itself (accessibility, SEO, layout, performance, health scorecard, console and network summaries, a screenshot). So run the audits and look at the page first, then call this with:
+- findings: specific and evidence-based. Each has a short title, a severity (critical|high|medium|low|info), an optional area, the evidence you observed (selector, value, measurement) and a concrete recommendation. Do not pad: one finding per distinct problem, no generic advice you cannot tie to this page.
+- recommendations: the prioritised next steps, most important first.
+- summary: 1-3 short paragraphs.
+- author: who is writing (for example your product name); it is shown on the report.
+
+Everything you write is plain text (no HTML or Markdown is rendered) and is labelled in the report as "not verified by HelmStack", kept apart from the measured sections. Limits (input over a limit is rejected, not shortened): title 120 chars, summary 4000, up to 50 findings (title 160, evidence 1200, recommendation 1200, area 40), up to 30 recommendations of 600 chars, author 80.
+
+Optional: include (which measurements to collect; default accessibility, seo, layout, performance, health; also console, network) and screenshot (default true). A measurement that fails or times out is listed under "skipped" and the report is still written.
+
+Returns: { report: summary (id, title, counts by severity, measurements included, skipped), path: where the HTML file was saved on this machine, preview: short text }. Tell the user the report is ready and where it is; the HelmStack window lists it under Reports so they can save or open it.`,
+  {
+    tabId: z.string().describe("Tab ID of the page being reported on"),
+    title: z.string().max(120).optional().describe("Report title (default: 'Page analysis: <page title>')"),
+    summary: z.string().max(4000).optional().describe("Your overall assessment, 1-3 short paragraphs of plain text"),
+    findings: z.array(z.object({
+      title: z.string().max(160).describe("Short headline"),
+      severity: z.enum(["critical", "high", "medium", "low", "info"]),
+      area: z.string().max(40).optional().describe("e.g. accessibility, seo, performance, content"),
+      evidence: z.string().max(1200).optional().describe("What you observed: selectors, values, measurements"),
+      recommendation: z.string().max(1200).describe("What to do about it"),
+    })).max(50).optional().describe("Your findings (not verified by HelmStack)"),
+    recommendations: z.array(z.string().max(600)).max(30).optional().describe("Prioritised next steps, most important first"),
+    include: z.array(z.enum(["accessibility", "seo", "layout", "performance", "health", "console", "network"])).optional()
+      .describe("Measurements HelmStack should collect now (default: accessibility, seo, layout, performance, health)"),
+    screenshot: z.boolean().optional().describe("Embed a screenshot (default true)"),
+    author: z.string().max(80).optional().describe("Who wrote the findings, shown on the report"),
+  },
+  async ({ tabId, ...input }) => jsonResult(await browser.createReport(tabId, input))
+);
+
+full.tool(
+  "browser_list_reports",
+  "List the page analysis reports saved on this machine (newest first): id, title, page, when, finding counts by severity, which measurements were included or skipped, and file size. Reports are created with browser_create_report; deleting them is a human action in the HelmStack window.",
+  {},
+  async () => jsonResult(await browser.listReports())
+);
+
+full.tool(
   "browser_focus_order",
-  "Audit keyboard tab order vs. the page's visual reading order: flags positive tabindex (which hijacks order) and points where focus jumps backwards (to an element above or left of the previous one). Complements the WCAG audit.",
+  `Audit keyboard tab order vs. the page's visual reading order: flags positive tabindex (which hijacks order) and points where focus jumps backwards (to an element above or left of the previous one). Complements the WCAG audit.
+
+` + REPORT_OFFER,
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.auditFocusOrder(tabId))
 );
@@ -720,7 +781,9 @@ Rules checked (WCAG level in parentheses):
 - 4.1.2 (A)  ARIA widget roles must include required state attributes (aria-checked, aria-expanded, etc.)
 - 4.1.3 (AA) Disabled controls must still have an accessible name
 
-Pass an optional 'selector' to scope the audit to that element's subtree (page-level rules like lang/title are skipped) — useful for auditing just the component you're editing.`,
+Pass an optional 'selector' to scope the audit to that element's subtree (page-level rules like lang/title are skipped) — useful for auditing just the component you're editing.
+
+` + REPORT_OFFER,
   {
     tabId: z.string().describe("Tab ID"),
     selector: z.string().optional().describe("Optional CSS selector to scope the audit to one element's subtree")
@@ -739,7 +802,9 @@ Covers:
 - social / structured data: Open Graph and Twitter card tags, JSON-LD parse errors, @types and missing required properties for Article, Product, Organization, BreadcrumbList, FAQPage, WebSite
 - links: internal/external inventory; with checkLinks=true, a bounded same-origin HEAD/GET check (default 25, max 100 links) reporting 4xx/5xx and redirects
 
-Returns score 0-100 (100 - 12 per error - 4 per warning, floor 0), pass (no error-severity issues), issues (id, severity, message, evidence, fix, selectors), per-section summaries, and skipped/unsupported notes for checks that could not run. Only same-origin fetches from the page are made; checkLinks defaults off.`,
+Returns score 0-100 (100 - 12 per error - 4 per warning, floor 0), pass (no error-severity issues), issues (id, severity, message, evidence, fix, selectors), per-section summaries, and skipped/unsupported notes for checks that could not run. Only same-origin fetches from the page are made; checkLinks defaults off.
+
+` + REPORT_OFFER,
   {
     tabId: z.string().describe("Tab ID"),
     checkLinks: z.boolean().optional().describe("Actively check same-origin links through the page (default false)"),
@@ -875,7 +940,9 @@ full.tool(
 
 full.tool(
   "browser_layout_issues",
-  "Detect layout problems at the current viewport: horizontal page overflow and the elements responsible, children escaping their constrained container, and elements clipping their own content. Set the viewport first (browser_set_viewport) to diagnose why a responsive breakpoint broke.",
+  `Detect layout problems at the current viewport: horizontal page overflow and the elements responsible, children escaping their constrained container, and elements clipping their own content. Set the viewport first (browser_set_viewport) to diagnose why a responsive breakpoint broke.
+
+` + REPORT_OFFER,
   { tabId: z.string().describe("Tab ID") },
   async ({ tabId }) => jsonResult(await browser.detectLayoutIssues(tabId))
 );

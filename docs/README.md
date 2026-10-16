@@ -12,6 +12,7 @@ HelmStack lets an AI agent inspect and test a front-end in a real browser, from 
 | [Connect an agent](connect-an-agent.md) | Install the MCP server into Claude Code, Gemini CLI, Cursor and others |
 | [Agent chat and local models](agent-chat.md) | Chat with a CLI agent or an Ollama or LM Studio model in the window |
 | [Lite toolset](lite-toolset.md) | Give a small model 14 plain-text verbs |
+| [Page analysis reports](reports.md) | Have an agent write up findings and measurements as a downloadable file |
 | [Headless and CI](headless-ci.md) | Run the daemon and use it in CI |
 
 ## Reference

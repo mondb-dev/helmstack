@@ -329,6 +329,54 @@ export function defineContractSuite(factory: BackendFactory): void {
       });
     }, SLOW);
 
+    // Reports are written to the instance's data directory; an external (human's) instance keeps its own.
+    it.skipIf(factory.name.startsWith("external"))(
+      "report: agent findings + measured SEO are written once, listed, downloadable, and not deletable by the agent",
+      async () => {
+        await withTab(pages.seoGood, async (tabId) => {
+          await perceive(tabId, (p) => p.result.graph.url === pages.seoGood);
+          const bad = await call("POST", `/api/tabs/${tabId}/report`, { findings: [{ title: "t", severity: "nope", recommendation: "r" }] });
+          expect(bad.status).toBe(400);
+
+          const created = await ok("POST", `/api/tabs/${tabId}/report`, {
+            title: id("report"),
+            summary: "Contract run.",
+            findings: [{ title: "<script>alert(1)</script>", severity: "low", recommendation: "Escape me" }],
+            recommendations: ["Keep it escaped"],
+            include: ["seo"],
+            screenshot: false
+          });
+          expect(created).toMatchObject({
+            report: { id: isString, title: id("report"), tabId, findingCount: 1, evidence: ["seo"], skipped: [], screenshot: false, formats: ["html", "md"], sizeBytes: isNumber },
+            path: isString,
+            preview: isString
+          });
+          const reportId = created.report.id as string;
+
+          const list = await ok("GET", "/api/reports");
+          expect((list as Json[]).map((r) => r.id)).toContain(reportId);
+
+          const html = await call("GET", `/api/reports/${reportId}`);
+          expect(html.status).toBe(200);
+          expect(html.contentType).toContain("text/html");
+          const text = html.bytes.toString("utf8");
+          expect(text).toContain("Measured by HelmStack");
+          expect(text).toContain("not verified by HelmStack");
+          expect(text).not.toMatch(/<script/i);
+          expect(text).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+
+          const md = await call("GET", `/api/reports/${reportId}?format=md`);
+          expect(md.status).toBe(200);
+          expect(md.bytes.toString("utf8")).toContain("Measured by HelmStack");
+
+          expect((await call("GET", "/api/reports/..%2f..%2fetc%2fpasswd")).status).toBe(400);
+          expect((await call("DELETE", `/api/reports/${reportId}`)).status).toBe(404);
+          expect(((await ok("GET", "/api/reports")) as Json[]).map((r) => r.id)).toContain(reportId);
+        });
+      },
+      SLOW
+    );
+
     it("seo audit: a problem page fails with actionable issues and is blocked by robots.txt", async () => {
       await withTab(pages.seoBad, async (tabId) => {
         await perceive(tabId, (p) => p.result.graph.url === pages.seoBad);

@@ -7,7 +7,7 @@
 ## What gets registered
 
 <!-- generated:start mcp-counts -->
-The full toolset registers **79** tools by default and **89** when the agent-substrate surface is on. The lite toolset registers **14** verbs.
+The full toolset registers **81** tools by default and **91** when the agent-substrate surface is on. The lite toolset registers **14** verbs.
 <!-- generated:end -->
 
 | Setting | Effect |
@@ -54,6 +54,8 @@ First sentence of each tool's description, extracted from `packages/mcp-server/s
 | `browser_viewport_suite` | Capture screenshots at multiple responsive viewport presets, optionally including pairwise visual diffs. |
 | `browser_performance` | Capture Core Web Vitals, navigation timing, slow resources, and raw CDP performance metrics for a tab. |
 | `browser_health_report` | Aggregated page-health scorecard fusing Core Web Vitals, the WCAG audit, console/JS errors, failed network requests, layout overflow and SEO (metadata, indexability, structured data) into per-category scores plus an overall score and a pass/fail gate (suitable for CI). |
+| `browser_create_report` | Prepare a downloadable report of a page analysis: ONE self-contained HTML file (plus a Markdown copy) that the user can open, save and share. |
+| `browser_list_reports` | List the page analysis reports saved on this machine (newest first): id, title, page, when, finding counts by severity, which measurements were included or skipped, and file size. |
 | `browser_focus_order` | Audit keyboard tab order vs. the page's visual reading order: flags positive tabindex (which hijacks order) and points where focus jumps backwards (to an element above or left of the previous one). |
 | `browser_a11y_audit` | Run a comprehensive WCAG 2.2 accessibility audit against the live accessibility tree and DOM. |
 | `browser_seo_audit` | Deterministic SEO audit of the loaded page. |

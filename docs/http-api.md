@@ -132,6 +132,9 @@ Generated from the route comment block in `packages/devtools-core/src/http/agent
 | POST | `/api/perception/diff` | { beforeId, afterId } → PerceptionDiff |
 | GET | `/api/perception` | → PerceptionSnapshotEntry[] |
 | DELETE | `/api/perception/:id` | removes perception snapshot from cache |
+| POST | `/api/tabs/:id/report` | CreateReportInput (body limit 256 KB) → CreateReportResult (the agent's findings + HelmStack's measurements; 400 on limits) |
+| GET | `/api/reports` | → ReportSummary[] (newest first) |
+| GET | `/api/reports/:id` | ?format=html\|md → the report file (attachment, nosniff). There is no agent route to delete a report. |
 <!-- generated:end -->
 
 ### Route coverage
@@ -157,6 +160,7 @@ _None._
 - `agent_log`
 - `assertion_changed`
 - `element_picked`
+- `report_created`
 <!-- generated:end -->
 
 `approval_resolved` carries `{ requestId, tabId, outcome, reason?, status?, url?, origin?, resolvedAt }` where `outcome` is `approved`, `rejected`, `cancelled` (the tab navigated or closed first) or `expired`. `element_picked` carries `{ tabId, pickedAt, pick }`.
