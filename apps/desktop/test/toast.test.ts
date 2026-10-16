@@ -61,3 +61,29 @@ describe("toast", () => {
     expect(document.querySelectorAll("#toast-region .toast")).toHaveLength(2);
   });
 });
+
+describe("toast actions", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    document.body.replaceChildren();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("renders labelled action buttons that run and dismiss", () => {
+    const onClick = vi.fn();
+    toast("Ready", "success", { actions: [{ label: "Open", onClick }] });
+    const button = document.querySelector<HTMLButtonElement>(".toast__action")!;
+    expect(button.textContent).toBe("Open");
+    button.click();
+    expect(onClick).toHaveBeenCalledOnce();
+    expect(document.querySelectorAll(".toast")).toHaveLength(0);
+  });
+
+  it("stays longer than a plain toast", () => {
+    toast("Ready", "success", { actions: [{ label: "Open", onClick: () => undefined }] });
+    vi.advanceTimersByTime(AUTO_MS + 100);
+    expect(document.querySelectorAll(".toast")).toHaveLength(1);
+    vi.advanceTimersByTime(10000);
+    expect(document.querySelectorAll(".toast")).toHaveLength(0);
+  });
+});

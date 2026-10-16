@@ -22,10 +22,11 @@ Back, forward, reload, the address bar, and **Select for agent**. Find in page (
 
 ## Side panel
 
-Toggle with `Cmd/Ctrl+Shift+A`. Two tabs:
+Toggle with `Cmd/Ctrl+Shift+A`. Three tabs:
 
 - **Activity**: a live feed of what agents are doing, one row per API call or log line, with a filter. This is the place to check what an agent actually did. A command held for your approval shows as "Run page command - awaiting approval" with a clock, and the same row updates in place when it resolves: a check and "approved", a muted x and "rejected", or a muted "cancelled" (the page changed or the tab closed) or "expired". Rows never show the command, its arguments or page text.
 - **Chat**: talk to an agent or a local model. See [Agent chat and local models](agent-chat.md).
+- **Reports**: page analysis reports your agent has prepared, newest first. Each row shows the page, when it was written, who wrote it, findings counted by severity (critical, high, medium, low) and which measurements were included. **Open** shows the report in your default browser, **Save as…** copies it to a place you choose as HTML or Markdown, **Show in folder** reveals the file, and **Delete** asks for confirmation first. When an agent finishes a report a "Report ready" notification appears with **Open** and **Save as…**, and the tab shows a count until you view it. To get one, ask your agent: "analyze this page and prepare a report". The tab is hidden if the app build doesn't support reports. Findings are the agent's interpretation; HelmStack doesn't verify them.
 
 ## Connection popover
 

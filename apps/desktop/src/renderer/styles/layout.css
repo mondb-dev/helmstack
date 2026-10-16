@@ -499,6 +499,27 @@
   cursor: pointer;
 }
 
+.side-tabs__tab[hidden] {
+  display: none;
+}
+
+.side-tabs__badge {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-on-accent, #08130d);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  text-align: center;
+}
+
+.side-tabs__badge[hidden] {
+  display: none;
+}
+
 .side-tabs__tab:hover {
   color: var(--color-text);
 }
@@ -509,8 +530,10 @@
 }
 
 .activity[data-panel="chat"] > #activity-body,
+.activity[data-panel="reports"] > #activity-body,
 .activity[data-collapsed="true"] > .side-tabs,
-.activity[data-collapsed="true"] > .chat {
+.activity[data-collapsed="true"] > .chat,
+.activity[data-collapsed="true"] > .reports {
   display: none;
 }
 

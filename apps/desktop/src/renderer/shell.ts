@@ -21,6 +21,7 @@ import { mountApprovals } from "./panels/approvals.js";
 import { mountActivity } from "./panels/activity.js";
 import { mountChat } from "./panels/chat.js";
 import { mountSideTabs } from "./panels/side-tabs.js";
+import { mountReports, reportsSupported } from "./panels/reports.js";
 import { mountSettings } from "./panels/settings.js";
 import { mountHandoff } from "./panels/handoff.js";
 import { mountAddressBar } from "./panels/address-bar.js";
@@ -177,7 +178,21 @@ async function bootstrap(): Promise<void> {
       return tab ? safeHostLabel(tab.url) : undefined;
     },
   });
-  const sideTabs = mountSideTabs({ onChange: (panel) => panel === "chat" && chat.show() });
+  const hasReports = reportsSupported(bridge);
+  const reports = hasReports
+    ? mountReports({
+        bridge,
+        isVisible: () => sideTabs.selected() === "reports" && document.getElementById("activity-panel")?.dataset.collapsed !== "true",
+        onUnreadChange: (count) => sideTabs.setBadge("reports", count),
+      })
+    : null;
+  const sideTabs = mountSideTabs({
+    reports: hasReports,
+    onChange: (panel) => {
+      if (panel === "chat") chat.show();
+      if (panel === "reports") reports?.show();
+    },
+  });
 
   const navControls = mountNavControls({
     bridge,
