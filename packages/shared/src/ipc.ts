@@ -7,6 +7,8 @@ import type { ReportFormat, ReportSummary } from "./report.js";
 import type {
   RoutineDetail,
   RoutineEngineStatus,
+  RoutineAction,
+  RoutineGrants,
   RoutineMemory,
   RoutineModelChoice,
   RoutineModelStatus,
@@ -84,6 +86,10 @@ export const BrowserShellChannel = {
   GetRoutineMemory: "browser-shell:get-routine-memory",
   ClearRoutineMemory: "browser-shell:clear-routine-memory",
   SetRoutineKillSwitch: "browser-shell:set-routine-kill-switch",
+  SetRoutineGrants: "browser-shell:set-routine-grants",
+  ListRoutineActions: "browser-shell:list-routine-actions",
+  ApproveRoutineAction: "browser-shell:approve-routine-action",
+  DeclineRoutineAction: "browser-shell:decline-routine-action",
   GetRoutineModel: "browser-shell:get-routine-model",
   SetRoutineModel: "browser-shell:set-routine-model",
   // Reports (files live in the app's data directory; the shell never reads their contents)
@@ -128,7 +134,8 @@ export const BrowserShellChannel = {
   AgentChatEvent: "browser-shell:agent-chat-event",
   ReportsChanged: "browser-shell:reports-changed",
   RoutinesChanged: "browser-shell:routines-changed",
-  RoutineRunUpdated: "browser-shell:routine-run-updated"
+  RoutineRunUpdated: "browser-shell:routine-run-updated",
+  RoutineActionsChanged: "browser-shell:routine-actions-changed"
 } as const;
 
 /** Zoom steps the human can request for a tab. */
@@ -217,7 +224,7 @@ export type BrowserShellApi = {
   getRoutine(id: string): Promise<RoutineDetail | null>;
   getRoutineEngineStatus(): Promise<RoutineEngineStatus>;
   /** proposed -> approved. Rejects if the routine is not currently proposed. */
-  approveRoutine(id: string): Promise<RoutineSummary>;
+  approveRoutine(id: string, grants?: RoutineGrants): Promise<RoutineSummary>;
   /** proposed -> rejected. */
   rejectRoutine(id: string): Promise<RoutineSummary>;
   /** approved -> paused. */
@@ -241,6 +248,13 @@ export type BrowserShellApi = {
   clearRoutineMemory(id: string): Promise<void>;
   /** On: abort running routines and start nothing until turned off. */
   setRoutineKillSwitch(on: boolean): Promise<RoutineEngineStatus>;
+  /** Change what a routine may do without asking (human only). Lowering takes effect on the next action. */
+  setRoutineGrants(id: string, grants: RoutineGrants): Promise<RoutineDetail>;
+  /** Newest first, capped at the last 100 per routine. */
+  listRoutineActions(id: string): Promise<RoutineAction[]>;
+  /** Run a pending action now (re-checks the page and the target first). */
+  approveRoutineAction(id: string, actionId: string): Promise<RoutineAction>;
+  declineRoutineAction(id: string, actionId: string): Promise<RoutineAction>;
   /** Which model answers routine inference points (human only). */
   getRoutineModel(): Promise<RoutineModelStatus>;
   /** Pass null to clear. Rejects an unknown runtime or a flag-like model id. */
@@ -306,6 +320,8 @@ export type BrowserShellBridge = BrowserShellApi & {
   onReportsChanged(callback: (reports: ReportSummary[], created?: ReportSummary) => void): () => void;
   /** Fires with the full list whenever a routine is proposed or changes state; `proposed` names a new proposal. */
   /** Fires when a run starts, logs progress, or ends. */
+  /** Fires when an action is queued, decided or finished. */
+  onRoutineActionsChanged(callback: (routineId: string) => void): () => void;
   onRoutineRunUpdated(callback: (run: RoutineRunSummary) => void): () => void;
   onRoutinesChanged(callback: (routines: RoutineSummary[], proposed?: RoutineSummary) => void): () => void;
 };

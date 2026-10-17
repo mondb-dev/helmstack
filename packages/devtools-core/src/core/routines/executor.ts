@@ -6,8 +6,11 @@
  *    answered with JSON (see `inference.ts`); the answer is parsed, grounded in the page text and
  *    routed by the spec's thresholds, and a model that is missing or fails ends the run for a
  *    person instead of guessing. Prompts and answers are never logged.
- *  - It never fills, clicks, submits, posts, purchases or downloads. The only things it does to a
- *    page are: load a URL, and read it with a fixed script (see `page-data.ts`).
+ *  - It never fills, clicks, submits, posts, purchases or downloads on its own. The only things it
+ *    does to a page are: load a URL, read it with a fixed script (see `page-data.ts`), and carry out
+ *    an `act` step. An `act` goes through the checks in `actStep` (scope, protect list, what always
+ *    asks, the human's grants, a check of the page afterwards) and through HelmStack's own command
+ *    pipeline; nothing else can change a page.
  *  - It never leaves the routine's scope: every navigation is checked against `scope.start`,
  *    `follow.allow_hosts`, `max_depth`, the page budget, and (for followed pages) robots.txt, and
  *    the final URL after redirects is checked again.
@@ -26,11 +29,33 @@ import {
   type RoutineStep
 } from "../../../../shared/src/index.js";
 import { evaluateRobots, parseRobotsTxt, type ParsedRobots } from "../reports/robots-txt.js";
+import {
+  ALWAYS_ASK,
+  candidatesFor,
+  chooserQuestion,
+  describeAction,
+  locateDeterministic,
+  mergedProtect,
+  numberedList,
+  performAndVerify,
+  plain,
+  protectApplies,
+  protectedMatch,
+  sensitiveKind,
+  shortlist,
+  SUBJECT_CHARS,
+  type ActBrowser,
+  type ActGate,
+  type ActionPrivate,
+  type RoutineControl
+} from "./act.js";
+import { DEFAULT_PER_DAY, DEFAULT_PER_RUN } from "./grants.js";
 import { MAX_SET_ITEMS, type RoutineStateData } from "../stores/routine-data-store.js";
 import {
   INFER_DATA_CHARS,
   INFER_DATA_CHARS_LARGE,
   ModelCallError,
+  normalizeForMatch,
   parseOutputKind,
   runInference,
   sanitizeData,
@@ -50,7 +75,7 @@ export const DEFAULT_NAV_TIMEOUT_MS = 30_000;
 export const MAX_NOTES_PER_RUN = 200;
 
 /** How the executor touches a browser. The core adapts a `BrowserBackend` to this. */
-export interface RoutineBrowser {
+export interface RoutineBrowser extends Partial<ActBrowser> {
   /** A fresh tab for one run. */
   openTab(): Promise<string>;
   /** Load `url` and resolve once loaded, with the URL the tab ended on. */
@@ -75,6 +100,8 @@ export type ExecutorDeps = {
   maxRuntimeMs?: number;
   /** Which model answers judgments. Without it a judgment ends the run asking for a model. */
   resolveModel?: () => Promise<InferenceResolution>;
+  /** What an `act` step needs: grants, counters and the action list. Without it an `act` step ends the run. */
+  acts?: ActGate;
 };
 
 export type ExecutorInput = {
@@ -99,13 +126,17 @@ export type ExecutorResult = {
   notes: RoutineNote[];
   /** Set when a `when_inferred` stop condition was judged to hold; the engine stops the routine. */
   stopReason?: string;
+  /** An action failed its check: the engine pauses the routine at once. */
+  pauseNow?: boolean;
+  /** The run ended `needs_human` only because actions are waiting for a tap (the engine does not auto-pause for that). */
+  waitingOnActions?: boolean;
 };
 
 // ── control flow ────────────────────────────────────────────────────────────
 
 /** Ends the run with this outcome. */
 class RunEnd extends Error {
-  constructor(readonly outcome: RoutineRunOutcome, readonly summaryText: string) {
+  constructor(readonly outcome: RoutineRunOutcome, readonly summaryText: string, readonly pause = false) {
     super(summaryText);
   }
 }
@@ -157,6 +188,10 @@ class Executor {
   private costNoted = false;
   /** Notes recorded while this is true are marked as maybes. Reset for each loop item. */
   private maybe = false;
+  /** Actions queued for a human this run. After the first, nothing else is done automatically this run. */
+  private pendingQueued = 0;
+  private readonly attempts = new Map<string, number>();
+  private pauseNow = false;
 
   constructor(private readonly deps: ExecutorDeps, private readonly input: ExecutorInput) {
     this.spec = input.spec;
@@ -188,6 +223,7 @@ class Executor {
       if (err instanceof RunEnd) {
         outcome = err.outcome;
         summaryText = err.summaryText;
+        this.pauseNow = err.pause;
       } else if (this.input.signal.aborted) {
         outcome = "cancelled";
       } else {
@@ -200,10 +236,23 @@ class Executor {
     }
     if (this.input.signal.aborted && outcome !== "cancelled" && outcome !== "failed") outcome = "cancelled";
     const counts = `${this.pages} page${this.pages === 1 ? "" : "s"}, ${this.notes.length} note${this.notes.length === 1 ? "" : "s"}`;
-    if (outcome === "completed") summaryText = `Completed: ${counts}.`;
+    let waiting = false;
+    if (outcome === "completed" && this.pendingQueued > 0) {
+      outcome = "needs_human";
+      waiting = true;
+      summaryText = `Waiting for you to approve ${this.pendingQueued} action${this.pendingQueued === 1 ? "" : "s"} (${counts}).`;
+    } else if (outcome === "completed") summaryText = `Completed: ${counts}.`;
     else if (!summaryText) summaryText = outcome === "cancelled" ? "Cancelled." : `Ended: ${outcome}.`;
     else if (outcome !== "cancelled") summaryText = `${summaryText} (${counts})`;
-    return { outcome, summary: summaryText, pagesVisited: this.pages, notes: this.notes, ...(stopReason && outcome === "completed" ? { stopReason } : {}) };
+    return {
+      outcome,
+      summary: summaryText,
+      pagesVisited: this.pages,
+      notes: this.notes,
+      ...(stopReason && outcome === "completed" ? { stopReason } : {}),
+      ...(this.pauseNow && outcome === "failed" ? { pauseNow: true } : {}),
+      ...(waiting ? { waitingOnActions: true } : {})
+    };
   }
 
   // ── steps ─────────────────────────────────────────────────────────────────
@@ -237,6 +286,8 @@ class Executor {
         return this.inferStep(step, env, label);
       case "branch":
         return this.branchStep(step, env, label);
+      case "act":
+        return this.actStep(step, env, label);
       case "note":
         return this.noteStep(step, env, label);
       case "mark_seen":
@@ -806,6 +857,206 @@ class Executor {
     return null;
   }
 
+  // act ──────────────────────────────────────────────────────────────────────
+  //
+  // Every act goes through these checks, in this order, and all of them must pass:
+  //  (a) the routine may still act (not paused, stopped, cancelled or killed)
+  //  (b) the page is inside the routine's scope
+  //  (c) the subject is not on the protect list (remove / offer / respond / moving out of play)
+  //  -   the control is located (accessible name and row text; a model only ever picks from a list)
+  //  (d) offers, answers to offers and `other` always wait for a human
+  //  (e) automatic only with the human's grant and under its per-run and per-day limits
+  //  (f) anything HelmStack itself always asks about is never automatic, whatever was granted
+  //  (g) afterwards the page must show what `verify` says; if not, the run fails and the routine pauses
+
+  private async actStep(step: Extract<RoutineStep, { do: "act" }>, env: Env, label: string): Promise<void> {
+    const acts = this.deps.acts;
+    const b = this.deps.browser;
+    if (!acts || !b.controls || !b.perform || !b.pageState) {
+      throw new RunEnd("failed", "Failed: this setup cannot carry out actions, so the routine did nothing.");
+    }
+    this.checkLimits();
+    // (a)
+    const off = acts.mayAct();
+    if (off) throw new RunEnd("cancelled", `Stopped: ${off}`);
+    const tab = this.tabId;
+    if (!this.visit || !tab) throw new SoftError("An action needed an open page, but none was open.");
+    const live = await this.guard(b.pageState(tab), this.deps.navTimeoutMs ?? DEFAULT_NAV_TIMEOUT_MS).catch((err) => {
+      if (err instanceof RunEnd) throw err;
+      throw new SoftError("A page could not be read before an action.");
+    });
+    const liveUrl = parseHttpUrl(live.url);
+    const host = liveUrl.ok ? liveUrl.url.hostname : "an unknown page";
+    const inScope = (url: string): boolean => {
+      const parsed = parseHttpUrl(url);
+      return parsed.ok && hostInScope(parsed.url.hostname, this.spec.scope);
+    };
+    const text = (ref: string): string => (ref.startsWith("$") || ref.startsWith("state.") ? this.refPlain(ref, env) : ref);
+    const subject = step.subject !== undefined ? plain(this.refPlain(step.subject, env), SUBJECT_CHARS) || undefined : undefined;
+    const value = step.value !== undefined ? text(step.value).slice(0, ROUTINE_LIMITS.actValueChars) : undefined;
+    const verify = {
+      present: (step.verify.present ?? []).map((v) => plain(text(v), ROUTINE_LIMITS.verifyChars)),
+      absent: (step.verify.absent ?? []).map((v) => plain(text(v), ROUTINE_LIMITS.verifyChars))
+    };
+    if ((step.action !== "click" && !value) || [...verify.present, ...verify.absent].some((v) => v === "")) {
+      this.input.log("warn", "An action was skipped: it had no value to use or nothing to check afterwards.", label);
+      throw new SoftError("An action had no value or no check, so it was skipped.");
+    }
+    const draftBase = { runId: this.input.runId, effect: step.effect, action: step.action, host, url: live.url, ...(subject ? { subject } : {}) };
+    const secretBase = { target: step.target, strategies: step.strategies, minConfidence: step.min_confidence, verify, ...(value !== undefined ? { value } : {}) };
+    const label2 = (what: string): string => `${step.effect} ${step.action}${subject ? ` for ${subject}` : ""} on ${host}: ${what}`;
+
+    // (b)
+    if (!inScope(live.url)) {
+      acts.record({ ...draftBase, description: describeAction({ action: step.action, controlName: "control", ...(subject ? { subject } : {}), host }), status: "blocked", note: "The page is outside the routine's scope, so nothing was done." });
+      this.input.log("warn", label2("blocked, the page is outside the routine's scope."), label);
+      throw new SoftError("An action was blocked: the page is outside the routine's scope.");
+    }
+
+    // (c)
+    const grants0 = acts.grants();
+    const protect = mergedProtect(this.spec.actions?.protect, grants0);
+    let forced: string | null = null;
+    if (protectApplies(step.effect, step.target, value)) {
+      if (subject) {
+        if (protectedMatch(protect, subject)) {
+          acts.record({
+            ...draftBase,
+            description: describeAction({ action: step.action, controlName: "control", subject, host, ...(step.action === "select" && value ? { value } : {}) }),
+            status: "blocked",
+            note: "It involves a protected name, so it is never done and never asked."
+          });
+          this.input.log("info", label2("blocked, it involves a protected name."), label);
+          return;
+        }
+      } else if (protect.length > 0) {
+        forced = "There was no subject to check against the protected names, so it waits for you.";
+      }
+    }
+
+    // locate
+    const controls = await this.guard(b.controls(tab), this.deps.navTimeoutMs ?? DEFAULT_NAV_TIMEOUT_MS).catch((err) => {
+      if (err instanceof RunEnd) throw err;
+      throw new SoftError("The page's controls could not be read.");
+    });
+    const found = await this.locateControl(step, subject, controls, label);
+    if (!found) {
+      this.input.log("warn", `Could not find the control for "${clean(step.target, 80)}" with enough confidence${subject ? ` (for ${subject})` : ""}.`, label);
+      if (step.on_low === "skip") return;
+      if (step.on_low === "ask_human") throw new RunEnd("needs_human", "Needs a person: could not find the control for an action with enough confidence.");
+      throw new RunEnd("failed", "Failed: could not find the control for an action.");
+    }
+    const control = found.control;
+    const description = describeAction({ action: step.action, controlName: control.name, ...(subject ? { subject } : {}), host, ...(step.action === "select" && value ? { value } : step.action === "fill" && value ? { value } : {}) });
+    const secret: ActionPrivate = { ...secretBase, controlName: control.name, controlRole: control.role };
+    const queue = (note: string): void => {
+      acts.record({ ...draftBase, description, status: "pending", note, secret });
+      this.pendingQueued += 1;
+      this.input.log("info", label2(`waiting for you (${note})`), label);
+    };
+
+    // (d) (e) (f)
+    if (forced) return queue(forced);
+    if (ALWAYS_ASK.includes(step.effect)) return queue("Offers, answers to offers and other changes always wait for you.");
+    if (this.pendingQueued > 0) return queue("It waits behind an earlier action that needs you.");
+    const grant = acts.grants().effects[step.effect];
+    if (grant?.mode !== "auto") return queue("You have not allowed this to run without asking.");
+    const kind = sensitiveKind(control.name);
+    if (kind) return queue(`HelmStack always asks before ${kind}; no grant changes that.`);
+    const perRun = grant.perRun ?? DEFAULT_PER_RUN;
+    const perDay = grant.perDay ?? DEFAULT_PER_DAY;
+    if ((this.attempts.get(step.effect) ?? 0) >= perRun) return queue(`The limit of ${perRun} per run was reached.`);
+    if (!acts.reserveDaily(step.effect, perDay)) return queue(`The limit of ${perDay} per day was reached.`);
+    this.attempts.set(step.effect, (this.attempts.get(step.effect) ?? 0) + 1);
+
+    // go
+    const rec = acts.record({ ...draftBase, description, status: "approved", allowedBy: "grant", note: "Allowed by your grant; running now.", secret });
+    await acts.throttle(this.input.signal);
+    const off2 = acts.mayAct();
+    if (off2 || this.input.signal.aborted) {
+      acts.update(rec.id, { status: "failed", note: "Cancelled before it ran." });
+      throw new RunEnd("cancelled", `Stopped: ${off2 ?? "cancelled"}`);
+    }
+    const outcome = await performAndVerify({
+      browser: b as ActBrowser,
+      tab,
+      control,
+      action: step.action,
+      ...(value !== undefined ? { value } : {}),
+      verify,
+      inScope,
+      sleep: this.deps.sleep,
+      signal: this.input.signal
+    });
+    if (this.visit) this.visit.data = null;
+    switch (outcome.status) {
+      case "done":
+        acts.update(rec.id, { status: "done", note: "Done, and the page shows the expected result." });
+        this.input.log("info", label2("done and checked."), label);
+        return;
+      case "needs_approval": {
+        acts.update(rec.id, { status: "pending", allowedBy: undefined, note: `HelmStack asks for its own approval first (${outcome.kinds.join(", ")}). No grant changes that.` });
+        this.pendingQueued += 1;
+        this.input.log("info", label2("waiting for you (HelmStack's own approval is needed)."), label);
+        return;
+      }
+      case "blocked":
+        acts.update(rec.id, { status: "blocked", note: "HelmStack's approval settings block this kind of change." });
+        this.input.log("warn", label2("blocked by HelmStack's approval settings."), label);
+        return;
+      case "failed":
+        acts.update(rec.id, { status: "failed", note: outcome.reason });
+        this.input.log("error", label2("failed, the routine was paused."), label);
+        throw new RunEnd("failed", "Failed: an action did not do what it should, so the routine was paused. Check the site before resuming.", true);
+    }
+  }
+
+  /** Text of a reference for a subject, a value or a check. Nothing is evaluated. */
+  private refPlain(ref: string, env: Env): string {
+    if (ref === "$item") return primaryText(env.item ?? {});
+    if (ref.startsWith("state.")) return this.input.state.values[ref.slice(6)] ?? "";
+    const val = this.vars.get(ref.slice(1));
+    if (val?.t === "record") return primaryText(val.rec);
+    if (val?.t === "verdict") return valueText(val.r.value);
+    return "";
+  }
+
+  /** The control for an act step: the step's strategies in order; a model may only pick from a numbered list. */
+  private async locateControl(
+    step: Extract<RoutineStep, { do: "act" }>,
+    subject: string | undefined,
+    controls: readonly RoutineControl[],
+    label: string
+  ): Promise<{ control: RoutineControl; confidence: number } | null> {
+    const candidates = candidatesFor(step.action, controls);
+    const det = locateDeterministic(step.strategies, step.target, subject, candidates, step.min_confidence);
+    if (det.found) return { control: det.control, confidence: det.confidence };
+    if (!step.strategies.includes("infer")) return null;
+    const listed = numberedList(shortlist(candidates, subject));
+    if (listed.controls.length === 0) return null;
+    const { question, labels } = chooserQuestion(step.target, subject, listed.controls.length);
+    const data = sanitizeData(listed.text, INFER_DATA_CHARS).text;
+    const model = await this.model();
+    const result = await this.ask(model, label, {
+      question,
+      output: "label",
+      labels,
+      evidence: "quote",
+      samples: 2,
+      data,
+      accept_at: step.min_confidence,
+      reject_below: 0
+    });
+    if (result.verdict !== "accept" || typeof result.value !== "string" || result.value === "none") return null;
+    const index = Number(result.value) - 1;
+    const chosen = listed.controls[index];
+    if (!chosen) return null;
+    // The quote has to come from the chosen entry itself, not from a neighbour.
+    const line = data.split("\n").find((l) => l.startsWith(`${index + 1}. `));
+    if (!line || !result.evidence || !normalizeForMatch(line).includes(normalizeForMatch(result.evidence))) return null;
+    return { control: chosen, confidence: result.confidence };
+  }
+
   private async waitStep(spec: string, label: string): Promise<void> {
     const m = /^(\d+)(s|m|h)$/.exec(spec);
     if (!m) return;
@@ -871,6 +1122,13 @@ export function keyOf(item: Item, fields: string[]): string | null {
   if (parts.every((p) => p === "")) return null;
   const key = parts.join("\u001f");
   return key.length > 200 ? `h:${createHash("sha1").update(key).digest("hex")}` : key;
+}
+
+/** The field of a record that names it: a name or title first, else the first text that is not a link. */
+function primaryText(rec: Record<string, string>): string {
+  for (const key of ["name", "title", "player", "label", "text", "summary"]) if (rec[key]) return clean(rec[key]!, 200);
+  const first = Object.entries(rec).find(([k, v]) => typeof v === "string" && v !== "" && k !== "url");
+  return first ? clean(first[1], 200) : "";
 }
 
 /** `key: value` lines of a record (page-supplied text; the caller sanitizes and caps). */

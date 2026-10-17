@@ -11,7 +11,10 @@
  * keeps the two in agreement.
  */
 import {
+  ROUTINE_ACT_ACTIONS,
   ROUTINE_APPROVAL_KINDS,
+  ROUTINE_AUTO_EFFECTS,
+  ROUTINE_EFFECTS,
   ROUTINE_INFER_MODELS,
   ROUTINE_LIMITS,
   ROUTINE_ON_LOW,
@@ -371,7 +374,7 @@ function checkRef(ctx: Ctx, scope: Scope, value: unknown, path: string, rules: R
     return null;
   }
   if (!rules.steps.includes(info.kind)) {
-    add(ctx, path, `"${id}" is a ${info.kind} step but this needs ${rules.steps.length > 1 ? "one of: " : "a "}${rules.steps.join(", ")}`);
+    add(ctx, path, `"${id}" is ${info.kind === "act" ? "an" : "a"} ${info.kind} step but this needs ${rules.steps.length > 1 ? "one of: " : "a "}${rules.steps.join(", ")}`);
     return null;
   }
   return info;
@@ -387,6 +390,7 @@ const STEP_KEYS: Record<RoutineStepKind, readonly string[]> = {
   diff: [...COMMON, "items", "against", "key"],
   for_each: [...COMMON, "items", "limit", "steps"],
   infer: [...COMMON, "question", "output", "labels", "accept_at", "reject_below", "on_uncertain", "evidence", "samples", "uses", "model"],
+  act: [...COMMON, "action", "effect", "target", "strategies", "min_confidence", "on_low", "subject", "value", "verify"],
   branch: [...COMMON, "on", "accept", "maybe", "reject"],
   note: [...COMMON, "tag", "fields"],
   mark_seen: [...COMMON, "into"],
@@ -523,6 +527,10 @@ function step_(ctx: Ctx, raw: unknown, path: string, scope: Scope): void {
       branchStep(ctx, scope, o, path);
       break;
     }
+    case "act": {
+      actStep(ctx, scope, o, path);
+      break;
+    }
     case "note": {
       patterned(ctx, o, path, "tag", NAME, "must be a short lower-case tag such as maybe", false);
       const fields = array(ctx, o, path, "fields", { max: ROUTINE_LIMITS.noteFields });
@@ -634,6 +642,67 @@ function inferStep(ctx: Ctx, scope: Scope, o: Record<string, unknown>, path: str
     });
   }
   oneOf(ctx, o, path, "model", ROUTINE_INFER_MODELS, false);
+}
+
+/** Text that is a reference (and so must resolve) rather than literal text. */
+const looksLikeRef = (v: string): boolean => v.startsWith("$") || v.startsWith("state.");
+/** What a subject, a value or a verify entry may point at. Never an `act` step: nothing an act does feeds another step. */
+const ACT_TEXT_REFS: RefRules = { item: true, steps: ["extract", "infer"], state: ["value"] };
+
+/** Text for an `act` that is literal or a reference; bounded either way. */
+function actText(ctx: Ctx, scope: Scope, v: unknown, path: string, max: number): void {
+  if (typeof v !== "string") {
+    add(ctx, path, "must be a string: literal text or a reference");
+    return;
+  }
+  if (v.length === 0) {
+    add(ctx, path, "must not be empty");
+    return;
+  }
+  if (v.length > max) {
+    add(ctx, path, `is ${v.length} characters; the limit is ${max}`);
+    return;
+  }
+  if (CONTROL_CHARS.test(v)) {
+    add(ctx, path, "must not contain control characters");
+    return;
+  }
+  if (looksLikeRef(v)) checkRef(ctx, scope, v, path, ACT_TEXT_REFS);
+}
+
+function actStep(ctx: Ctx, scope: Scope, o: Record<string, unknown>, path: string): void {
+  const action = oneOf(ctx, o, path, "action", ROUTINE_ACT_ACTIONS);
+  oneOf(ctx, o, path, "effect", ROUTINE_EFFECTS);
+  str(ctx, o, path, "target", { required: true, max: ROUTINE_LIMITS.actTargetChars });
+  enumList(ctx, o, path, "strategies", ROUTINE_STRATEGIES, { required: true, min: 1, max: ROUTINE_STRATEGIES.length });
+  num(ctx, o, path, "min_confidence", { required: true, min: 0, max: 1 });
+  oneOf(ctx, o, path, "on_low", ROUTINE_ON_LOW);
+  if (o.subject !== undefined) {
+    const p = join(path, "subject");
+    if (typeof o.subject === "string") checkRef(ctx, scope, o.subject, p, ACT_TEXT_REFS);
+    else add(ctx, p, `must be a reference string (${describeRules(ACT_TEXT_REFS)})`);
+  }
+  if (action === "click") {
+    if (o.value !== undefined) add(ctx, join(path, "value"), "is only for fill and select; a click has no value");
+  } else if (action !== undefined) {
+    if (o.value === undefined) add(ctx, join(path, "value"), `is required for ${action}`);
+    else actText(ctx, scope, o.value, join(path, "value"), ROUTINE_LIMITS.actValueChars);
+  }
+  if (o.verify === undefined) {
+    add(ctx, join(path, "verify"), "is required: say what must be true on the page afterwards (present and/or absent)");
+    return;
+  }
+  const vp = join(path, "verify");
+  const v = object(ctx, o.verify, vp, ["present", "absent"]);
+  if (!v) return;
+  if (v.present === undefined && v.absent === undefined) {
+    add(ctx, vp, "needs at least one of present or absent: an action without a check afterwards is not allowed");
+    return;
+  }
+  for (const key of ["present", "absent"] as const) {
+    const list = array(ctx, v, vp, key, { min: 1, max: ROUTINE_LIMITS.verifyEntries });
+    list?.forEach((entry, i) => actText(ctx, scope, entry, `${join(vp, key)}[${i}]`, ROUTINE_LIMITS.verifyChars));
+  }
 }
 
 function branchStep(ctx: Ctx, scope: Scope, o: Record<string, unknown>, path: string): void {
@@ -919,9 +988,47 @@ function safetySection(ctx: Ctx, v: unknown): void {
   }
 }
 
+function actionsSection(ctx: Ctx, v: unknown): void {
+  const o = object(ctx, v, "actions", ["request", "protect"]);
+  if (!o) return;
+  if (o.request !== undefined) {
+    const r = object(ctx, o.request, "actions.request", ROUTINE_EFFECTS);
+    if (r) {
+      for (const effect of ROUTINE_EFFECTS) {
+        if (r[effect] === undefined) continue;
+        const p = `actions.request.${effect}`;
+        const e = object(ctx, r[effect], p, ["mode", "per_day", "per_run"]);
+        if (!e) continue;
+        const mode = oneOf(ctx, e, p, "mode", ["ask", "auto"] as const);
+        if (mode === "auto" && !(ROUTINE_AUTO_EFFECTS as readonly string[]).includes(effect)) {
+          add(ctx, join(p, "mode"), `${effect} always waits for you; only ${ROUTINE_AUTO_EFFECTS.join(", ")} can be requested as "auto"`);
+        }
+        num(ctx, e, p, "per_day", { min: 1, max: ROUTINE_LIMITS.actionsPerWindowMax, int: true });
+        num(ctx, e, p, "per_run", { min: 1, max: ROUTINE_LIMITS.actionsPerWindowMax, int: true });
+      }
+    }
+  }
+  const protect = array(ctx, o, "actions", "protect", { max: ROUTINE_LIMITS.protectNames });
+  const seen = new Set<string>();
+  protect?.forEach((name, i) => {
+    const p = `actions.protect[${i}]`;
+    if (typeof name !== "string" || name.trim() === "") {
+      add(ctx, p, "must be a non-empty name");
+    } else if (name.length > ROUTINE_LIMITS.protectChars) {
+      add(ctx, p, `is ${name.length} characters; the limit is ${ROUTINE_LIMITS.protectChars}`);
+    } else if (CONTROL_CHARS.test(name)) {
+      add(ctx, p, "must not contain control characters");
+    } else if (seen.has(name.trim().toLowerCase())) {
+      add(ctx, p, `"${name}" is listed twice`);
+    } else {
+      seen.add(name.trim().toLowerCase());
+    }
+  });
+}
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
-const TOP_KEYS = ["version", "title", "intent", "scope", "trigger", "steps", "related", "state", "stop", "on_failure", "output", "safety"] as const;
+const TOP_KEYS = ["version", "title", "intent", "scope", "trigger", "steps", "related", "state", "stop", "on_failure", "output", "safety", "actions"] as const;
 
 /** Validate untrusted input. On success the returned spec is a detached deep copy. */
 export function validateRoutineSpec(input: unknown): RoutineSpecResult {
@@ -965,6 +1072,7 @@ export function validateRoutineSpec(input: unknown): RoutineSpecResult {
   if (root.on_failure !== undefined) onFailureSection(ctx, root.on_failure);
   if (root.output !== undefined) outputSection(ctx, root.output);
   if (root.safety !== undefined) safetySection(ctx, root.safety);
+  if (root.actions !== undefined) actionsSection(ctx, root.actions);
 
   if (ctx.errors.length > 0) return { ok: false, errors: ctx.errors };
   return { ok: true, spec: JSON.parse(serialized) as RoutineSpec };

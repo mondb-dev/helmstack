@@ -194,6 +194,7 @@ export const ACTIVITY_ROUTES: readonly ActivityRoute[] = [
   { method: "POST", pattern: "/api/routines/:id/withdraw", label: "Withdraw routine", summarize: () => "withdrawn" },
   { method: "GET", pattern: "/api/routines/:id/runs", label: "Read routine runs", summarize: arrayCount("run") },
   { method: "GET", pattern: "/api/routines/:id/notes", label: "Read routine notes", summarize: arrayCount("note") },
+  { method: "GET", pattern: "/api/routines/:id/actions", label: "Read routine actions", summarize: arrayCount("action") },
   // Input
   { method: "POST", pattern: "/api/tabs/:id/evaluate", label: "Evaluate script" },
   { method: "POST", pattern: "/api/tabs/:id/insert-text", label: "Type text" },

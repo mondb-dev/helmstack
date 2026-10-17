@@ -63,8 +63,11 @@ import type {
   ReportFormat,
   ReportSummary,
   ProposeRoutineResult,
+  RoutineAction,
+  RoutineActionEvent,
   RoutineDetail,
   RoutineEngineStatus,
+  RoutineGrants,
   RoutineMemory,
   RoutineModelChoice,
   RoutineModelStatus,
@@ -101,7 +104,9 @@ import { computePerceptionDiff } from "./perception/diff.js";
 import { buildHealthReport } from "./reports/health-report.js";
 import { buildReport, type ReportEvidence } from "./reports/page-report.js";
 import { ReportInputError, parseCreateReportInput } from "./reports/report-input.js";
+import { ACT_ROLES, MAX_CONTROLS, approvalKindWords, type ActPerformRequest, type ActPerformResult, type PageState, type RoutineControl } from "./routines/act.js";
 import { RoutineEngine, type RoutineEngineOptions } from "./routines/engine.js";
+import { parseGrants, requestedGrantsOf } from "./routines/grants.js";
 import { RoutineSpecInvalidError } from "./routines/errors.js";
 import type { RoutineBrowser } from "./routines/executor.js";
 import { PAGE_COLLECTOR_SCRIPT } from "./routines/page-data.js";
@@ -160,6 +165,16 @@ export type HelmstackCoreOptions = {
   };
 };
 
+/** What a person would read on the page, plus the chosen option of each menu (which innerText does not show). */
+const ACT_PAGE_TEXT_SCRIPT = `(() => {
+  const parts = [((document.body && document.body.innerText) || '').slice(0, 150000)];
+  for (const select of document.querySelectorAll('select')) {
+    const chosen = Array.from(select.selectedOptions || []).map((o) => o.text).join(', ');
+    if (chosen) parts.push(chosen);
+  }
+  return parts.join('\\n');
+})()`;
+
 /** Default time limit for one report collector. */
 const REPORT_COLLECTOR_TIMEOUT_MS = 20_000;
 
@@ -201,6 +216,8 @@ export class HelmstackCore implements AgentApi {
   private readonly routineEngine: RoutineEngine;
   private readonly routineModel: RoutineModelManager;
   private readonly routinesChangedListeners = new Set<(routines: RoutineSummary[], proposed?: RoutineSummary) => void>();
+  /** Ids handed out by the last read of each routine tab's controls (see `collectActControls`). */
+  private readonly actControls = new Map<TabId, Map<string, { backendNodeId: number; role: string; name: string }>>();
   private readonly routineEventListeners = new Set<(event: { type: "proposed" | "changed"; routine: RoutineSummary }) => void>();
 
   private readonly tabsListeners = new Set<(tabs: TabSummary[]) => void>();
@@ -1321,7 +1338,11 @@ export class HelmstackCore implements AgentApi {
 
   /** The routine with its validated spec, or null for an unknown or malformed id. */
   getRoutine(id: string): RoutineDetail | null {
-    return this.routines.detail(id) ?? null;
+    const detail = this.routines.detail(id);
+    if (!detail) return null;
+    const spec = this.routines.spec(id);
+    const requested = spec ? requestedGrantsOf(spec) : undefined;
+    return { ...detail, ...(requested ? { requestedGrants: requested } : {}), grants: this.routineEngine.actions.grants(id) };
   }
 
   /** Agent route: withdraw the caller's own still-proposed routine (proposed -> rejected). */
@@ -1334,10 +1355,52 @@ export class HelmstackCore implements AgentApi {
     return this.routines.transition(id, "withdraw");
   }
 
-  /** Human-only. proposed -> approved (the routine it replaces, if any, is stopped). */
-  approveRoutine(id: string): RoutineSummary {
-    return this.routines.transition(id, "approve");
+  /**
+   * Human-only. proposed -> approved (the routine it replaces, if any, is stopped).
+   * `grants` is what the human lets it do without asking; none means every action asks. A spec's own
+   * `actions.request` is only a suggestion and is never applied here.
+   */
+  approveRoutine(id: string, grants?: RoutineGrants): RoutineSummary {
+    if (grants === undefined) return this.routines.transition(id, "approve");
+    const parsed = parseGrants(grants);
+    if (!parsed.ok) throw new RoutineError(parsed.error, "invalid");
+    const found = this.routines.get(id);
+    if (found && found.state !== "proposed") return this.routines.transition(id, "approve"); // throws the state error
+    this.routineEngine.actions.setGrants(id, parsed.grants);
+    try {
+      return this.routines.transition(id, "approve");
+    } catch (err) {
+      try { this.routineEngine.actions.setGrants(id, { effects: {}, protect: [] }); } catch { /* the routine may be gone */ }
+      throw err;
+    }
   }
+
+  /** Human-only. Change what the routine may do without asking; takes effect on its next action. */
+  setRoutineGrants(id: string, grants: RoutineGrants): RoutineDetail {
+    this.routineEngine.actions.setGrants(id, grants);
+    return this.getRoutine(id)!;
+  }
+
+  /** Newest first, at most 100. Agents may read this (descriptions are page text: untrusted). */
+  listRoutineActions(id: string): RoutineAction[] {
+    return this.routineEngine.actions.list(id);
+  }
+
+  /** Human-only. Run a queued action now; it re-checks the page and the target first. */
+  async approveRoutineAction(id: string, actionId: string): Promise<RoutineAction> {
+    return this.routineEngine.actions.approve(id, actionId);
+  }
+
+  /** Human-only. */
+  declineRoutineAction(id: string, actionId: string): RoutineAction {
+    return this.routineEngine.actions.decline(id, actionId);
+  }
+
+  /** Ids and words only: a routine action was queued, decided or finished. Returns an unsubscribe function. */
+  onRoutineActionUpdated(listener: (event: RoutineActionEvent) => void): () => void {
+    return this.routineEngine.actions.onChanged(listener);
+  }
+
 
   /** Human-only. proposed -> rejected. */
   rejectRoutine(id: string): RoutineSummary {
@@ -1442,9 +1505,108 @@ export class HelmstackCore implements AgentApi {
       },
       collect: async (tabId) => (await this.requireSession(tabId).evaluateExpression(PAGE_COLLECTOR_SCRIPT)).value,
       closeTab: async (tabId) => {
+        this.actControls.delete(tabId);
         if (this.sessions.has(tabId)) await this.closeTab(tabId);
-      }
+      },
+      // Acting: controls come from the perception graph's accessibility tree and every change goes
+      // through executeCommand, so HelmStack's own approvals, policies and tab binding all apply.
+      controls: (tabId) => this.collectActControls(tabId),
+      perform: (tabId, request) => this.performRoutineAct(tabId, request),
+      pageState: (tabId) => this.readActPageState(tabId)
     };
+  }
+
+  /** The controls of the open page, with the text of the row each sits in. Ids are valid until the next call for this tab. */
+  private async collectActControls(tabId: TabId): Promise<RoutineControl[]> {
+    const session = this.requireSession(tabId);
+    const result = await this.capturePerception(tabId, { fresh: true });
+    type AxNode = {
+      ignored?: boolean;
+      role?: { value?: unknown };
+      name?: { value?: unknown };
+      backendDOMNodeId?: number;
+      properties?: Array<{ name?: string; value?: { value?: unknown } }>;
+    };
+    const nodes = (result.snapshot.accessibilityTree.nodes ?? []) as AxNode[];
+    const map = new Map<string, { backendNodeId: number; role: string; name: string }>();
+    const out: RoutineControl[] = [];
+    for (const node of nodes) {
+      if (out.length >= MAX_CONTROLS) break;
+      if (node.ignored || typeof node.backendDOMNodeId !== "number") continue;
+      const role = typeof node.role?.value === "string" ? node.role.value : "";
+      if (!ACT_ROLES.has(role)) continue;
+      const name = typeof node.name?.value === "string" ? node.name.value.replace(/\s+/g, " ").trim().slice(0, 200) : "";
+      const disabled = (node.properties ?? []).some((p) => p.name === "disabled" && p.value?.value === true);
+      const id = `c${out.length + 1}`;
+      map.set(id, { backendNodeId: node.backendDOMNodeId, role, name });
+      out.push({ id, role, name, context: "", disabled });
+    }
+    for (const control of out) {
+      const entry = map.get(control.id)!;
+      control.context = await this.rowTextOf(session, entry.backendNodeId);
+    }
+    this.actControls.set(tabId, map);
+    return out;
+  }
+
+  /** The text of the smallest ancestor that says more than the control itself (a table row, a list item...). */
+  private async rowTextOf(session: TabSession, backendNodeId: number): Promise<string> {
+    let objectId: string | undefined;
+    try {
+      const resolved = await session.cdp.send<{ object?: { objectId?: string } }>("DOM.resolveNode", { backendNodeId });
+      objectId = resolved.object?.objectId;
+      if (!objectId) return "";
+      const called = await session.cdp.send<{ result?: { value?: unknown } }>("Runtime.callFunctionOn", {
+        objectId,
+        returnByValue: true,
+        functionDeclaration: `function () {
+          const own = (this.innerText || this.value || '').replace(/\\s+/g, ' ').trim();
+          let el = this.parentElement;
+          for (let i = 0; el && i < 6; i += 1, el = el.parentElement) {
+            const text = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+            if (text.length > own.length + 2) return text.length <= 600 ? text.slice(0, 300) : '';
+          }
+          return '';
+        }`
+      });
+      return typeof called.result?.value === "string" ? called.result.value : "";
+    } catch {
+      return "";
+    } finally {
+      if (objectId) await session.cdp.send("Runtime.releaseObject", { objectId }).catch(() => {});
+    }
+  }
+
+  private async performRoutineAct(tabId: TabId, request: ActPerformRequest): Promise<ActPerformResult> {
+    const entry = this.actControls.get(tabId)?.get(request.controlId);
+    if (!entry) return { status: "failed", reason: "The control is no longer on the page." };
+    const node = { tabId, frameId: "0", backendNodeId: entry.backendNodeId, role: entry.role, ...(entry.name ? { name: entry.name } : {}) };
+    const command: BrowserOutputCommand =
+      request.action === "click"
+        ? { type: "click", node }
+        : request.action === "fill"
+          ? { type: "type", node, value: { kind: "literal", value: request.value ?? "" } }
+          : { type: "select", node, optionText: request.value ?? "" };
+    const res = await this.executeCommand(tabId, command);
+    switch (res.status) {
+      case "completed":
+        return { status: "done" };
+      case "awaiting_approval":
+        return { status: "needs_approval", kinds: approvalKindWords(res.effects.map((e) => e.type)) };
+      case "awaiting_human":
+        return { status: "needs_approval", kinds: ["a step only a person can do"] };
+      case "blocked":
+        return { status: "blocked", reason: res.reason };
+      case "failed":
+        return { status: "failed", reason: "The page did not accept the change." };
+    }
+  }
+
+  private async readActPageState(tabId: TabId): Promise<PageState> {
+    const session = this.requireSession(tabId);
+    const result = await this.capturePerception(tabId, { fresh: true });
+    const text = await session.evaluateExpression(ACT_PAGE_TEXT_SCRIPT);
+    return { url: session.tab.summary().url || result.graph.url, text: typeof text.value === "string" ? text.value : "" };
   }
 
   /** Full list on every propose / state change / delete; `proposed` names a new proposal. Returns an unsubscribe function. */

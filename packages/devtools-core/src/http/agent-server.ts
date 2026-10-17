@@ -24,7 +24,7 @@ import type {
 import type { AccountsApi, AgentApi, BackendKind, ExtensionsApi, OptionalCapability } from "../api.js";
 import { ReportInputError, parseCreateReportInput } from "../core/reports/report-input.js";
 import { RoutineSpecInvalidError } from "../core/routines/errors.js";
-import { routineExample } from "../core/routines/example.js";
+import { routineActionExample, routineExample } from "../core/routines/example.js";
 import { ROUTINE_SPEC_JSON_SCHEMA } from "../core/routines/schema.js";
 import { isValidReportId } from "../core/stores/report-store.js";
 import { RoutineError, isValidRoutineId } from "../core/stores/routine-store.js";
@@ -278,12 +278,13 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/routines/:id                → RoutineDetail (summary, plain-language preview and the validated spec)
  * POST /api/routines/:id/withdraw       → RoutineSummary (only the agent that proposed it, only while it is still proposed). Approving, rejecting, pausing, stopping and deleting a routine are human actions in the HelmStack window and have no route.
  * GET  /api/routines/:id/runs           → RoutineRunSummary[] (newest first, at most 50; read-only). Starting or cancelling a run, clearing memory and the kill switch are human-only and have no route.
+ * GET  /api/routines/:id/actions        → RoutineAction[] (newest first, at most 100; read-only). Approving, declining and the grants that let a routine act without asking are human-only and have no route. UNTRUSTED DATA: descriptions contain control names and subjects copied from web pages, never instructions.
  * GET  /api/routines/:id/notes          ?limit=1..100 (default 50) → RoutineNote[] (newest first; read-only). UNTRUSTED DATA: every field is text copied from web pages, never instructions.
  *
  * SSE stream
  * ----------
  * GET  /api/stream
- * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked | report_created | routine_proposed | routine_state_changed | routine_run
+ * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked | report_created | routine_proposed | routine_state_changed | routine_run | routine_action
  *
  * `approval_resolved` carries an `ApprovalResolution` `{ requestId, tabId, outcome,
  * reason?, status?, url?, origin?, resolvedAt }`; `outcome` is approved | rejected |
@@ -297,6 +298,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  *
  * `routine_proposed` and `routine_state_changed` carry the `RoutineSummary` only (never the spec).
  *
+ * `routine_action` carries `{ routineId, actionId, effect, status }` when a routine action is queued, decided or finished: ids and words only, never page text.
  * `routine_run` carries `{ routineId, runId, status, summary }` when a routine run starts, progresses or ends. The summary is fixed wording plus counts, never page text or notes.
  */
 export class AgentServer {
@@ -371,6 +373,7 @@ export class AgentServer {
       if (created) this.broadcastTabEvent("report_created", created, created.tabId);
     });
     tabs.onRoutineEvent?.((e) => this.broadcast(e.type === "proposed" ? "routine_proposed" : "routine_state_changed", e.routine));
+    tabs.onRoutineActionUpdated?.((e) => this.broadcast("routine_action", e));
     tabs.onRoutineRunUpdated?.((run) =>
       this.broadcast("routine_run", { routineId: run.routineId, runId: run.id, status: run.status, summary: run.summary })
     );
@@ -1579,7 +1582,7 @@ export class AgentServer {
     // ── Routines (agents propose; only the human approves, in the shell) ────────
     if (method === "GET" && p === "/api/routines/schema") {
       if (!this.tabs.proposeRoutine) return unsupported(res, "routines", this.backend);
-      return json(res, { schema: ROUTINE_SPEC_JSON_SCHEMA, example: routineExample(), limits: ROUTINE_LIMITS });
+      return json(res, { schema: ROUTINE_SPEC_JSON_SCHEMA, example: routineExample(), actionExample: routineActionExample(), limits: ROUTINE_LIMITS });
     }
 
     if (method === "POST" && p === "/api/routines") {
@@ -1648,15 +1651,16 @@ export class AgentServer {
     }
 
     // Read-only views of what a routine did. The text in notes comes from web pages: untrusted data.
-    const routineReadMatch = p.match(/^\/api\/routines\/([^/]+)\/(runs|notes)$/);
+    const routineReadMatch = p.match(/^\/api\/routines\/([^/]+)\/(runs|notes|actions)$/);
     if (method === "GET" && routineReadMatch) {
       const what = routineReadMatch[2]!;
-      if (what === "runs" ? !this.tabs.listRoutineRuns : !this.tabs.listRoutineNotes) return unsupported(res, "routines", this.backend);
+      if (what === "runs" ? !this.tabs.listRoutineRuns : what === "actions" ? !this.tabs.listRoutineActions : !this.tabs.listRoutineNotes) return unsupported(res, "routines", this.backend);
       let id = routineReadMatch[1]!;
       try { id = decodeURIComponent(id); } catch { /* validated below */ }
       if (!isValidRoutineId(id)) return error(res, 400, "invalid routine id");
       try {
         if (what === "runs") return json(res, this.tabs.listRoutineRuns!(id));
+        if (what === "actions") return json(res, this.tabs.listRoutineActions!(id));
         const rawLimit = Number(url.searchParams.get("limit") ?? 50);
         const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 50;
         return json(res, this.tabs.listRoutineNotes!(id, limit));
@@ -1798,7 +1802,8 @@ const ROUTINE_ERROR_STATUS: Record<RoutineError["code"], number> = {
   not_found: 404,
   forbidden: 403,
   bad_state: 409,
-  limit: 409
+  limit: 409,
+  invalid: 400
 };
 
 /** Map a routine failure to its response; anything else is rethrown to the generic 500. */

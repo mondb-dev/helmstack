@@ -8,8 +8,10 @@
  * switch are human-only too: they exist here and over IPC, never as an agent HTTP route.
  */
 import type {
+  RoutineAction,
   RoutineDetail,
   RoutineEngineStatus,
+  RoutineGrants,
   RoutineMemory,
   RoutineModelChoice,
   RoutineModelStatus,
@@ -18,6 +20,8 @@ import type {
   RoutineRunSummary,
   RoutineSummary
 } from "../../../../packages/shared/src/index.js";
+import { isValidActionId } from "../../../../packages/devtools-core/src/core/routines/action-service.js";
+import { parseGrants } from "../../../../packages/devtools-core/src/core/routines/grants.js";
 import { parseRoutineModelChoice } from "../../../../packages/devtools-core/src/core/routines/routine-model.js";
 import { isValidRunId } from "../../../../packages/devtools-core/src/core/stores/routine-data-store.js";
 import { isValidRoutineId } from "../../../../packages/devtools-core/src/core/stores/routine-store.js";
@@ -27,7 +31,7 @@ export type RoutineIpcDeps = {
     listRoutines(): RoutineSummary[];
     getRoutine(id: string): RoutineDetail | null;
     getRoutineEngineStatus(): RoutineEngineStatus;
-    approveRoutine(id: string): RoutineSummary;
+    approveRoutine(id: string, grants?: RoutineGrants): RoutineSummary;
     rejectRoutine(id: string): RoutineSummary;
     pauseRoutine(id: string): RoutineSummary;
     resumeRoutine(id: string): RoutineSummary;
@@ -41,6 +45,10 @@ export type RoutineIpcDeps = {
     getRoutineMemory(id: string): RoutineMemory;
     clearRoutineMemory(id: string): void;
     setRoutineKillSwitch(on: boolean): RoutineEngineStatus;
+    setRoutineGrants(id: string, grants: RoutineGrants): RoutineDetail;
+    listRoutineActions(id: string): RoutineAction[];
+    approveRoutineAction(id: string, actionId: string): Promise<RoutineAction>;
+    declineRoutineAction(id: string, actionId: string): RoutineAction;
     getRoutineModel(): Promise<RoutineModelStatus>;
     setRoutineModel(choice: RoutineModelChoice | null): Promise<RoutineModelStatus>;
   };
@@ -63,6 +71,22 @@ export function parseNoteLimit(value: unknown): number | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 1000) throw new Error("Invalid note limit.");
   return value;
+}
+
+export function parseActionId(value: unknown): string {
+  if (!isValidActionId(value)) throw new Error("Invalid action id.");
+  return value;
+}
+
+/**
+ * What the human lets a routine do without asking, as sent by the renderer. Strictly checked here
+ * (unknown fields, bad numbers, `auto` on an effect that always asks, more than 50 names...) and
+ * again by the core: the renderer's value is never trusted as it arrives.
+ */
+export function parseGrantsInput(value: unknown): RoutineGrants {
+  const parsed = parseGrants(value);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return parsed.grants;
 }
 
 export function parseSwitch(value: unknown): boolean {
@@ -97,9 +121,27 @@ export function createRoutineIpc(deps: RoutineIpcDeps) {
       guard(sender);
       return deps.core.getRoutineEngineStatus();
     },
-    approve(sender: unknown, rawId: unknown): RoutineSummary {
+    approve(sender: unknown, rawId: unknown, rawGrants?: unknown): RoutineSummary {
       guard(sender);
-      return deps.core.approveRoutine(parseRoutineId(rawId));
+      const id = parseRoutineId(rawId);
+      if (rawGrants === undefined || rawGrants === null) return deps.core.approveRoutine(id);
+      return deps.core.approveRoutine(id, parseGrantsInput(rawGrants));
+    },
+    setGrants(sender: unknown, rawId: unknown, rawGrants: unknown): RoutineDetail {
+      guard(sender);
+      return deps.core.setRoutineGrants(parseRoutineId(rawId), parseGrantsInput(rawGrants));
+    },
+    listActions(sender: unknown, rawId: unknown): RoutineAction[] {
+      guard(sender);
+      return deps.core.listRoutineActions(parseRoutineId(rawId));
+    },
+    approveAction(sender: unknown, rawId: unknown, rawActionId: unknown): Promise<RoutineAction> {
+      guard(sender);
+      return deps.core.approveRoutineAction(parseRoutineId(rawId), parseActionId(rawActionId));
+    },
+    declineAction(sender: unknown, rawId: unknown, rawActionId: unknown): RoutineAction {
+      guard(sender);
+      return deps.core.declineRoutineAction(parseRoutineId(rawId), parseActionId(rawActionId));
     },
     reject(sender: unknown, rawId: unknown): RoutineSummary {
       guard(sender);

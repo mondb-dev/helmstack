@@ -31,7 +31,7 @@ export const DEFAULT_MAX_ROUTINES = 50;
 const STATES: readonly RoutineState[] = ["proposed", "approved", "paused", "stopped", "rejected"];
 
 export class RoutineError extends Error {
-  constructor(message: string, readonly code: "invalid_id" | "not_found" | "bad_state" | "limit" | "forbidden") {
+  constructor(message: string, readonly code: "invalid_id" | "not_found" | "bad_state" | "limit" | "forbidden" | "invalid") {
     super(message);
     this.name = "RoutineError";
   }

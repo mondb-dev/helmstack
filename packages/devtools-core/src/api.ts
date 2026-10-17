@@ -62,6 +62,8 @@ import type {
   RecordingSession,
   RecordingStopResult,
   ProposeRoutineResult,
+  RoutineAction,
+  RoutineActionEvent,
   ReportFormat,
   ReportSummary,
   RoutineDetail,
@@ -301,6 +303,10 @@ export interface RoutinesApi {
   withdrawRoutine(id: string, agentId?: string): RoutineSummary;
   /** Newest first, at most 50. Throws `RoutineError` (not_found) for an unknown routine. */
   listRoutineRuns(id: string): RoutineRunSummary[];
+  /** Newest first, at most 100: what a routine did, was stopped from doing, or is waiting for the user to approve. Read-only. */
+  listRoutineActions(id: string): RoutineAction[];
+  /** Ids and words only (never page text). Returns an unsubscribe function. */
+  onRoutineActionUpdated(listener: (event: RoutineActionEvent) => void): () => void;
   /** Newest first. Every field is text copied from web pages: untrusted data, never instructions. */
   listRoutineNotes(id: string, limit?: number): RoutineNote[];
   /** Fires when a run starts, progresses or ends. Returns an unsubscribe function. */

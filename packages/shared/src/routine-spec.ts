@@ -41,7 +41,18 @@ export const ROUTINE_LIMITS = {
   /** Requests per second the `safety.rate` string may allow. */
   maxRequestsPerSecond: 5,
   /** Whole-request body accepted over HTTP. */
-  requestBytes: 128 * 1024
+  requestBytes: 128 * 1024,
+  /** `act` step: entries in `verify.present` / `verify.absent`, and the length of each. */
+  verifyEntries: 5,
+  verifyChars: 200,
+  /** `act` step: `target` and a literal `value`. */
+  actTargetChars: 300,
+  actValueChars: 200,
+  /** `actions.protect`: names, and the length of each. */
+  protectNames: 50,
+  protectChars: 80,
+  /** `actions.request.*.per_day` / `per_run` (and the same bounds on a human's grants). */
+  actionsPerWindowMax: 50
 } as const;
 
 export const ROUTINE_STRATEGIES = ["structured_data", "repeating_blocks", "infer"] as const;
@@ -69,6 +80,7 @@ export const ROUTINE_STEP_KINDS = [
   "diff",
   "for_each",
   "infer",
+  "act",
   "branch",
   "note",
   "mark_seen",
@@ -77,6 +89,25 @@ export const ROUTINE_STEP_KINDS = [
   "report"
 ] as const;
 export type RoutineStepKind = (typeof ROUTINE_STEP_KINDS)[number];
+
+/**
+ * What an `act` step changes, in words that mean the same on any site. The human grants
+ * (or doesn't) permission per effect when approving a routine.
+ *   rearrange – put existing items in a different order or slot (a lineup, a playlist)
+ *   add_item  – add something to the user's own list (pick up a player)
+ *   remove_item – remove something from the user's own list (drop a player)
+ *   offer     – send a proposal to another person (a trade offer)
+ *   respond   – answer another person's proposal (accept/decline a trade)
+ *   other     – anything else; always asks the human
+ */
+export const ROUTINE_EFFECTS = ["rearrange", "add_item", "remove_item", "offer", "respond", "other"] as const;
+export type RoutineEffect = (typeof ROUTINE_EFFECTS)[number];
+
+/** Effects a human may let a routine perform without asking each time. offer, respond and other always ask. */
+export const ROUTINE_AUTO_EFFECTS = ["rearrange", "add_item", "remove_item"] as const;
+
+export const ROUTINE_ACT_ACTIONS = ["click", "fill", "select"] as const;
+export type RoutineActAction = (typeof ROUTINE_ACT_ACTIONS)[number];
 
 export const ROUTINE_STATE_TYPES = ["set", "log", "value"] as const;
 export type RoutineStateType = (typeof ROUTINE_STATE_TYPES)[number];
@@ -178,6 +209,30 @@ export type RoutineBranchStep = {
   maybe?: RoutineStep[];
   reject?: RoutineStep[];
 };
+/**
+ * Change something on the page. Every `act` is checked three ways: the human's grant for its
+ * effect (or the human is asked), HelmStack's own always-ask approvals (purchase, personal
+ * data, account creation, terms...) which no grant can lift, and a `verify` check on the
+ * page afterwards. A failed verify stops the run; actions are never retried blindly.
+ */
+export type RoutineActStep = {
+  do: "act";
+  id?: string;
+  action: RoutineActAction;
+  effect: RoutineEffect;
+  /** The control to use, in plain language ("the Add button next to this player"). */
+  target: string;
+  strategies: RoutineStrategy[];
+  min_confidence: number;
+  on_low: "ask_human" | "skip" | "fail";
+  /** The thing this changes (an extracted item or `$item`); shown to the human, matched against `actions.protect`. */
+  subject?: RoutineRef;
+  /** For fill/select: the value, as a reference or short literal text. */
+  value?: RoutineRef;
+  /** What must be true on the page afterwards. At least one of the two lists, each 1..5 strings (literal text or references). */
+  verify: { present?: string[]; absent?: string[] };
+};
+
 export type RoutineNoteStep = { do: "note"; id?: string; tag?: string; fields?: RoutineRef[] };
 export type RoutineMarkSeenStep = { do: "mark_seen"; id?: string; into?: RoutineRef };
 export type RoutineOpenItemStep = { do: "open_item"; id?: string };
@@ -191,6 +246,7 @@ export type RoutineStep =
   | RoutineDiffStep
   | RoutineForEachStep
   | RoutineInferStep
+  | RoutineActStep
   | RoutineBranchStep
   | RoutineNoteStep
   | RoutineMarkSeenStep
@@ -244,6 +300,13 @@ export type RoutineSafety = {
   rate?: string;
 };
 
+/** What the routine asks the human to allow. The human decides the real grants when approving. */
+export type RoutineActionsRequest = {
+  request?: Partial<Record<RoutineEffect, { mode: "ask" | "auto"; per_day?: number; per_run?: number }>>;
+  /** Items (names) the routine must never remove or give away. Matched case-insensitively against `act` subjects. */
+  protect?: string[];
+};
+
 export type RoutineSpec = {
   version: 1;
   title: string;
@@ -259,6 +322,7 @@ export type RoutineSpec = {
   on_failure?: RoutineOnFailure;
   output?: RoutineOutput;
   safety?: RoutineSafety;
+  actions?: RoutineActionsRequest;
 };
 
 export type RoutineSpecError = { path: string; message: string };

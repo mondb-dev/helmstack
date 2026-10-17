@@ -7,6 +7,7 @@ const SHELL = { shell: true };
 const ID = "rt-20261017-093000-abcdef01";
 const SUMMARY = { id: ID, state: "approved" } as RoutineSummary;
 const RUN_ID = "run-abc123-0123abcd";
+const ACTION = "act-abc123-0123abcd";
 const RUN = { id: RUN_ID, routineId: ID, status: "running" } as never;
 
 function setup() {
@@ -28,6 +29,10 @@ function setup() {
       listRoutineNotes: vi.fn(() => []),
       getRoutineMemory: vi.fn(() => ({ routineId: ID, sets: {}, values: {} })),
       clearRoutineMemory: vi.fn(() => undefined),
+      setRoutineGrants: vi.fn(() => ({ ...SUMMARY, specJson: "{}" }) as never),
+      listRoutineActions: vi.fn(() => []),
+      approveRoutineAction: vi.fn(async () => ({ id: ACTION } as never)),
+      declineRoutineAction: vi.fn(() => ({ id: ACTION }) as never),
       setRoutineKillSwitch: vi.fn((on: boolean) => ({ enabled: true, killed: on, running: [] })),
       getRoutineModel: vi.fn(async () => ({ choice: null, available: false })),
       setRoutineModel: vi.fn(async (choice: { cli: string; model?: string } | null) => ({ choice, available: true }))
@@ -174,5 +179,46 @@ describe("routine IPC", () => {
       throw new Error("Can't pause a routine that is proposed.");
     });
     expect(() => ipc.pause(SHELL, ID)).toThrow("Can't pause a routine that is proposed.");
+  });
+
+  it("validates grants and action ids before the core, and only for the shell", async () => {
+    const { deps, ipc } = setup();
+    const grants = { effects: { add_item: { mode: "auto", perDay: 2, perRun: 1 } }, protect: ["Star"] };
+    ipc.approve(SHELL, ID, grants);
+    expect(deps.core.approveRoutine).toHaveBeenLastCalledWith(ID, { effects: { add_item: { mode: "auto", perDay: 2, perRun: 1 } }, protect: ["Star"] });
+    ipc.approve(SHELL, ID);
+    expect(deps.core.approveRoutine).toHaveBeenLastCalledWith(ID);
+    ipc.setGrants(SHELL, ID, grants);
+    expect(deps.core.setRoutineGrants).toHaveBeenCalledTimes(1);
+    const bad: unknown[] = [
+      { effects: { offer: { mode: "auto" } }, protect: [] },
+      { effects: { add_item: { mode: "auto", perDay: 51 } } },
+      { effects: { add_item: { mode: "auto", perRun: 0 } } },
+      { effects: { nope: { mode: "ask" } } },
+      { protect: Array.from({ length: 51 }, (_, i) => `n${i}`) },
+      { protect: ["x".repeat(81)] },
+      { protect: [5] },
+      { extra: 1 },
+      "all",
+      []
+    ];
+    for (const g of bad) {
+      expect(() => ipc.setGrants(SHELL, ID, g)).toThrow();
+      expect(() => ipc.approve(SHELL, ID, g)).toThrow();
+    }
+    expect(deps.core.setRoutineGrants).toHaveBeenCalledTimes(1);
+    await ipc.approveAction(SHELL, ID, ACTION);
+    ipc.declineAction(SHELL, ID, ACTION);
+    ipc.listActions(SHELL, ID);
+    for (const badId of ["../x", "", 5, null, `${ACTION}/..`]) {
+      expect(() => ipc.declineAction(SHELL, ID, badId)).toThrow("Invalid action id.");
+      expect(() => ipc.approveAction(SHELL, ID, badId)).toThrow("Invalid action id.");
+    }
+    const stranger = {};
+    expect(() => ipc.setGrants(stranger, ID, grants)).toThrow("only available");
+    expect(() => ipc.approveAction(stranger, ID, ACTION)).toThrow("only available");
+    expect(() => ipc.declineAction(stranger, ID, ACTION)).toThrow("only available");
+    expect(() => ipc.listActions(stranger, ID)).toThrow("only available");
+    expect(deps.core.approveRoutineAction).toHaveBeenCalledTimes(1);
   });
 });

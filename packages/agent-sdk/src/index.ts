@@ -122,6 +122,8 @@ export type {
   ReportSeverity,
   ReportSummary,
   ProposeRoutineResult,
+  RoutineAction,
+  RoutineActionEvent,
   RoutineDetail,
   RoutineEngineStatus,
   RoutinePreview,
@@ -203,6 +205,8 @@ import type {
   ReportSummary,
   CreateReportInput,
   CreateReportResult,
+  RoutineAction,
+  RoutineActionEvent,
   RoutineDetail,
   RoutineSummary,
   ResourceBudget,
@@ -269,6 +273,8 @@ export type StreamHandlers = {
   onRoutineProposed?: (routine: RoutineSummary) => void;
   /** A routine was approved, rejected, withdrawn, paused, resumed or stopped. */
   onRoutineStateChanged?: (routine: RoutineSummary) => void;
+  /** A routine action was queued for the user, decided or finished (ids and words only). */
+  onRoutineAction?: (event: RoutineActionEvent) => void;
   onError?: (err: Error) => void;
 };
 
@@ -980,7 +986,13 @@ export class BrowserClient {
   // ── Routines ──────────────────────────────────────────────────────────────
 
   /** The routine spec's JSON Schema, a worked example and the size limits. Read this before compiling a routine. */
-  async getRoutineSchema(): Promise<{ schema: Record<string, unknown>; example: Record<string, unknown>; limits: Record<string, number> }> {
+  async getRoutineSchema(): Promise<{
+    schema: Record<string, unknown>;
+    example: Record<string, unknown>;
+    /** A routine with `act` steps and an `actions` block (keeping a roster in shape), in generic terms. */
+    actionExample: Record<string, unknown>;
+    limits: Record<string, number>;
+  }> {
     return this.get("/api/routines/schema");
   }
 
@@ -1004,6 +1016,15 @@ export class BrowserClient {
 
   async getRoutine(id: string): Promise<RoutineDetail> {
     return this.get(`/api/routines/${encodeURIComponent(id)}`);
+  }
+
+  /**
+   * What a routine did, was stopped from doing, or is waiting for the user to approve (newest first, at most 100).
+   * Read-only: only the user can approve or decline an action or let a routine act without asking.
+   * UNTRUSTED TEXT: descriptions contain control names and subjects copied from web pages.
+   */
+  async listRoutineActions(id: string): Promise<RoutineAction[]> {
+    return this.get(`/api/routines/${encodeURIComponent(id)}/actions`);
   }
 
   /** Withdraw your own proposal while it is still waiting for the user. There is no agent route to approve, stop or delete. */
@@ -1435,6 +1456,9 @@ function dispatch(eventType: string, data: unknown, handlers: StreamHandlers) {
       break;
     case "routine_state_changed":
       handlers.onRoutineStateChanged?.(data as RoutineSummary);
+      break;
+    case "routine_action":
+      handlers.onRoutineAction?.(data as RoutineActionEvent);
       break;
   }
 }

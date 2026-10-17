@@ -29,6 +29,7 @@ import {
   type RoutineStateData
 } from "../stores/routine-data-store.js";
 import { RoutineError, isValidRoutineId, type RoutineAction } from "../stores/routine-store.js";
+import { ActionService, newActionRandom, type ActionServiceOptions } from "./action-service.js";
 import { executeRoutine, type ExecutorResult, type RobotsFetcher, type RoutineBrowser } from "./executor.js";
 import type { ModelResolver } from "./routine-model.js";
 import {
@@ -138,6 +139,8 @@ export class RoutineEngine {
   private started = false;
   private disposed = false;
   private killed: boolean;
+  /** Queued and finished actions, the human's grants, and carrying out an approved action. */
+  readonly actions: ActionService;
 
   constructor(private readonly options: RoutineEngineOptions) {
     this.routines = options.routines;
@@ -150,6 +153,22 @@ export class RoutineEngine {
     this.firstRunDelayMs = options.firstRunDelayMs ?? DEFAULT_FIRST_RUN_DELAY_MS;
     this.maxConcurrent = Math.max(1, options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT);
     this.killed = this.data.readEngine().killed;
+    this.actions = new ActionService({
+      data: this.data,
+      routines: {
+        get: (id) => this.routines.get(id),
+        spec: (id) => this.routines.spec(id),
+        list: () => this.routines.list(),
+        transition: (id, action) => this.routines.transition(id, action)
+      },
+      browser: options.browser as ActionServiceOptions["browser"],
+      now: this.now,
+      sleep: options.sleep ?? realSleep,
+      random: newActionRandom,
+      isKilled: () => this.killed,
+      log: this.log,
+      ...(options.navTimeoutMs !== undefined ? { navTimeoutMs: options.navTimeoutMs } : {})
+    });
   }
 
   // ── lifecycle ──────────────────────────────────────────────────────────
@@ -161,6 +180,7 @@ export class RoutineEngine {
     for (const routine of this.routines.list()) {
       try {
         for (const run of this.data.failInterruptedRuns(routine.id, "Failed: the app closed while this run was in progress.")) this.emit(run);
+        this.actions.recover(routine.id);
       } catch (err) {
         this.log(`[Routines] could not check earlier runs of ${routine.id}: ${(err as Error).message}`);
       }
@@ -181,6 +201,7 @@ export class RoutineEngine {
     }
     this.active.clear();
     this.listeners.clear();
+    for (const routine of this.routines.list()) this.actions.cancelRoutine(routine.id, "The app was closing.");
   }
 
   /** Resolves when no run is in flight (used by tests and shutdown paths). */
@@ -210,7 +231,10 @@ export class RoutineEngine {
       this.killed = on;
       this.data.writeEngine({ version: 1, killed: on });
     }
-    if (on) for (const id of [...this.active.keys()]) this.abort(id, "kill_switch");
+    if (on) {
+      for (const id of [...this.active.keys()]) this.abort(id, "kill_switch");
+      this.actions.cancelAll("The kill switch was turned on, so everything waiting was dropped.");
+    }
     return this.status();
   }
 
@@ -275,6 +299,7 @@ export class RoutineEngine {
     if (routine.state !== "approved") {
       this.abort(routine.id, "routine_changed");
       this.clearSchedule(routine.id);
+      this.actions.cancelRoutine(routine.id, `The routine was ${routine.state}, so what was waiting for you was dropped.`);
       return;
     }
     // Approved, or resumed by the human: start counting from now, with a clean failure record.
@@ -292,6 +317,7 @@ export class RoutineEngine {
   /** Call when a routine was deleted: ends its run and removes what it remembered. */
   handleRoutineDeleted(routine: RoutineSummary): void {
     this.abort(routine.id, "deleted");
+    this.actions.cancelRoutine(routine.id, "The routine was deleted.");
     try {
       this.data.remove(routine.id);
     } catch (err) {
@@ -456,6 +482,7 @@ export class RoutineEngine {
           sleep: this.options.sleep ?? realSleep,
           random: () => randomBytes(3).toString("hex"),
           ...(this.options.model ? { resolveModel: () => this.options.model!.resolve() } : {}),
+          acts: this.actions.gateFor(id),
           ...(this.options.defaultPageDelayMs !== undefined ? { defaultPageDelayMs: this.options.defaultPageDelayMs } : {}),
           ...(this.options.navTimeoutMs !== undefined ? { navTimeoutMs: this.options.navTimeoutMs } : {}),
           ...(this.options.maxRuntimeMs !== undefined ? { maxRuntimeMs: this.options.maxRuntimeMs } : {})
@@ -532,7 +559,9 @@ export class RoutineEngine {
               ? "Cancelled because the routine was deleted."
               : active.reason === "shutdown"
                 ? result.summary
-                : "Cancelled by you.";
+                : active.reason === "cancelled"
+                  ? "Cancelled by you."
+                  : result.summary;
     }
     if (extraLog) this.addLog(active, "error", extraLog, undefined, true);
     // The closing line always fits: ordinary lines leave room for it.
@@ -559,9 +588,11 @@ export class RoutineEngine {
           const stop = this.stopReason(id, spec, state, endedAt) ?? result.stopReason ?? null;
           if (stop) {
             toTransition = { action: "stop", why: `Stop condition met (${stop}); the routine was stopped.` };
+          } else if (outcome === "failed" && result.pauseNow) {
+            toTransition = { action: "pause", why: "Paused at once: an action did not do what it should. Check the site and the run log before resuming." };
           } else if (outcome === "failed" && state.consecutiveFailures >= pauseAfter) {
             toTransition = { action: "pause", why: `Paused automatically after ${state.consecutiveFailures} failed runs in a row.` };
-          } else if (outcome === "needs_human" && detail.trigger === "interval") {
+          } else if (outcome === "needs_human" && detail.trigger === "interval" && !result.waitingOnActions) {
             toTransition = { action: "pause", why: "Paused: this routine needs a person to decide something, so it will not keep retrying on its own." };
           }
         }

@@ -13,6 +13,8 @@ import type {
   AgentCliInfo,
   AgentRunnerStatus,
   BrowserShellBridge,
+  RoutineAction,
+  RoutineActionStatus,
   RoutineDetail,
   RoutineEngineStatus,
   RoutineMemory,
@@ -27,6 +29,7 @@ import type {
   RoutineState,
   RoutineSummary,
 } from "../../../../../packages/shared/src/index.js";
+import { autoGrantLines, createGrantEditor, protectedNames, type GrantEditor } from "./routine-grants.js";
 import { openDialog, type DialogHandle } from "../ui/dialog.js";
 import { plural, relativeTime } from "../ui/format.js";
 import { icon, type IconName } from "../ui/icons.js";
@@ -67,7 +70,13 @@ type RoutinesBridgeModel = Pick<
   "getRoutineModel" | "setRoutineModel" | "getAgentRunnerStatus" | "refreshAgentRunner"
 >;
 
-export type RoutinesBridge = RoutinesBridgeCore & Partial<RoutinesBridgeRun> & Partial<RoutinesBridgeModel>;
+/** Phase 4 (actions and grants). Feature-detected at call time; absent means the old approve flow. */
+type RoutinesBridgeActions = Pick<
+  BrowserShellBridge,
+  "setRoutineGrants" | "listRoutineActions" | "approveRoutineAction" | "declineRoutineAction" | "onRoutineActionsChanged"
+>;
+
+export type RoutinesBridge = RoutinesBridgeCore & Partial<RoutinesBridgeRun> & Partial<RoutinesBridgeModel> & Partial<RoutinesBridgeActions>;
 
 /** True when the preload bridge exposes every routine method. */
 export function routinesSupported(bridge: Partial<RoutinesBridge>): bridge is RoutinesBridge {
@@ -94,6 +103,9 @@ export const RUN_CAP = 20;
 export const NOTE_CAP = 25;
 export const NOTE_FIELD_CAP = 12;
 export const LOG_CAP = 200;
+export const ACTION_CAP = 25;
+const ACTION_TEXT_LIMIT = 240;
+const ACTS_ON_ACCOUNT = "acts_on_account";
 const MEMORY_PREFETCH_CAP = 30;
 const VALUE_LIMIT = 200;
 const SUMMARY_LIMIT = 160;
@@ -241,6 +253,8 @@ export interface RoutinesOptions {
   /** The review dialog opened/closed: hide and restore the native page view. */
   onDialogOpen?: () => void;
   onDialogClose?: () => void;
+  /** Called whenever the number of actions waiting for a decision changes. */
+  onPendingActionsChange?: (count: number) => void;
   now?: () => number;
 }
 
@@ -250,6 +264,7 @@ export interface RoutinesController {
   /** The tab was shown: re-sync. */
   show(): void;
   needsReview(): number;
+  pendingActions(): number;
   openReview(id: string, opener?: HTMLElement | null): void;
   destroy(): void;
 }
@@ -259,7 +274,35 @@ interface ReviewState {
   handle: DialogHandle | null;
   busy: boolean;
   spec: "idle" | "loading" | "done";
+  grants: GrantEditor | null;
 }
+
+interface GrantEdit {
+  editor: GrantEditor;
+  busy: boolean;
+  error: string;
+}
+
+const ACTION_STATUS_WORD: Record<RoutineActionStatus, string> = {
+  pending: "Waiting for you",
+  approved: "Approved",
+  declined: "Declined",
+  expired: "Expired",
+  done: "Done",
+  failed: "Failed",
+  blocked: "Blocked",
+};
+const ACTION_STATUS_TONE: Record<RoutineActionStatus, string> = {
+  pending: "next",
+  approved: "running",
+  declined: "paused",
+  expired: "paused",
+  done: "ok",
+  failed: "bad",
+  blocked: "off",
+};
+
+const actsOnAccount = (routine: RoutineSummary): boolean => (routine.preview?.risks ?? []).some((risk) => risk.code === ACTS_ON_ACCOUNT);
 
 export function mountRoutines(options: RoutinesOptions): RoutinesController {
   const { bridge } = options;
@@ -320,6 +363,30 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
   let runner: AgentRunnerStatus | null = null;
   let runnerError = "";
   let modelDraft = "";
+  // Phase 4: actions and grants.
+  const actionLists = new Map<string, RoutineAction[]>();
+  const actionBusy = new Set<string>();
+  const actionErrors = new Map<string, string>();
+  const grantInfo = new Map<string, RoutineDetail>();
+  const grantEdits = new Map<string, GrantEdit>();
+  let lastPending = 0;
+
+  const canActions = (): boolean =>
+    typeof bridge.listRoutineActions === "function" &&
+    typeof bridge.approveRoutineAction === "function" &&
+    typeof bridge.declineRoutineAction === "function";
+  const canGrants = (): boolean => typeof bridge.setRoutineGrants === "function";
+  const isLivePending = (action: RoutineAction): boolean => action.status === "pending" && action.expiresAt > now();
+  const pendingFor = (id: string): RoutineAction[] => (actionLists.get(id) ?? []).filter(isLivePending);
+  const pendingTotal = (): number =>
+    routines.reduce((sum, routine) => (routine.state === "approved" || routine.state === "paused" ? sum + pendingFor(routine.id).length : sum), 0);
+  const updatePending = (): void => {
+    const next = pendingTotal();
+    if (next !== lastPending) {
+      lastPending = next;
+      options.onPendingActionsChange?.(next);
+    }
+  };
 
   const canRun = (): boolean => typeof bridge.runRoutineNow === "function";
   const canKill = (): boolean => typeof bridge.setRoutineKillSwitch === "function";
@@ -638,6 +705,10 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
         actions.append(stopRun);
       }
     };
+    const addGrants = (): void => {
+      if (!canGrants() || !actsOnAccount(routine) || !grantInfo.has(routine.id) || grantEdits.has(routine.id)) return;
+      add("Edit what it may do", "btn--ghost", "edit-grants", `Edit what it may do without asking: ${routine.title}`);
+    };
     const addDetails = (): void => {
       if (!canDetail()) return;
       const open = detailOpen.has(routine.id);
@@ -653,12 +724,14 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       case "approved":
         addRunControls();
         add("Pause", "btn--ghost", "pause", `Pause routine: ${routine.title}`);
+        addGrants();
         add("Stop", "btn--quiet", "stop", `Stop routine: ${routine.title}`);
         addDetails();
         break;
       case "paused":
         addRunControls();
         add("Resume", "btn--ghost", "resume", `Resume routine: ${routine.title}`);
+        addGrants();
         add("Stop", "btn--quiet", "stop", `Stop routine: ${routine.title}`);
         addDetails();
         break;
@@ -880,6 +953,152 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     return section;
   };
 
+  // ── actions and grants (text from pages is set with textContent only) ─────
+  const alertLine = (message: string): HTMLElement => {
+    const err = el("p", "routine-row__error", message);
+    err.setAttribute("role", "alert");
+    return err;
+  };
+
+  const buildActionItem = (routine: RoutineSummary, action: RoutineAction): HTMLElement => {
+    const item = el("li", `routine-action routine-action--${action.status}`);
+    item.dataset.actionId = action.id;
+    const text = String(action.description ?? "");
+    item.append(clipped("p", "routine-action__desc", text, ACTION_TEXT_LIMIT));
+    const meta = el("p", "routine-row__meta routine-action__meta");
+    meta.append(clipped("span", "routine-action__host", String(action.host ?? ""), 80));
+    if (action.subject) meta.append(" · ", clipped("span", "routine-action__subject", String(action.subject), 80));
+    item.append(meta);
+    const live = isLivePending(action);
+    const expired = action.status === "pending" && !live;
+    const status: RoutineActionStatus = expired ? "expired" : ACTION_STATUS_WORD[action.status] ? action.status : "blocked";
+    const line = el("p", "routine-row__meta routine-action__status");
+    line.append(statusChip(ACTION_STATUS_WORD[status], ACTION_STATUS_TONE[status]));
+    if (live) {
+      const until = el("span", undefined, `Expires ${untilText(action.expiresAt, now())}`);
+      until.dataset.until = String(action.expiresAt);
+      until.dataset.prefix = "Expires ";
+      until.title = new Date(action.expiresAt).toLocaleString();
+      line.append(" ", until);
+    } else if (action.allowedBy === "human" || action.allowedBy === "grant") {
+      line.append(" ", el("span", undefined, action.allowedBy === "human" ? "by you" : "by your settings"));
+    }
+    item.append(line);
+    if ((status === "failed" || status === "blocked" || status === "declined") && action.note) {
+      item.append(clipped("p", "routine-row__meta routine-action__note", String(action.note), ACTION_TEXT_LIMIT));
+    }
+    if (status === "failed") {
+      item.append(
+        el(
+          "p",
+          "routine-row__meta routine-action__note",
+          routine.state === "paused" ? "That didn't go through, so the routine was paused. Check the page, then resume it when you're ready." : "That didn't go through."
+        )
+      );
+    }
+    if (live) {
+      const busy = actionBusy.has(action.id);
+      const label = clip(text, 60);
+      const ok = button(busy ? "Working…" : "Approve", "btn--primary", "approve-action", `Approve: ${label}`);
+      ok.dataset.actionId = action.id;
+      ok.disabled = busy;
+      const no = button("Decline", "btn--ghost", "decline-action", `Decline: ${label}`);
+      no.dataset.actionId = action.id;
+      no.disabled = busy;
+      const wrap = el("div", "routine-row__actions");
+      wrap.append(ok, no);
+      item.append(wrap);
+    }
+    const failure = actionErrors.get(action.id);
+    if (failure) item.append(alertLine(failure));
+    return item;
+  };
+
+  /** Pending actions first, then recent ones; at most ACTION_CAP are drawn in all. */
+  const buildActionsSection = (routine: RoutineSummary, pendingOnly: boolean): HTMLElement => {
+    const list = actionLists.get(routine.id);
+    const pending = (list ?? []).filter((a) => a.status === "pending").sort((a, b) => a.expiresAt - b.expiresAt);
+    const recent = (list ?? []).filter((a) => a.status !== "pending").sort((a, b) => (b.decidedAt ?? b.createdAt) - (a.decidedAt ?? a.createdAt));
+    const section = detailSection(pendingOnly ? "Waiting for you" : "Actions", pendingOnly ? pending.length : list?.length);
+    section.classList.add("routine-actions");
+    if (!list) {
+      section.append(el("p", "routine-row__meta", "Loading…"));
+      return section;
+    }
+    if (list.length === 0) {
+      section.append(el("p", "routine-row__meta", "It hasn't asked to do anything on your account yet."));
+      return section;
+    }
+    const shownPending = pending.slice(0, ACTION_CAP);
+    const shownRecent = pendingOnly ? [] : recent.slice(0, ACTION_CAP - shownPending.length);
+    if (shownPending.length > 0) {
+      const ol = el("ol", "routine-detail__list");
+      ol.setAttribute("aria-label", `Actions of ${routine.title} waiting for you`);
+      for (const action of shownPending) ol.append(buildActionItem(routine, action));
+      section.append(ol);
+    }
+    if (shownRecent.length > 0) {
+      section.append(el("h6", "routine-detail__subheading", "Recent"));
+      const ol = el("ol", "routine-detail__list");
+      ol.setAttribute("aria-label", `Recent actions of ${routine.title}, newest first`);
+      for (const action of shownRecent) ol.append(buildActionItem(routine, action));
+      section.append(ol);
+    }
+    const total = pendingOnly ? pending.length : list.length;
+    const shown = shownPending.length + shownRecent.length;
+    if (total > shown) section.append(el("p", "routine-row__meta", `Showing ${shown} of ${total} actions.`));
+    return section;
+  };
+
+  const buildGrantSummary = (routine: RoutineSummary): HTMLElement | null => {
+    if (!canGrants() || !actsOnAccount(routine) || (routine.state !== "approved" && routine.state !== "paused")) return null;
+    const info = grantInfo.get(routine.id);
+    if (!info) return null;
+    const wrap = el("div", "routine-row__grants");
+    const lines = autoGrantLines(info.grants);
+    wrap.append(el("span", "routine-row__label", "Allowed without asking"));
+    if (lines.length === 0) {
+      wrap.append(el("p", "routine-row__meta", "Nothing. It asks you each time."));
+    } else {
+      const ul = el("ul", "routine-row__hosts");
+      ul.setAttribute("aria-label", "Allowed without asking");
+      for (const line of lines) ul.append(el("li", "routine-chip", line));
+      wrap.append(ul);
+    }
+    const names = protectedNames(info.grants);
+    if (names.length > 0) wrap.append(clipped("p", "routine-row__meta", `Never removes or gives away: ${names.join(", ")}`, ACTION_TEXT_LIMIT));
+    return wrap;
+  };
+
+  const buildGrantEdit = (routine: RoutineSummary): HTMLElement | null => {
+    const edit = grantEdits.get(routine.id);
+    if (!edit) return null;
+    const wrap = el("div", "routine-row__grant-edit");
+    wrap.append(edit.editor.root);
+    const actions = el("div", "routine-row__actions");
+    const save = button(edit.busy ? "Saving…" : "Save", "btn--primary", "save-grants", `Save what it may do: ${routine.title}`);
+    save.disabled = edit.busy;
+    const cancel = button("Cancel", "btn--quiet", "cancel-grants");
+    cancel.disabled = edit.busy;
+    actions.append(save, cancel);
+    wrap.append(actions);
+    if (edit.error) wrap.append(alertLine(edit.error));
+    return wrap;
+  };
+
+  function startGrantEdit(routine: RoutineSummary): void {
+    const info = grantInfo.get(routine.id);
+    if (!info || grantEdits.has(routine.id)) return;
+    const editor = createGrantEditor({
+      idPrefix: `routine-grants-${detailId(routine.id)}`,
+      initial: info.grants,
+      requested: info.requestedGrants ?? { effects: {}, protect: [] },
+    });
+    grantEdits.set(routine.id, { editor, busy: false, error: "" });
+    render();
+    rowNode(routine.id)?.querySelector<HTMLElement>("fieldset input:not(:disabled)")?.focus();
+  }
+
   function buildDetail(routine: RoutineSummary): HTMLElement {
     const wrap = el("div", "routine-detail");
     wrap.id = detailId(routine.id);
@@ -887,6 +1106,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     wrap.setAttribute("aria-label", `Runs, notes and memory of ${routine.title}`);
     const data = details.get(routine.id) ?? { runs: null, notes: null };
     wrap.append(buildRuns(routine, data), buildNotes(routine, data), buildMemory(routine, data));
+    if (canActions() && actsOnAccount(routine)) wrap.insertBefore(buildActionsSection(routine, false), wrap.firstChild);
     return wrap;
   }
 
@@ -897,11 +1117,17 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     const stateLine = el("p", "routine-row__state", stateLabel(routine));
     const chip = chipFor(routine);
     if (chip) stateLine.append(" ", chip);
+    const waiting = pendingFor(routine.id).length;
+    if (waiting > 0 && (routine.state === "approved" || routine.state === "paused")) {
+      stateLine.append(" ", statusChip(`${waiting} waiting for you`, "next"));
+    }
     row.append(stateLine);
     row.append(buildIntent(routine));
     row.append(el("p", "routine-row__meta", `Trigger: ${routine.trigger}`));
     row.append(buildHosts(routine));
     row.append(buildRisk(routine));
+    const grantSummary = buildGrantSummary(routine);
+    if (grantSummary) row.append(grantSummary);
 
     const who = el("p", "routine-row__meta");
     who.append(`Proposed by ${routine.proposedBy?.trim() || "an agent"} · `);
@@ -912,6 +1138,9 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     if (routine.replaces) row.append(el("p", "routine-row__meta", `Replaces “${titleOf(routine.replaces)}”`));
 
     row.append(buildActions(routine, `routine-confirm-${serial}`));
+    const grantEdit = buildGrantEdit(routine);
+    if (grantEdit) row.append(grantEdit);
+    if (canActions() && !detailOpen.has(routine.id) && pendingFor(routine.id).length > 0) row.append(buildActionsSection(routine, true));
     const failure = rowErrors.get(routine.id);
     if (failure) {
       const alert = el("p", "routine-row__error", failure);
@@ -929,6 +1158,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     const focusedAction = active && host.contains(active) ? active.dataset.action : undefined;
     const focusedSection = active && host.contains(active) ? active.dataset.section : undefined;
     const focusedRun = active && host.contains(active) ? active.dataset.runId : undefined;
+    const focusedActionId = active && host.contains(active) ? active.dataset.actionId : undefined;
     const focusedModel = active && host.contains(active) ? active.dataset.modelCtl : undefined;
     const focusedBanner = active && host.contains(active) && active.dataset.action === "kill-toggle";
 
@@ -1039,7 +1269,10 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       const row = rowNode(focusedRow);
       const same = row
         ? Array.from(row.querySelectorAll<HTMLElement>("button[data-action]")).find(
-            (b) => b.dataset.action === focusedAction && (focusedRun === undefined || b.dataset.runId === focusedRun)
+            (b) =>
+              b.dataset.action === focusedAction &&
+              (focusedRun === undefined || b.dataset.runId === focusedRun) &&
+              (focusedActionId === undefined || b.dataset.actionId === focusedActionId)
           )
         : undefined;
       const usable = same && !(same as HTMLButtonElement).disabled ? same : row?.querySelector<HTMLElement>("button[data-action]:not(:disabled)");
@@ -1052,10 +1285,15 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     if (confirming && !routines.some((routine) => routine.id === confirming?.id)) confirming = null;
     for (const id of Array.from(detailOpen)) if (!routines.some((routine) => routine.id === id)) closeDetail(id);
     if (forgetting && !routines.some((routine) => routine.id === forgetting)) forgetting = null;
+    for (const id of Array.from(actionLists.keys())) if (!routines.some((routine) => routine.id === id)) actionLists.delete(id);
+    for (const id of Array.from(grantEdits.keys())) if (!routines.some((routine) => routine.id === id)) grantEdits.delete(id);
+    for (const id of Array.from(grantInfo.keys())) if (!routines.some((routine) => routine.id === id)) grantInfo.delete(id);
     updateNeeds();
+    updatePending();
     render();
     syncReviewWithList();
     void loadMemories(false);
+    void loadActionState(false);
   };
 
   const upsert = (updated: RoutineSummary): void => {
@@ -1138,6 +1376,23 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
         break;
       case "run-now":
         void runNow(routine);
+        break;
+      case "approve-action":
+      case "decline-action": {
+        const action = (actionLists.get(routine.id) ?? []).find((entry) => entry.id === target.dataset.actionId);
+        if (action) void decideAction(routine, action, target.dataset.action === "approve-action" ? "approve" : "decline");
+        break;
+      }
+      case "edit-grants":
+        startGrantEdit(routine);
+        break;
+      case "save-grants":
+        void saveGrants(routine);
+        break;
+      case "cancel-grants":
+        grantEdits.delete(routine.id);
+        render();
+        rowNode(routine.id)?.querySelector<HTMLElement>('[data-action="edit-grants"]')?.focus();
         break;
       case "cancel-run":
         void cancelRun(routine);
@@ -1318,6 +1573,102 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       .filter((routine) => force || !memories.has(routine.id))
       .slice(0, MEMORY_PREFETCH_CAP);
     await Promise.all(wanted.map((routine) => loadMemory(routine.id, true)));
+  }
+
+  function sanitizeActions(listed: unknown): RoutineAction[] {
+    if (!Array.isArray(listed)) return [];
+    return listed
+      .filter((entry): entry is RoutineAction => !!entry && typeof entry === "object" && typeof (entry as RoutineAction).id === "string")
+      .slice(0, 200);
+  }
+
+  async function loadActions(id: string): Promise<void> {
+    if (typeof bridge.listRoutineActions !== "function" || destroyed) return;
+    try {
+      const listed = await bridge.listRoutineActions(id);
+      if (destroyed) return;
+      actionLists.set(id, sanitizeActions(listed));
+    } catch {
+      if (destroyed) return;
+      if (!actionLists.has(id)) actionLists.set(id, []);
+    }
+    updatePending();
+    render();
+  }
+
+  async function loadGrantInfo(id: string): Promise<void> {
+    if (!canGrants() || destroyed) return;
+    try {
+      const detail = await bridge.getRoutine(id);
+      if (destroyed || !detail || typeof detail !== "object") return;
+      grantInfo.set(id, detail);
+    } catch {
+      return;
+    }
+    render();
+  }
+
+  /** Pending-action badges and grant summaries need data for routines that can act on an account. */
+  async function loadActionState(force: boolean): Promise<void> {
+    const wanted = routines
+      .filter((routine) => (routine.state === "approved" || routine.state === "paused") && actsOnAccount(routine))
+      .slice(0, MEMORY_PREFETCH_CAP);
+    await Promise.all(
+      wanted.flatMap((routine) => [
+        canActions() && (force || !actionLists.has(routine.id)) ? loadActions(routine.id) : Promise.resolve(),
+        canGrants() && (force || !grantInfo.has(routine.id)) ? loadGrantInfo(routine.id) : Promise.resolve(),
+      ])
+    );
+  }
+
+  async function decideAction(routine: RoutineSummary, action: RoutineAction, kind: "approve" | "decline"): Promise<void> {
+    const call = kind === "approve" ? bridge.approveRoutineAction : bridge.declineRoutineAction;
+    if (typeof call !== "function" || actionBusy.has(action.id)) return;
+    actionErrors.delete(action.id);
+    actionBusy.add(action.id);
+    render();
+    try {
+      const updated = await call.call(bridge, routine.id, action.id);
+      actionBusy.delete(action.id);
+      if (destroyed) return;
+      if (updated && typeof updated === "object" && typeof updated.id === "string") {
+        const list = actionLists.get(routine.id) ?? [];
+        actionLists.set(routine.id, list.map((entry) => (entry.id === updated.id ? updated : entry)));
+      }
+      updatePending();
+      render();
+      void loadActions(routine.id);
+    } catch (error) {
+      actionBusy.delete(action.id);
+      if (destroyed) return;
+      actionErrors.set(action.id, `Couldn't ${kind} this — ${errorText(error)}`);
+      render();
+    }
+  }
+
+  async function saveGrants(routine: RoutineSummary): Promise<void> {
+    const edit = grantEdits.get(routine.id);
+    if (!edit || edit.busy || typeof bridge.setRoutineGrants !== "function") return;
+    edit.busy = true;
+    edit.error = "";
+    edit.editor.setDisabled(true);
+    render();
+    try {
+      const updated = await bridge.setRoutineGrants(routine.id, edit.editor.read());
+      if (destroyed) return;
+      if (updated && typeof updated === "object") grantInfo.set(routine.id, updated);
+      else void loadGrantInfo(routine.id);
+      grantEdits.delete(routine.id);
+      toast(`Saved what “${clip(routine.title, 60)}” may do`, "success");
+      render();
+      rowNode(routine.id)?.querySelector<HTMLElement>('[data-action="edit-grants"]')?.focus();
+    } catch (error) {
+      if (destroyed) return;
+      edit.busy = false;
+      edit.editor.setDisabled(false);
+      edit.error = `Couldn't save — ${errorText(error)}`;
+      render();
+    }
   }
 
   async function runNow(routine: RoutineSummary): Promise<void> {
@@ -1502,6 +1853,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     if (!review) return;
     const gate = bodyEl.querySelector<HTMLInputElement>("#routine-review-ack");
     const blocked = hasHighRisk(review.summary) && !(gate?.checked ?? false);
+    review.grants?.setDisabled(review.busy);
     approveBtn.disabled = review.busy || blocked;
     rejectBtn.disabled = review.busy;
     gateEl.hidden = !blocked;
@@ -1586,6 +1938,13 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     spec.append(toggle, specBox);
     parts.push(spec);
 
+    if (canGrants() && actsOnAccount(summary)) {
+      const editor = createGrantEditor({ idPrefix: "routine-review-grants" });
+      if (review) review.grants = editor;
+      parts.push(editor.root);
+      void loadRequestedGrants(summary.id, editor);
+    }
+
     if (hasHighRisk(summary)) {
       const ack = el("label", "routine-review__ack");
       const box = el("input");
@@ -1597,6 +1956,20 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     }
     bodyEl.replaceChildren(...parts);
   };
+
+  async function loadRequestedGrants(id: string, editor: GrantEditor): Promise<void> {
+    const current = review;
+    let detail: RoutineDetail | null;
+    try {
+      detail = await bridge.getRoutine(id);
+    } catch {
+      return;
+    }
+    if (!current || review !== current || current.grants !== editor || !detail || typeof detail !== "object") return;
+    const requested = detail.requestedGrants ?? { effects: {}, protect: [] };
+    editor.setRequested(requested);
+    editor.prefillProtect(protectedNames(requested));
+  }
 
   async function loadSpec(id: string, status: HTMLElement, pre: HTMLElement): Promise<void> {
     const current = review;
@@ -1639,7 +2012,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     const summary = routines.find((routine) => routine.id === id);
     if (!summary) return;
     opener?.focus();
-    review = { summary, handle: null, busy: false, spec: "idle" };
+    review = { summary, handle: null, busy: false, spec: "idle", grants: null };
     titleEl.textContent = summary.preview?.headline?.trim() || summary.title;
     const by = summary.proposedBy?.trim() || "an agent";
     metaEl.textContent = `${summary.title} · proposed by ${by} · ${relativeTime(summary.createdAt, now())}`;
@@ -1688,7 +2061,12 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     setReviewButtons();
     const order = visibleOrder();
     try {
-      const updated = kind === "approve" ? await bridge.approveRoutine(summary.id) : await bridge.rejectRoutine(summary.id);
+      const updated =
+        kind === "approve"
+          ? current.grants
+            ? await bridge.approveRoutine(summary.id, current.grants.read())
+            : await bridge.approveRoutine(summary.id)
+          : await bridge.rejectRoutine(summary.id);
       if (review === current) {
         current.busy = false;
         hideReview(null);
@@ -1762,6 +2140,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       if (!runner) void loadRunner(false);
     }
     void loadMemories(true);
+    void loadActionState(true);
     for (const id of detailOpen) void loadDetail(id);
   };
 
@@ -1769,6 +2148,10 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
   const timer = setInterval(() => {
     if (host.hidden || document.visibilityState === "hidden") return;
     const current = now();
+    if (pendingTotal() !== lastPending) {
+      updatePending();
+      render();
+    }
     host.querySelectorAll<HTMLElement>("time[data-at]").forEach((node) => {
       node.textContent = relativeTime(Number(node.dataset.at), current);
     });
@@ -1779,6 +2162,13 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
 
   const unsubscribe = bridge.onRoutinesChanged(handleChanged);
   const unsubscribeRuns = typeof bridge.onRoutineRunUpdated === "function" ? bridge.onRoutineRunUpdated(handleRunUpdated) : undefined;
+  const unsubscribeActions =
+    typeof bridge.onRoutineActionsChanged === "function"
+      ? bridge.onRoutineActionsChanged((routineId) => {
+          if (destroyed || typeof routineId !== "string") return;
+          void loadActions(routineId);
+        })
+      : undefined;
   render();
   void refresh();
 
@@ -1789,12 +2179,17 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       void refresh();
     },
     needsReview: () => needs,
+    pendingActions: () => lastPending,
     openReview,
     destroy() {
       destroyed = true;
       clearInterval(timer);
       unsubscribe?.();
       unsubscribeRuns?.();
+      unsubscribeActions?.();
+      actionLists.clear();
+      grantEdits.clear();
+      grantInfo.clear();
       running.clear();
       details.clear();
       logs.clear();

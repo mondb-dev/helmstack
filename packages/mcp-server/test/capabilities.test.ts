@@ -124,7 +124,7 @@ describe("MCP tool gating", () => {
   });
 
   it("routine tools are part of the default FE-dev surface, not substrate, not lite", async () => {
-    const names = ["browser_routine_schema", "browser_propose_routine", "browser_list_routines", "browser_get_routine", "browser_withdraw_routine"];
+    const names = ["browser_routine_schema", "browser_propose_routine", "browser_list_routines", "browser_list_routine_actions", "browser_get_routine", "browser_withdraw_routine"];
     for (const name of names) {
       expect(AGENT_SUBSTRATE_TOOLS).not.toContain(name);
       expect(await registeredTools(undefined)).toContain(name);
@@ -134,10 +134,10 @@ describe("MCP tool gating", () => {
     for (const name of names) expect(lite).not.toContain(name);
   });
 
-  it("there is no tool that approves, runs, stops or deletes a routine", async () => {
+  it("there is no tool that approves, runs, stops or deletes a routine, approves an action or sets grants", async () => {
     const all = await registeredTools("1");
     const routineTools = all.filter((n) => /routine/.test(n)).sort();
-    expect(routineTools).toEqual(["browser_get_routine", "browser_list_routines", "browser_propose_routine", "browser_routine_schema", "browser_withdraw_routine"]);
+    expect(routineTools).toEqual(["browser_get_routine", "browser_list_routine_actions", "browser_list_routines", "browser_propose_routine", "browser_routine_schema", "browser_withdraw_routine"]);
   });
 
   it("browser_propose_routine is a translation guide for the model", async () => {

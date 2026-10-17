@@ -188,10 +188,21 @@ async function bootstrap(): Promise<void> {
       })
     : null;
   const hasRoutines = routinesSupported(bridge);
+  let routinesToReview = 0;
+  let routinesPending = 0;
+  const showRoutinesBadge = (): void =>
+    sideTabs.setBadge("routines", routinesToReview + routinesPending, routinesPending > 0 ? "need attention" : "need review");
   const routines = hasRoutines
     ? mountRoutines({
         bridge,
-        onNeedsReviewChange: (count) => sideTabs.setBadge("routines", count, "need review"),
+        onNeedsReviewChange: (count) => {
+          routinesToReview = count;
+          showRoutinesBadge();
+        },
+        onPendingActionsChange: (count) => {
+          routinesPending = count;
+          showRoutinesBadge();
+        },
         onReveal: () => {
           activity.setCollapsed(false);
           sideTabs.select("routines");

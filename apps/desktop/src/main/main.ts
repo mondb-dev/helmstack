@@ -423,7 +423,7 @@ function registerIpcHandlers(
     listRoutines: async () => routineIpc.list(mainWindow?.webContents),
     getRoutine: async (id) => routineIpc.get(mainWindow?.webContents, id),
     getRoutineEngineStatus: async () => routineIpc.engineStatus(mainWindow?.webContents),
-    approveRoutine: async (id) => routineIpc.approve(mainWindow?.webContents, id),
+    approveRoutine: async (id, grants) => routineIpc.approve(mainWindow?.webContents, id, grants),
     rejectRoutine: async (id) => routineIpc.reject(mainWindow?.webContents, id),
     pauseRoutine: async (id) => routineIpc.pause(mainWindow?.webContents, id),
     resumeRoutine: async (id) => routineIpc.resume(mainWindow?.webContents, id),
@@ -437,6 +437,10 @@ function registerIpcHandlers(
     getRoutineMemory: async (id) => routineIpc.memory(mainWindow?.webContents, id),
     clearRoutineMemory: async (id) => routineIpc.clearMemory(mainWindow?.webContents, id),
     setRoutineKillSwitch: async (on) => routineIpc.setKillSwitch(mainWindow?.webContents, on),
+    setRoutineGrants: async (id, grants) => routineIpc.setGrants(mainWindow?.webContents, id, grants),
+    listRoutineActions: async (id) => routineIpc.listActions(mainWindow?.webContents, id),
+    approveRoutineAction: async (id, actionId) => routineIpc.approveAction(mainWindow?.webContents, id, actionId),
+    declineRoutineAction: async (id, actionId) => routineIpc.declineAction(mainWindow?.webContents, id, actionId),
     getRoutineModel: async () => routineIpc.getModel(mainWindow?.webContents),
     setRoutineModel: async (choice) => routineIpc.setModel(mainWindow?.webContents, choice),
     // Connect an agent (MCP client install); see mcp-install-service.ts
@@ -597,7 +601,7 @@ function registerIpcHandlers(
   ipcMain.handle(BrowserShellChannel.ListRoutines, (event) => routineIpc.list(event.sender));
   ipcMain.handle(BrowserShellChannel.GetRoutine, (event, id: unknown) => routineIpc.get(event.sender, id));
   ipcMain.handle(BrowserShellChannel.GetRoutineEngineStatus, (event) => routineIpc.engineStatus(event.sender));
-  ipcMain.handle(BrowserShellChannel.ApproveRoutine, (event, id: unknown) => routineIpc.approve(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.ApproveRoutine, (event, id: unknown, grants: unknown) => routineIpc.approve(event.sender, id, grants));
   ipcMain.handle(BrowserShellChannel.RejectRoutine, (event, id: unknown) => routineIpc.reject(event.sender, id));
   ipcMain.handle(BrowserShellChannel.PauseRoutine, (event, id: unknown) => routineIpc.pause(event.sender, id));
   ipcMain.handle(BrowserShellChannel.ResumeRoutine, (event, id: unknown) => routineIpc.resume(event.sender, id));
@@ -611,8 +615,15 @@ function registerIpcHandlers(
   ipcMain.handle(BrowserShellChannel.GetRoutineMemory, (event, id: unknown) => routineIpc.memory(event.sender, id));
   ipcMain.handle(BrowserShellChannel.ClearRoutineMemory, (event, id: unknown) => routineIpc.clearMemory(event.sender, id));
   ipcMain.handle(BrowserShellChannel.SetRoutineKillSwitch, (event, on: unknown) => routineIpc.setKillSwitch(event.sender, on));
+  ipcMain.handle(BrowserShellChannel.SetRoutineGrants, (event, id: unknown, grants: unknown) => routineIpc.setGrants(event.sender, id, grants));
+  ipcMain.handle(BrowserShellChannel.ListRoutineActions, (event, id: unknown) => routineIpc.listActions(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.ApproveRoutineAction, (event, id: unknown, actionId: unknown) => routineIpc.approveAction(event.sender, id, actionId));
+  ipcMain.handle(BrowserShellChannel.DeclineRoutineAction, (event, id: unknown, actionId: unknown) => routineIpc.declineAction(event.sender, id, actionId));
   ipcMain.handle(BrowserShellChannel.GetRoutineModel, (event) => routineIpc.getModel(event.sender));
   ipcMain.handle(BrowserShellChannel.SetRoutineModel, (event, choice: unknown) => routineIpc.setModel(event.sender, choice));
+  manager.onRoutineActionUpdated((event) => {
+    sendToShell(BrowserShellChannel.RoutineActionsChanged, event.routineId);
+  });
   manager.onRoutineRunUpdated((run) => {
     sendToShell(BrowserShellChannel.RoutineRunUpdated, run);
   });

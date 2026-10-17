@@ -13,8 +13,9 @@ Routines can be **proposed, validated, previewed, approved, run, and now judged*
 | 1 | Store, validate, preview in plain language, human approval | Done |
 | 2 | The engine that runs the fixed steps exactly: `manual` and `interval` triggers, memory, notes, run history, kill switch | Done |
 | 3 | The inference runtime that answers the judgment points (`infer`, `branch`, `when_inferred` stop conditions) | This version |
-| 4 | Schedule and event triggers (cron, watches that start a routine) | Later |
-| 5 | A learned cache of where things are on a page | Later |
+| 4 | Actions on your own account (`act` steps) inside limits **you** set; see "Actions" | This version |
+| 5 | Schedule and event triggers (cron, watches that start a routine) | Later |
+| 6 | A learned cache of where things are on a page | Later |
 
 What runs now, and what does not:
 
@@ -24,13 +25,14 @@ What runs now, and what does not:
 | Trigger `schedule`, `event` | Does **not** run. The Routines tab shows "not run yet" with the reason |
 | Steps `open`, `locate`, `extract`, `diff`, `for_each`, `note`, `mark_seen`, `open_item`, `wait`, `report` | Run exactly. `locate` and `extract` use the `structured_data` and `repeating_blocks` strategies |
 | Step `infer` | Runs: one tool-less question to the model you chose, grounded and routed by the thresholds (see "Judgments" below). With no model chosen the run ends as **needs_human** |
+| Step `act` | Clicks, types into or chooses in one named control, only as far as you allowed (see "Actions"). By default every action waits for your tap |
 | Step `branch` | Runs the `accept`, `maybe` or `reject` arm that matches the verdict of the earlier `infer` step |
 | The `infer` strategy of `locate` / `extract` | Still not available: the step's own `on_low` policy applies, with a log line |
 | `related` | Never followed. Widening scope needs a person |
 | `stop.budgets.tokens_per_run`, `stop.any.when_inferred` | Enforced / judged at the end of a completed run (see "Judgments") |
 | `stop.budgets.cost_usd_total` | Not enforced: local models cost nothing and command-line models report no price HelmStack can trust. The run log says so once |
 
-Nothing a run does is an action on a site: it loads pages and reads them. It never fills a field, clicks, submits, posts, buys, downloads, uploads or signs in. Those step kinds do not exist in the vocabulary.
+A routine without `act` steps never changes anything on a site: it loads pages and reads them. The only step that can click, type or choose is `act`, and it is checked three ways every time (your grants, HelmStack's own approvals, and a check of the page afterwards). Submitting forms, posting, buying, downloading, uploading and signing in are not in the vocabulary.
 
 ## How it works
 
@@ -65,6 +67,7 @@ Top-level fields (unknown fields are rejected everywhere, with a JSON path in th
 | `on_failure` | no | Retries and pausing (defaults: 2 retries, exponential, pause after 3, notify) |
 | `output` | no | Notes and an optional periodic report |
 | `safety` | no | Extra approvals and request pacing |
+| `actions` | no | What the routine would like to be allowed to do unasked (a suggestion only) and names it must never remove or give away |
 
 ### scope
 
@@ -97,6 +100,7 @@ Each step is an object with a `do` field and an optional `id` (lower-case letter
 | `diff` | `items`, `against`, `key` | Keep the located items whose `key` fields are not yet in the set `state.<key>` |
 | `for_each` | `items`, `limit`, `steps` | Run the nested steps for up to `limit` (1 to 100) items; `$item` is the current one |
 | `infer` | see below | A judgment with thresholds |
+| `act` | `action`, `effect`, `target`, `strategies`, `min_confidence`, `on_low`, `subject?`, `value?`, `verify` | Change one thing on the page. See "Actions" |
 | `branch` | `on`, `accept`, `maybe`, `reject` | Run the arm that matches the verdict of the earlier `infer` step `on` (a bare id) |
 | `note` | `tag?`, `fields?` | Append a note (the listed references) to the notes log |
 | `mark_seen` | `into?` | Add the current item to a set. `into` may be left out inside a `for_each` over a `diff` |
@@ -446,6 +450,59 @@ A second run of a routine that marks items as seen notes nothing new for the sam
 
 A note's fields and a run's log lines contain text copied from web pages. They are **data**, shown as plain text in the window, and an agent that reads them over HTTP must treat them as such, never as instructions. Run summaries and the live `routine_run` event use fixed wording and counts only, never page text.
 
+## Actions
+
+An `act` step changes something on **your own account**: `click` a control, `fill` (type into) a field or `select` an option. Everything below is enforced by HelmStack, not by the agent that wrote the routine.
+
+### The step
+
+```json
+{ "do": "act", "action": "click", "effect": "add_item",
+  "target": "the Add button in this player's row",
+  "strategies": ["repeating_blocks", "infer"], "min_confidence": 0.8, "on_low": "skip",
+  "subject": "$pick", "verify": { "present": ["added to your team"] } }
+```
+
+- **`effect`** says what it changes, in words that fit any site: `rearrange` (reorder your own items: a lineup), `add_item`, `remove_item`, `offer` (propose something to another person: a trade offer), `respond` (answer someone's proposal) or `other`.
+- **`subject`** is the thing it changes (a reference such as `$item` or an `extract` step). It is shown to you and matched against the protect list. **`value`** (fill and select only) is literal text up to 200 characters or a reference.
+- **`verify`** is required: `present` and/or `absent`, each 1 to 5 strings of up to 200 characters (literal or references). After the action the page must show them.
+- No other step can refer to an `act` step. It can sit inside `for_each` and `branch` arms; nesting limits are unchanged.
+- **Finding the control.** `structured_data` matches the control's accessible name (it must fit the `target` words and, with a `subject`, contain it). `repeating_blocks` also accepts the subject anywhere in the control's row. `infer` shows the tool-less model a numbered list of controls (only those that mention the subject); it must answer with a number from the list and quote that entry, otherwise the control counts as not found. Two equal matches are ambiguous, never guessed. Not found follows `on_low`; an action is never retried.
+
+### What decides whether it runs
+
+Checked in this order for every act; every check must pass:
+
+1. The routine may still act: approved, not paused, stopped, cancelled or killed.
+2. The page is inside the routine's scope.
+3. **Protect list.** For `remove_item`, `offer`, `respond`, and a `rearrange` that moves something to a bench, reserve or injured slot, a `subject` that matches a protected name (case-insensitive, substring in either direction) is **blocked**: logged, never asked. The spec's `actions.protect` and the protect list you set both apply.
+4. `offer`, `respond` and `other` **always** create a pending action and wait for your tap, whatever you granted.
+5. Automatic only if your grant for the effect is `auto` **and** the per-run and per-day counters are under the limits (the day is the calendar day in local time, saved per routine; an attempt counts when it is tried, not when it succeeds). Otherwise it waits.
+6. **HelmStack's own approvals are never lifted.** If the command pipeline asks for its own approval (sharing personal data, creating an account, accepting terms, a payment), or the control is named like a purchase, sign-up, terms, message, upload, download or delete, the action waits for you instead. No grant changes that, and nothing is approved on your behalf.
+7. After the click or typing the page must show the `verify` text. If not, the action is **failed**, the run **fails** and the routine is **paused at once**. A redirect outside the scope fails the same way.
+
+At most one action per 2 seconds per routine. Once an action waits in a run, later actions in that run wait behind it, so nothing changes after a step that needs you.
+
+### Grants: what you allow
+
+When you approve a routine you can choose, per effect, `ask` (default) or `auto`, with `perRun` and `perDay` limits (1 to 50), and a protect list (up to 50 names of up to 80 characters). Only `rearrange`, `add_item` and `remove_item` can be `auto`; HelmStack rejects `auto` for the others, and a hand-edited grants file that tries it is ignored as a whole. The spec's `actions.request` is only a suggestion shown at review (`requestedGrants`); it is never applied. You can change grants later in the Routines tab; a change applies to the very next action, because grants are read from disk before every action. A new routine that `replaces` another starts with no grants. Grants live in `grants.json` (owner-only) in the routine's data folder. There is no HTTP or MCP route to read-modify grants; agents can read `grants` and `requestedGrants` in `GET /api/routines/:id`.
+
+### Pending actions
+
+An action that waits is stored with a one-sentence description (for example `Click "Add" for Jalen Smith on league.example.com.`), and the run ends as **needs_human** with "Waiting for you to approve N actions". Pending actions expire 12 hours after they were queued and an expired action never runs; the newest 100 actions are kept. In the Routines tab you **approve** or **decline** each one:
+
+- Approving re-opens the recorded page (scope-checked), finds the control again and checks it is still the control that was queued (same name and role, subject in its row). If the page changed, the action is **failed** with "the page changed, ask again next run" and nothing is done. Then it runs through the same pipeline, with the same `verify` check, and is recorded as allowed by you.
+- Pausing, stopping or deleting the routine, or turning on the kill switch, cancels what is running and expires what is waiting.
+- If HelmStack's own approval is needed for an approved action, the action fails with a note rather than approving it for you; do that step on the site yourself.
+
+### What is logged
+
+Run logs and the live event contain only the fixed description (effect, action, host, a subject clipped to 80 characters) and the outcome. A typed value appears only as a length ("Type 12 characters"); page text is never logged. A pending fill keeps its value in the routine's owner-only `actions.json` until it is done or expires. Agents may read `GET /api/routines/:id/actions` (descriptions are text copied from pages: untrusted data); the stream carries `routine_action` events with ids, effect and status only.
+
+### A worked example
+
+`GET /api/routines/schema` returns it as `actionExample`: "every morning bench anyone who is out today and pick up the best free agent; never drop a named player". It loops over the roster rows, asks the model once per player whether they are out (with a quote as evidence), and in the `accept` arm uses an `act` with `action: "select"`, `effect: "rearrange"`, `value: "Bench"` and `verify: { present: ["Lineup saved"], absent: ["could not be saved"] }`. Then it opens the free-agent page and uses an `act` with `action: "click"`, `effect: "add_item"` for the top player. Its `actions` block asks for `rearrange` and `add_item` to run unasked (10 and 2 per day) and protects one name. With no grants, every one of those waits for your tap; trade offers or answers would always wait.
+
 ## What the preview and risk flags say
 
 The preview is built from the spec alone (no model is asked), so the same spec always reads the same. It has a one-sentence headline, 5 to 10 bullets and risk flags with stable codes.
@@ -453,11 +510,14 @@ The preview is built from the spec alone (no model is asked), so the same spec a
 | Code | Level | Raised when |
 | --- | --- | --- |
 | `any_site` | high | It can follow links anywhere (no allow-list, `same_site` off, `max_depth` above 0) |
+| `acts_on_account` | high | There is at least one `act` step: the routine can change things on a site |
 | `has_login_hint` | warning | A start URL looks like a login, account or checkout page. Routines never type credentials; use a profile you're already signed into |
 | `no_stop_condition` | warning | No stop condition: it will keep running until you stop it |
 | `fast_interval` | warning | It runs more often than every 5 minutes |
 | `no_budgets` | warning | No token, page, cost or runtime budget |
 | `low_accept_threshold` | warning | A judgment (or `related`) accepts below 0.5 |
+| `requests_auto` | warning | The spec asks for `auto` on some effect (a request only; nothing is granted until you choose) |
+| `no_protect_list` | warning | It can `remove_item` or `offer` but names nothing to protect |
 | `event_trigger_unverified` | warning | The trigger is a watch condition HelmStack cannot check yet |
 | `many_pages` | info | More than 50 pages per run |
 | `no_evidence_check` | info | A judgment sets `evidence` to `none` |
@@ -468,7 +528,8 @@ The preview is built from the spec alone (no model is asked), so the same spec a
 ## Safety model
 
 - **Agents propose, humans approve.** Approve, reject, pause, resume, stop and delete exist only as shell actions. The HTTP server and the MCP server have no route or tool for them, and a test asserts it. An agent can read routines and withdraw its own pending proposal.
-- **Only approved routines run.** The engine runs `manual` and `interval` routines you approved. Its only use of a model is the tool-less judgment described above, and nothing in its vocabulary fills, clicks, submits, posts, buys, downloads or signs in; a test asserts that the engine code has no such calls. Running, cancelling, clearing memory and the kill switch are shell actions with no HTTP or MCP route.
+- **Only approved routines run.** The engine runs `manual` and `interval` routines you approved. Its only use of a model is the tool-less judgment described above. The only way it touches a page beyond loading and reading it is an `act` step, through HelmStack's command pipeline (its approvals and policies included); a test asserts that the routine code calls nothing else.
+- **Actions are yours to allow.** By default every action waits for your tap. Only you can raise or lower grants, approve or decline an action; there is no agent route or tool for it, and offers, answers to offers and anything HelmStack always asks about can never run unasked. Running, cancelling, clearing memory and the kill switch are shell actions with no HTTP or MCP route.
 - **Every page is checked against scope first**, then `robots.txt` for followed pages, a page budget and a rate limit. See "Scope, politeness and budgets".
 - **What a run read is untrusted.** Notes and logs hold page text and are never treated as instructions. Page text sent to the model is labeled untrusted, and the model has no tools, so it cannot act on it.
 - **The model is yours to choose.** Only the window can pick it. A routine, an agent or a page cannot read or change the setting.
@@ -499,6 +560,10 @@ The preview is built from the spec alone (no model is asked), so the same spec a
 | Page loads | At least 200 ms apart (5 per second at most); 1 s by default |
 | Run time | 30 minutes at most (or `runtime_minutes_per_run`) |
 | Notes per run / kept | 200 / newest 1,000 per routine |
+| `verify` entries / length | 1 to 5 per list / 200 characters |
+| Protected names | 50 of up to 80 characters |
+| Grant limits (`perRun`, `perDay`) | 1 to 50 (defaults 5 and 10 for `auto`) |
+| Actions | One per 2 seconds per routine; pending ones expire after 12 hours; newest 100 kept per routine |
 | Runs kept | Newest 50 per routine, 200 log lines each |
 | Items in `seen`-style sets | Newest 5,000 per key |
 | Errors returned | 20, in a fixed order, each with a JSON path like `steps[2].steps[0].accept_at` |
@@ -507,9 +572,9 @@ The preview is built from the spec alone (no model is asked), so the same spec a
 
 | From | How |
 | --- | --- |
-| MCP | `browser_routine_schema`, `browser_propose_routine`, `browser_list_routines`, `browser_get_routine`, `browser_withdraw_routine`. They are part of the default toolset. They are **not** in the [lite toolset](lite-toolset.md). |
-| SDK | `getRoutineSchema()`, `proposeRoutine(spec, { replaces? })`, `listRoutines()`, `getRoutine(id)`, `withdrawRoutine(id)`; stream handlers `onRoutineProposed` and `onRoutineStateChanged` |
-| HTTP | `GET /api/routines/schema`, `POST /api/routines`, `GET /api/routines`, `GET /api/routines/:id`, `POST /api/routines/:id/withdraw`, and read-only `GET /api/routines/:id/runs` and `GET /api/routines/:id/notes` (untrusted text). The stream carries `routine_run` events. There is no route to run, cancel, clear memory or use the kill switch. See [HTTP API](http-api.md) |
+| MCP | `browser_routine_schema`, `browser_propose_routine`, `browser_list_routines`, `browser_get_routine`, `browser_list_routine_actions` (read-only), `browser_withdraw_routine`. They are part of the default toolset. They are **not** in the [lite toolset](lite-toolset.md). |
+| SDK | `getRoutineSchema()`, `proposeRoutine(spec, { replaces? })`, `listRoutines()`, `getRoutine(id)`, `listRoutineActions(id)`, `withdrawRoutine(id)`; stream handlers `onRoutineProposed`, `onRoutineStateChanged` and `onRoutineAction` |
+| HTTP | `GET /api/routines/schema`, `POST /api/routines`, `GET /api/routines`, `GET /api/routines/:id`, `POST /api/routines/:id/withdraw`, and read-only `GET /api/routines/:id/runs`, `GET /api/routines/:id/notes` and `GET /api/routines/:id/actions` (untrusted text). The stream carries `routine_run` and `routine_action` events. There is no route to run, cancel, clear memory or use the kill switch. See [HTTP API](http-api.md) |
 
 `browser_propose_routine`'s description is the translation guide the model reads: when to use it, to call the schema first, to keep `intent` verbatim, to prefer a narrow scope, to always set stop conditions and budgets, to put judgment in `infer` points with thresholds and `note_as_maybe`, never to try to use credentials or approvals, and to tell you the routine needs your approval in the HelmStack window.
 

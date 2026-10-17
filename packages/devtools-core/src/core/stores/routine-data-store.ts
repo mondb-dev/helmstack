@@ -14,7 +14,9 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import type { RoutineNote, RoutineRunDetail, RoutineRunSummary } from "../../../../shared/src/index.js";
+import type { RoutineEffect, RoutineGrants, RoutineNote, RoutineRunDetail, RoutineRunSummary } from "../../../../shared/src/index.js";
+import { ACT_COUNTER_EFFECTS, localDay, MAX_ACTIONS_STORED, type StoredAction } from "../routines/act.js";
+import { emptyGrants, parseGrants } from "../routines/grants.js";
 import { isValidRoutineId } from "./routine-store.js";
 
 export const MAX_NOTES = 1000;
@@ -220,6 +222,59 @@ export class RoutineDataStore {
     return changed;
   }
 
+  // ── grants (what the human lets the routine do unasked) ──────────────────
+
+  /** Read from disk every time: a change by the human must apply to the very next action. No grants file = nothing granted. */
+  readGrants(id: string): RoutineGrants {
+    const raw = this.readJson<{ version?: number; grants?: unknown }>(this.fileOf(id, "grants.json"));
+    if (!raw || raw.version !== 1) return emptyGrants();
+    const parsed = parseGrants(raw.grants);
+    return parsed.ok ? parsed.grants : emptyGrants();
+  }
+
+  /** `grants` must already have passed {@link parseGrants}; it is parsed again so nothing unchecked is ever stored. */
+  writeGrants(id: string, grants: RoutineGrants): RoutineGrants {
+    const parsed = parseGrants(grants);
+    if (!parsed.ok) throw new Error(parsed.error);
+    this.ensureDir(id);
+    this.writeAtomic(this.fileOf(id, "grants.json"), JSON.stringify({ version: 1, grants: parsed.grants }));
+    return parsed.grants;
+  }
+
+  // ── actions (pending and finished; newest kept) ───────────────────────────
+
+  /** Newest first. */
+  readActions(id: string): StoredAction[] {
+    const raw = this.readJson<{ version?: number; actions?: unknown }>(this.fileOf(id, "actions.json"));
+    if (!raw || raw.version !== 1 || !Array.isArray(raw.actions)) return [];
+    return raw.actions.filter((a): a is StoredAction => isAction(a, id)).slice(0, MAX_ACTIONS_STORED);
+  }
+
+  writeActions(id: string, actions: StoredAction[]): void {
+    this.ensureDir(id);
+    this.writeAtomic(this.fileOf(id, "actions.json"), JSON.stringify({ version: 1, actions: actions.slice(0, MAX_ACTIONS_STORED) }));
+  }
+
+  /**
+   * Count one automatic attempt of `effect` against today's limit (calendar day, local time).
+   * Returns false, changing nothing, when `limit` attempts were already made today. Persisted, so a
+   * restart does not give the routine a fresh allowance.
+   */
+  reserveDaily(id: string, effect: RoutineEffect, limit: number, now: number): boolean {
+    if (!ACT_COUNTER_EFFECTS.includes(effect)) return false;
+    const day = localDay(now);
+    const raw = this.readJson<{ version?: number; day?: unknown; counts?: unknown }>(this.fileOf(id, "action-counters.json"));
+    const counts: Record<string, number> = {};
+    if (raw && raw.version === 1 && raw.day === day && typeof raw.counts === "object" && raw.counts !== null) {
+      for (const [k, v] of Object.entries(raw.counts)) if (typeof v === "number" && Number.isFinite(v) && v >= 0) counts[k] = Math.floor(v);
+    }
+    if ((counts[effect] ?? 0) >= limit) return false;
+    counts[effect] = (counts[effect] ?? 0) + 1;
+    this.ensureDir(id);
+    this.writeAtomic(this.fileOf(id, "action-counters.json"), JSON.stringify({ version: 1, day, counts }));
+    return true;
+  }
+
   // ── removal ─────────────────────────────────────────────────────────────
 
   remove(id: string): void {
@@ -292,6 +347,24 @@ function isNote(v: unknown): v is RoutineNote {
   if (typeof v !== "object" || v === null) return false;
   const n = v as Partial<RoutineNote>;
   return typeof n.id === "string" && typeof n.at === "number" && typeof n.url === "string" && typeof n.fields === "object" && n.fields !== null;
+}
+
+function isAction(v: unknown, routineId: string): v is StoredAction {
+  if (typeof v !== "object" || v === null) return false;
+  const a = v as Partial<StoredAction>;
+  return (
+    typeof a.id === "string" &&
+    a.routineId === routineId &&
+    typeof a.runId === "string" &&
+    typeof a.createdAt === "number" &&
+    typeof a.expiresAt === "number" &&
+    typeof a.effect === "string" &&
+    typeof a.action === "string" &&
+    typeof a.description === "string" &&
+    typeof a.host === "string" &&
+    typeof a.url === "string" &&
+    typeof a.status === "string"
+  );
 }
 
 function isRun(v: unknown, routineId: string): v is RoutineRunDetail {

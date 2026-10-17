@@ -58,6 +58,10 @@ export type RoutineSummary = {
 };
 
 export type RoutineDetail = RoutineSummary & {
+  /** What the spec asked to be allowed (display only). */
+  requestedGrants?: RoutineGrants;
+  /** What the human actually allowed. */
+  grants?: RoutineGrants;
   /** The validated spec, pretty-printed. Display only: the shell never edits it. */
   specJson: string;
 };
@@ -155,4 +159,51 @@ export type RoutineModelStatus = {
   available: boolean;
   /** Plain-language reason when choice is null or not available. */
   reason?: string;
+};
+
+/**
+ * What the human lets a routine do without asking. Set at approval (and changeable later);
+ * the routine can request grants but never raise them. No grant means every action asks.
+ */
+export type RoutineGrantMode = "ask" | "auto";
+export type RoutineEffectGrant = { mode: RoutineGrantMode; perDay?: number; perRun?: number };
+export type RoutineGrants = {
+  /** Only rearrange, add_item and remove_item may be "auto"; the rest always ask. */
+  effects: Partial<Record<RoutineEffectName, RoutineEffectGrant>>;
+  /** Names the routine must never remove or give away. */
+  protect: string[];
+};
+export type RoutineEffectName = "rearrange" | "add_item" | "remove_item" | "offer" | "respond" | "other";
+
+export type RoutineActionStatus = "pending" | "approved" | "declined" | "expired" | "done" | "failed" | "blocked";
+
+/** An action the routine wants to take and is waiting on the human for, or has taken. */
+export type RoutineAction = {
+  id: string;
+  routineId: string;
+  runId: string;
+  createdAt: number;
+  /** Pending actions lapse after this (12 hours); an expired action is never run. */
+  expiresAt: number;
+  effect: RoutineEffectName;
+  action: "click" | "fill" | "select";
+  /** One plain sentence, e.g. 'Click "Add" for Jalen Smith on basketball.example.com.' Page text as text only. */
+  description: string;
+  host: string;
+  url: string;
+  subject?: string;
+  status: RoutineActionStatus;
+  /** Why it asked, was blocked, or failed, in plain words. */
+  note?: string;
+  /** How it was allowed: the human tapped it, or the grant covered it. */
+  allowedBy?: "human" | "grant";
+  decidedAt?: number;
+};
+
+/** What the `routine_action` event (SSE) and the shell carry about an action: ids and words, never page text. */
+export type RoutineActionEvent = {
+  routineId: string;
+  actionId: string;
+  effect: RoutineEffectName;
+  status: RoutineActionStatus;
 };

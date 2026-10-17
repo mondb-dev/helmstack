@@ -5,11 +5,14 @@
  * headline, bullets and risk flags, in the same order. The human approves what this says,
  * so it states the real thresholds, scope, stop conditions and budgets.
  */
-import type {
-  RoutinePreview,
-  RoutineRisk,
-  RoutineSpec,
-  RoutineStep
+import {
+  ROUTINE_AUTO_EFFECTS,
+  ROUTINE_EFFECTS,
+  type RoutineEffect,
+  type RoutinePreview,
+  type RoutineRisk,
+  type RoutineSpec,
+  type RoutineStep
 } from "../../../../shared/src/index.js";
 import { minimumMinuteGap, parseCron } from "./cron.js";
 import { isScopeOpen, maxDepthOf, parseHttpUrl, scopeHosts } from "./scope.js";
@@ -82,6 +85,16 @@ export function triggerText(trigger: RoutineSpec["trigger"]): string {
 
 // ── Steps ────────────────────────────────────────────────────────────────────
 
+/** What each effect means in words that fit any site. */
+const EFFECT_TEXT: Record<RoutineEffect, string> = {
+  rearrange: "rearrange your items",
+  add_item: "add items",
+  remove_item: "remove items",
+  offer: "send offers to other people",
+  respond: "answer other people's offers",
+  other: "make other changes"
+};
+
 function walk(steps: readonly RoutineStep[], visit: (step: RoutineStep) => void): void {
   for (const step of steps) {
     visit(step);
@@ -130,6 +143,8 @@ function phrase(step: RoutineStep, startCount: number): string {
       return `for each of up to ${step.limit} items: ${step.steps.map((s) => phrase(s, startCount)).join(", ")}`;
     case "infer":
       return `judge "${clip(step.question, 100)}"`;
+    case "act":
+      return `${step.action === "click" ? "click" : step.action === "fill" ? "type into" : "choose in"} ${clip(step.target, 80)} (${EFFECT_TEXT[step.effect]})`;
     case "branch": {
       const arm = (label: string, list: RoutineStep[] | undefined) =>
         list && list.length ? `${label}: ${list.map((s) => phrase(s, startCount)).join(" and ")}` : null;
@@ -155,11 +170,14 @@ const LOGIN_HINT = /(^|[/._-])(log-?in|sign-?in|signin|signup|sign-?up|register|
 
 const RISK_ORDER = [
   "any_site",
+  "acts_on_account",
   "has_login_hint",
   "no_stop_condition",
   "fast_interval",
   "no_budgets",
   "low_accept_threshold",
+  "requests_auto",
+  "no_protect_list",
   "event_trigger_unverified",
   "many_pages",
   "no_evidence_check",
@@ -180,6 +198,25 @@ export function assessRisks(spec: RoutineSpec): RoutineRisk[] {
 
   if (isScopeOpen(spec.scope)) {
     flag("high", "any_site", "This routine is not limited to specific sites: it can follow links to any site. Restrict it to the sites you expect.");
+  }
+  const acts = steps.flatMap((s) => (s.do === "act" ? [s] : []));
+  if (acts.length > 0) {
+    flag(
+      "high",
+      "acts_on_account",
+      "This routine can change things on a site (click, type or choose). Each change asks you first unless you allow it when approving, it is checked on the page afterwards, and a failed check pauses the routine."
+    );
+  }
+  const autoAsked = ROUTINE_EFFECTS.filter((e) => spec.actions?.request?.[e]?.mode === "auto");
+  if (acts.length > 0 && autoAsked.length > 0) {
+    flag(
+      "warning",
+      "requests_auto",
+      `It asks to run without asking you for: ${autoAsked.map((e) => EFFECT_TEXT[e]).join(", ")}. Nothing runs unasked unless you grant it when you approve, and you can change that any time.`
+    );
+  }
+  if (acts.some((a) => a.effect === "remove_item" || a.effect === "offer") && !(spec.actions?.protect && spec.actions.protect.length > 0)) {
+    flag("warning", "no_protect_list", "It can remove items or send offers but names nothing to protect. You can add names it must never remove or give away when you approve.");
   }
   const loginish = spec.scope.start.some((u) => {
     const parsed = parseHttpUrl(u);
@@ -293,6 +330,31 @@ function approvalsLine(spec: RoutineSpec): string {
   return `${base}${added}. It never types passwords or uses saved logins. Pace: ${spec.safety?.rate ?? "1 request / 2s"}.${failure}`;
 }
 
+/** One plain sentence about what the routine may change, and who decides. Empty for a read-only routine. */
+function actionsLine(spec: RoutineSpec, steps: RoutineStep[], where: string): string {
+  const acts = steps.flatMap((s) => (s.do === "act" ? [s] : []));
+  if (acts.length === 0) return "";
+  const effects = ROUTINE_EFFECTS.filter((e) => acts.some((a) => a.effect === e));
+  const list = effects.map((e) => EFFECT_TEXT[e]);
+  const sure = effects.filter((e) => !(ROUTINE_AUTO_EFFECTS as readonly string[]).includes(e));
+  const asked = ROUTINE_AUTO_EFFECTS.filter((e) => spec.actions?.request?.[e]?.mode === "auto" && effects.includes(e));
+  const limits = asked
+    .map((e) => {
+      const r = spec.actions!.request![e]!;
+      const parts = [r.per_run !== undefined ? `${r.per_run} per run` : "", r.per_day !== undefined ? `${r.per_day} per day` : ""].filter(Boolean);
+      return `${EFFECT_TEXT[e]}${parts.length ? ` (${parts.join(", ")})` : ""}`;
+    })
+    .join("; ");
+  const protect = spec.actions?.protect ?? [];
+  return clip(
+    `May change things on ${where}: ${list.join(", ")}. Each change asks you first unless you allow it when approving${sure.length ? `; ${sure.map((e) => EFFECT_TEXT[e]).join(" and ")} always ask you` : ""}. ` +
+      `${asked.length ? `It asks to run unasked for: ${limits}. ` : "It does not ask to run anything unasked. "}` +
+      `${protect.length ? `Never removes or gives away: ${protect.slice(0, 5).join(", ")}${protect.length > 5 ? ` and ${protect.length - 5} more` : ""}. ` : ""}` +
+      "HelmStack's own approvals still apply, every change is checked on the page afterwards, and a failed check pauses the routine.",
+    900
+  );
+}
+
 export type BuildPreviewOptions = {
   /** "What changed" bullets for a proposal that replaces another routine; shown first. */
   changes?: string[];
@@ -343,6 +405,8 @@ export function buildPreview(spec: RoutineSpec, options: BuildPreviewOptions = {
     text: `${open ? "Any site" : hosts.join(", ")}; starts from ${plural(start, "page")}, opens up to ${spec.scope.max_pages_per_run} pages per run. ${reach}`
   });
   lines.push({ label: "Does", text: `${clip(steps.length ? spec.steps.map((s) => phrase(s, start)).join(", then ") : "", 700)}.` });
+  const actLine = actionsLine(spec, steps, where);
+  if (actLine) lines.push({ label: "Actions", text: actLine });
   const tags = [...new Set(steps.flatMap((s) => (s.do === "note" && s.tag ? [s.tag] : [])))];
   const report = spec.output?.report;
   lines.push({
@@ -375,7 +439,8 @@ export function buildPreview(spec: RoutineSpec, options: BuildPreviewOptions = {
   lines.push({ label: "Safety", text: approvalsLine(spec) });
 
   const changes = options.changes?.length ? [{ label: "Changed", text: clip(options.changes.join(" "), 600) }] : [];
-  const all = [...changes, ...lines].slice(0, MAX_PREVIEW_LINES);
+  // A routine that can change things gets one extra line: its "Actions" line must never be the one that is cut.
+  const all = [...changes, ...lines].slice(0, MAX_PREVIEW_LINES + (actLine ? 1 : 0));
   return { headline, lines: all.map((l) => `${l.label}: ${l.text}`), risks };
 }
 

@@ -1,5 +1,5 @@
 import type { RoutineSpec } from "../../../shared/src/index.js";
-import { canonical, minimal } from "./fixtures.js";
+import { actionRoutine, canonical, minimal } from "./fixtures.js";
 
 type Any = any;  
 
@@ -17,6 +17,10 @@ export type InvalidCase = {
 };
 
 const c = (): Any => canonical();
+const a = (): Any => actionRoutine();
+/** Paths in the roster-upkeep example: a select act inside a branch arm, and a click act inside a loop. */
+const BENCH = "steps[2].steps[2].accept[0]";
+const ADD = "steps[5].steps[1]";
 const m = (): Any => minimal();
 /** Path of the note step in the canonical example's accept arm. */
 const NOTE = "steps[3].steps[2].accept[1]";
@@ -69,6 +73,23 @@ export const VALID: ValidCase[] = [
     })
   },
   { name: "nesting right at the limit (4 levels)", spec: () => nest(3) },
+  { name: "the roster-upkeep example: act steps and an actions block", spec: a },
+  {
+    name: "every kind of act, with literal and referenced values",
+    spec: () => ({
+      ...m(),
+      scope: { start: ["https://example.com/"], follow: { max_depth: 0 }, max_pages_per_run: 5 },
+      state: { slot: "value" },
+      steps: [
+        { do: "open", url: "$scope.start[0]" },
+        { do: "act", action: "click", effect: "other", target: "the Save button", strategies: ["structured_data"], min_confidence: 0.9, on_low: "fail", verify: { present: ["Saved"] } },
+        { do: "act", action: "fill", effect: "other", target: "the note field", strategies: ["infer"], min_confidence: 0.7, on_low: "skip", value: "state.slot", verify: { absent: ["Error"] } },
+        { do: "act", id: "pick", action: "select", effect: "rearrange", target: "the slot menu", strategies: ["repeating_blocks", "infer"], min_confidence: 0.8, on_low: "ask_human", subject: "state.slot", value: "Bench", verify: { present: ["Bench", "Saved"], absent: ["Error", "Failed"] } }
+      ],
+      actions: { request: { rearrange: { mode: "ask" }, offer: { mode: "ask", per_run: 1 }, add_item: { mode: "auto", per_day: 50, per_run: 50 } }, protect: ["Star", "Another Name"] }
+    })
+  },
+  { name: "an act at the nesting limit", spec: () => { const s = nest(3); s.scope.follow = { max_depth: 0 }; let step = s.steps[0]; while (step.steps) step = step.steps[0]; return s; } },
   {
     name: "every step kind once",
     spec: () => ({
@@ -98,6 +119,11 @@ export const VALID: ValidCase[] = [
 ];
 
 const longString = (n: number): string => "x".repeat(n);
+const actAt = (path: "bench" | "add", over: (act: Any) => void) => () => {
+  const s = a();
+  over(path === "bench" ? s.steps[2].steps[2].accept[0] : s.steps[5].steps[1]);
+  return s;
+};
 
 export const INVALID: InvalidCase[] = [
   // ── unknown keys, wherever they are ──
@@ -206,6 +232,44 @@ export const INVALID: InvalidCase[] = [
   { name: "a request rate in the wrong format", make: () => { const s = c(); s.safety.rate = "fast"; return s; }, path: "safety.rate", schemaCatches: true },
   { name: "on_failure with too many retries", make: () => { const s = c(); s.on_failure.retries = 9; return s; }, path: "on_failure.retries", schemaCatches: true },
   { name: "output.notes other than append", make: () => { const s = c(); s.output.notes = "overwrite"; return s; }, path: "output.notes", schemaCatches: true },
+  // ── act steps and the actions block ──
+  { name: "an act without a verify check", make: actAt("bench", (x) => delete x.verify), path: `${BENCH}.verify`, says: "is required", schemaCatches: true },
+  { name: "an empty verify object", make: actAt("bench", (x) => { x.verify = {}; }), path: `${BENCH}.verify`, says: "at least one", schemaCatches: true },
+  { name: "an empty verify.present list", make: actAt("bench", (x) => { x.verify = { present: [] }; }), path: `${BENCH}.verify.present`, schemaCatches: true },
+  { name: "more than 5 verify entries", make: actAt("bench", (x) => { x.verify = { present: ["a", "b", "c", "d", "e", "f"] }; }), path: `${BENCH}.verify.present`, schemaCatches: true },
+  { name: "a verify entry over 200 characters", make: actAt("bench", (x) => { x.verify = { absent: [longString(201)] }; }), path: `${BENCH}.verify.absent[0]`, schemaCatches: true },
+  { name: "an unknown key in verify", make: actAt("bench", (x) => { x.verify = { present: ["ok"], eventually: ["x"] }; }), path: `${BENCH}.verify.eventually`, schemaCatches: true },
+  { name: "a verify reference to an undefined step", make: actAt("bench", (x) => { x.verify = { present: ["$ghost"] }; }), path: `${BENCH}.verify.present[0]`, says: "no step with id", schemaCatches: false },
+  { name: "a value on a click", make: actAt("add", (x) => { x.value = "x"; }), path: `${ADD}.value`, says: "only for fill and select", schemaCatches: true },
+  { name: "a fill without a value", make: actAt("bench", (x) => { x.action = "fill"; delete x.value; }), path: `${BENCH}.value`, says: "is required for fill", schemaCatches: true },
+  { name: "a value that is a bad reference", make: actAt("bench", (x) => { x.value = "$player.name"; }), path: `${BENCH}.value`, says: "not a reference", schemaCatches: false },
+  { name: "a value over 200 characters", make: actAt("bench", (x) => { x.value = longString(201); }), path: `${BENCH}.value`, schemaCatches: true },
+  { name: "an unknown effect", make: actAt("add", (x) => { x.effect = "purchase"; }), path: `${ADD}.effect`, schemaCatches: true },
+  { name: "an unknown action", make: actAt("add", (x) => { x.action = "submit"; }), path: `${ADD}.action`, schemaCatches: true },
+  { name: "an act with a selector", make: actAt("add", (x) => { x.selector = "#add"; }), path: `${ADD}.selector`, says: "unknown field", schemaCatches: true },
+  { name: "an act with a script", make: actAt("add", (x) => { x.script = "document.forms[0].submit()"; }), path: `${ADD}.script`, says: "not a routine field", schemaCatches: true },
+  { name: "an act with no strategies", make: actAt("add", (x) => { x.strategies = []; }), path: `${ADD}.strategies`, schemaCatches: true },
+  { name: "an act whose min_confidence is above 1", make: actAt("add", (x) => { x.min_confidence = 2; }), path: `${ADD}.min_confidence`, schemaCatches: true },
+  { name: "an act target over 300 characters", make: actAt("add", (x) => { x.target = longString(301); }), path: `${ADD}.target`, schemaCatches: true },
+  { name: "an act subject that is literal text", make: actAt("add", (x) => { x.subject = "Jalen"; }), path: `${ADD}.subject`, says: "not a reference", schemaCatches: true },
+  { name: "an act subject pointing at a locate step", make: actAt("add", (x) => { x.subject = "$free_agents"; }), path: `${ADD}.subject`, says: "needs", schemaCatches: false },
+  { name: "a note that refers to an act step", make: () => { const s = a(); s.steps[5].steps[1].id = "add_it"; s.steps[5].steps.push({ do: "note", fields: ["$add_it"] }); return s; }, path: "steps[5].steps[2].fields[0]", says: "is an act step", schemaCatches: false },
+  { name: "an infer that uses an act step", make: () => { const s = a(); s.steps[2].steps[1].uses = "$bench_player"; return s; }, path: "steps[2].steps[1].uses", says: "bench_player", schemaCatches: false },
+  { name: "an act id used twice", make: actAt("add", (x) => { x.id = "bench_player"; }), path: `${ADD}.id`, says: "used twice", schemaCatches: false },
+  { name: "nested five levels deep with an act at the bottom", make: () => { const s = nest(4); let step = s.steps[0]; for (let i = 0; i < 4; i += 1) step = step.steps[0]; return s; }, path: "steps[0].steps[0].steps[0].steps[0]", says: "cannot be nested this deeply", schemaCatches: true },
+  { name: "a request for auto offers", make: () => { const s = a(); s.actions.request.offer = { mode: "auto" }; return s; }, path: "actions.request.offer.mode", says: "always waits for you", schemaCatches: true },
+  { name: "a request for auto responses", make: () => { const s = a(); s.actions.request.respond = { mode: "auto", per_day: 1 }; return s; }, path: "actions.request.respond.mode", says: "always waits for you", schemaCatches: true },
+  { name: "a request for auto 'other'", make: () => { const s = a(); s.actions.request.other = { mode: "auto" }; return s; }, path: "actions.request.other.mode", schemaCatches: true },
+  { name: "a request for an unknown effect", make: () => { const s = a(); s.actions.request.purchase = { mode: "ask" }; return s; }, path: "actions.request.purchase", says: "unknown field", schemaCatches: true },
+  { name: "per_run above 50", make: () => { const s = a(); s.actions.request.add_item.per_run = 51; return s; }, path: "actions.request.add_item.per_run", schemaCatches: true },
+  { name: "per_day of zero", make: () => { const s = a(); s.actions.request.add_item.per_day = 0; return s; }, path: "actions.request.add_item.per_day", schemaCatches: true },
+  { name: "a fractional per_day", make: () => { const s = a(); s.actions.request.add_item.per_day = 1.5; return s; }, path: "actions.request.add_item.per_day", schemaCatches: true },
+  { name: "a request without a mode", make: () => { const s = a(); delete s.actions.request.add_item.mode; return s; }, path: "actions.request.add_item.mode", schemaCatches: true },
+  { name: "more than 50 protected names", make: () => { const s = a(); s.actions.protect = Array.from({ length: 51 }, (_, i) => `Name ${i}`); return s; }, path: "actions.protect", schemaCatches: true },
+  { name: "a protected name over 80 characters", make: () => { const s = a(); s.actions.protect = [longString(81)]; return s; }, path: "actions.protect[0]", schemaCatches: true },
+  { name: "a protected name listed twice", make: () => { const s = a(); s.actions.protect = ["Star Player", "star player"]; return s; }, path: "actions.protect[1]", says: "listed twice", schemaCatches: false },
+  { name: "an empty protected name", make: () => { const s = a(); s.actions.protect = ["  "]; return s; }, path: "actions.protect[0]", says: "non-empty", schemaCatches: false },
+  { name: "an unknown key in actions", make: () => { const s = a(); s.actions.auto_everything = true; return s; }, path: "actions.auto_everything", says: "unknown field", schemaCatches: true },
   // ── whole-document shape ──
   { name: "version 2", make: () => ({ ...c(), version: 2 }), path: "version", schemaCatches: true },
   { name: "a missing title", make: () => { const s = c(); delete s.title; return s; }, path: "title", schemaCatches: true },

@@ -1,5 +1,5 @@
 import type { RoutineSpec } from "../../../shared/src/index.js";
-import { CANONICAL_ROUTINE_TEMPLATE, fillRoutineTemplate } from "../../src/core/routines/example.js";
+import { CANONICAL_ROUTINE_TEMPLATE, fillRoutineTemplate, routineActionExample } from "../../src/core/routines/example.js";
 
 export const TOPIC = "accessibility law changes";
 export const PAGE_URL = "https://news.example.com/updates";
@@ -20,4 +20,9 @@ export const MINIMAL: RoutineSpec = {
 
 export function minimal(): RoutineSpec {
   return structuredClone(MINIMAL);
+}
+
+/** The roster-upkeep routine: act steps (select in a branch arm, click in a loop) and an `actions` block. */
+export function actionRoutine(): RoutineSpec {
+  return routineActionExample();
 }

@@ -84,7 +84,7 @@ const browserShell: BrowserShellBridge = {
   listRoutines: () => ipcRenderer.invoke(BrowserShellChannel.ListRoutines),
   getRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.GetRoutine, id),
   getRoutineEngineStatus: () => ipcRenderer.invoke(BrowserShellChannel.GetRoutineEngineStatus),
-  approveRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.ApproveRoutine, id),
+  approveRoutine: (id, grants) => ipcRenderer.invoke(BrowserShellChannel.ApproveRoutine, id, grants),
   rejectRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.RejectRoutine, id),
   pauseRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.PauseRoutine, id),
   resumeRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.ResumeRoutine, id),
@@ -98,6 +98,10 @@ const browserShell: BrowserShellBridge = {
   getRoutineMemory: (id) => ipcRenderer.invoke(BrowserShellChannel.GetRoutineMemory, id),
   clearRoutineMemory: (id) => ipcRenderer.invoke(BrowserShellChannel.ClearRoutineMemory, id),
   setRoutineKillSwitch: (on) => ipcRenderer.invoke(BrowserShellChannel.SetRoutineKillSwitch, on),
+  setRoutineGrants: (id, grants) => ipcRenderer.invoke(BrowserShellChannel.SetRoutineGrants, id, grants),
+  listRoutineActions: (id) => ipcRenderer.invoke(BrowserShellChannel.ListRoutineActions, id),
+  approveRoutineAction: (id, actionId) => ipcRenderer.invoke(BrowserShellChannel.ApproveRoutineAction, id, actionId),
+  declineRoutineAction: (id, actionId) => ipcRenderer.invoke(BrowserShellChannel.DeclineRoutineAction, id, actionId),
   getRoutineModel: () => ipcRenderer.invoke(BrowserShellChannel.GetRoutineModel),
   setRoutineModel: (choice) => ipcRenderer.invoke(BrowserShellChannel.SetRoutineModel, choice),
   // Connect an agent
@@ -159,6 +163,11 @@ const browserShell: BrowserShellBridge = {
       callback(reports, created);
     ipcRenderer.on(BrowserShellChannel.ReportsChanged, listener);
     return () => ipcRenderer.removeListener(BrowserShellChannel.ReportsChanged, listener);
+  },
+  onRoutineActionsChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, routineId: string) => callback(routineId);
+    ipcRenderer.on(BrowserShellChannel.RoutineActionsChanged, listener);
+    return () => ipcRenderer.removeListener(BrowserShellChannel.RoutineActionsChanged, listener);
   },
   onRoutineRunUpdated: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, run: RoutineRunSummary) => callback(run);

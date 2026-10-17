@@ -9,7 +9,10 @@
  * and records, per invalid case, whether the schema alone catches it.
  */
 import {
+  ROUTINE_ACT_ACTIONS,
   ROUTINE_APPROVAL_KINDS,
+  ROUTINE_AUTO_EFFECTS,
+  ROUTINE_EFFECTS,
   ROUTINE_INFER_MODELS,
   ROUTINE_LIMITS,
   ROUTINE_ON_LOW,
@@ -129,6 +132,39 @@ function stepLevel(level: number): Json {
       {
         allOf: [
           { if: { required: ["output"], properties: { output: { const: "label" } } }, then: { required: ["labels"] }, else: { not: { required: ["labels"] } } }
+        ]
+      }
+    ),
+    stepVariant(
+      "act",
+      {
+        action: { enum: [...ROUTINE_ACT_ACTIONS], description: "click, fill (type text) or select (choose an option)." },
+        effect: {
+          enum: [...ROUTINE_EFFECTS],
+          description:
+            "What it changes: rearrange (reorder your own items), add_item, remove_item, offer (propose something to another person), respond (answer someone's proposal) or other. The user decides what may run without asking; offer, respond and other always wait for the user."
+        },
+        target: text("The control to use, in plain language ('the Add button next to this player').", ROUTINE_LIMITS.actTargetChars),
+        strategies: strategies(),
+        min_confidence: unit("Below this confidence the control counts as not found."),
+        on_low: { enum: [...ROUTINE_ON_LOW], description: "What to do when the control is not found confidently. Actions are never retried." },
+        subject: ref("The thing this changes (for example a player): $item, an extract/infer step or a state value. Shown to the user and matched against actions.protect."),
+        value: text("fill/select only: literal text or a reference ($item, an extract/infer step, state.<value key>).", ROUTINE_LIMITS.actValueChars),
+        verify: {
+          type: "object",
+          additionalProperties: false,
+          minProperties: 1,
+          description: "What must be true on the page afterwards. At least one of present or absent. A failed check stops the run and pauses the routine.",
+          properties: {
+            present: { type: "array", minItems: 1, maxItems: ROUTINE_LIMITS.verifyEntries, items: text("Text that must appear (literal or a reference).", ROUTINE_LIMITS.verifyChars) },
+            absent: { type: "array", minItems: 1, maxItems: ROUTINE_LIMITS.verifyEntries, items: text("Text that must not appear (literal or a reference).", ROUTINE_LIMITS.verifyChars) }
+          }
+        }
+      },
+      ["action", "effect", "target", "strategies", "min_confidence", "on_low", "verify"],
+      {
+        allOf: [
+          { if: { required: ["action"], properties: { action: { const: "click" } } }, then: { not: { required: ["value"] } }, else: { required: ["value"] } }
         ]
       }
     ),
@@ -338,6 +374,40 @@ function buildSchema(): Json {
             additionalProperties: false,
             required: ["every"],
             properties: { every: pattern(EVERY_PATTERN, 'Such as "7d".'), when: pattern(WHEN_PATTERN, '"always" or "new_notes>N".') }
+          }
+        }
+      },
+      actions: {
+        type: "object",
+        additionalProperties: false,
+        description:
+          "Only for routines with act steps. What the routine ASKS the user to allow; the user decides the real grants when approving, and by default every action waits for them. Never lifts HelmStack's own approvals (purchases, personal data, accounts, terms, messages, downloads, uploads, deletes).",
+        properties: {
+          request: {
+            type: "object",
+            additionalProperties: false,
+            description: "Per effect. mode auto can only be requested for rearrange, add_item and remove_item; offer, respond and other always wait for the user.",
+            properties: Object.fromEntries(
+              ROUTINE_EFFECTS.map((effect) => [
+                effect,
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["mode"],
+                  properties: {
+                    mode: (ROUTINE_AUTO_EFFECTS as readonly string[]).includes(effect) ? { enum: ["ask", "auto"] } : { const: "ask" },
+                    per_day: int(1, ROUTINE_LIMITS.actionsPerWindowMax, "Most actions of this kind per calendar day."),
+                    per_run: int(1, ROUTINE_LIMITS.actionsPerWindowMax, "Most actions of this kind per run.")
+                  }
+                }
+              ])
+            )
+          },
+          protect: {
+            type: "array",
+            maxItems: ROUTINE_LIMITS.protectNames,
+            items: text("A name the routine must never remove or give away.", ROUTINE_LIMITS.protectChars),
+            description: "Matched case-insensitively against each act's subject; a match is blocked and never asked."
           }
         }
       },

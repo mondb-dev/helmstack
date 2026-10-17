@@ -7,7 +7,7 @@
 ## What gets registered
 
 <!-- generated:start mcp-counts -->
-The full toolset registers **86** tools by default and **96** when the agent-substrate surface is on. The lite toolset registers **14** verbs.
+The full toolset registers **87** tools by default and **97** when the agent-substrate surface is on. The lite toolset registers **14** verbs.
 <!-- generated:end -->
 
 | Setting | Effect |
@@ -59,7 +59,8 @@ First sentence of each tool's description, extracted from `packages/mcp-server/s
 | `browser_routine_schema` | Read the JSON Schema for a HelmStack routine, a complete worked example and the size limits. |
 | `browser_propose_routine` | Propose a routine: a reusable procedure you compile from what the user asked HelmStack to watch, monitor or repeat. |
 | `browser_list_routines` | List the routines on this machine (newest first): id, title, state (proposed, approved, paused, stopped or rejected), trigger, hosts and the plain-language preview. |
-| `browser_get_routine` | Read one routine by id: its state, the plain-language preview and the validated spec. |
+| `browser_get_routine` | Read one routine by id: its state, the plain-language preview, the validated spec, what the spec asked to be allowed (requestedGrants) and what the user actually allowed (grants; by default nothing, so every action asks). |
+| `browser_list_routine_actions` | List what a routine did on its site, was blocked from doing, or is waiting for the user to approve (newest first, at most 100): effect, one-sentence description, status (pending, approved, declined, expired, done, failed, blocked), why, and whether the user's grant or a tap allowed it. |
 | `browser_withdraw_routine` | Withdraw a routine you proposed while it is still waiting for the user (it becomes rejected). |
 | `browser_focus_order` | Audit keyboard tab order vs. the page's visual reading order: flags positive tabindex (which hijacks order) and points where focus jumps backwards (to an element above or left of the previous one). |
 | `browser_a11y_audit` | Run a comprehensive WCAG 2.2 accessibility audit against the live accessibility tree and DOM. |

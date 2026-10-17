@@ -118,3 +118,138 @@ export function routineExample(): RoutineSpec {
     pageUrl: "https://example.com/news"
   });
 }
+
+/**
+ * A routine that changes things on the user's own account: keep a roster in shape. It is written in
+ * generic terms (any site with a list of your items, a slot menu and an Add button). The `actions`
+ * block only ASKS for what it would like to do without asking; the user decides the real grants
+ * when approving, and offers, answers to offers and anything else always wait for a tap.
+ */
+export const ACTION_ROUTINE_TEMPLATE: RoutineSpec = {
+  version: 1,
+  title: "Daily roster upkeep",
+  intent:
+    "Every morning check my team on <team url>: bench anyone who is out today and pick up the best available replacement. Never drop <protected name>.",
+  scope: {
+    start: ["<team url>"],
+    follow: { allow_hosts: ["<team host>"], max_depth: 1 },
+    max_pages_per_run: 12
+  },
+  trigger: { kind: "interval", every: "1d", active_hours: "07:00-10:00" },
+  state: { notes: "log" },
+  steps: [
+    { do: "open", id: "team_page", url: "$scope.start[0]" },
+    {
+      do: "locate",
+      id: "players",
+      target: "the rows of my team, each with a player name, a status and a lineup slot",
+      strategies: ["structured_data", "repeating_blocks"],
+      min_confidence: 0.7,
+      on_low: "ask_human"
+    },
+    {
+      do: "for_each",
+      items: "$players",
+      limit: 20,
+      steps: [
+        {
+          do: "extract",
+          id: "player",
+          fields: { name: "text<=80", status: "text<=60?" },
+          strategies: ["structured_data", "repeating_blocks"],
+          from: "$item"
+        },
+        {
+          do: "infer",
+          id: "is_out",
+          question: "Is this player injured, suspended or otherwise not playing today?",
+          output: "bool",
+          accept_at: 0.85,
+          reject_below: 0.3,
+          on_uncertain: "ask_human",
+          evidence: "quote",
+          samples: 2,
+          uses: "$player"
+        },
+        {
+          do: "branch",
+          on: "is_out",
+          accept: [
+            {
+              do: "act",
+              id: "bench_player",
+              action: "select",
+              effect: "rearrange",
+              target: "the lineup slot menu in this player's row",
+              strategies: ["repeating_blocks", "infer"],
+              min_confidence: 0.8,
+              on_low: "ask_human",
+              subject: "$player",
+              value: "Bench",
+              verify: { present: ["Lineup saved"], absent: ["could not be saved"] }
+            },
+            { do: "note", tag: "benched", fields: ["$player", "$is_out"] }
+          ]
+        }
+      ]
+    },
+    { do: "open", id: "free_agents_page", url: "https://<team host>/free-agents" },
+    {
+      do: "locate",
+      id: "free_agents",
+      target: "the list of available free agents, best first",
+      strategies: ["structured_data", "repeating_blocks"],
+      min_confidence: 0.7,
+      on_low: "skip"
+    },
+    {
+      do: "for_each",
+      items: "$free_agents",
+      limit: 1,
+      steps: [
+        { do: "extract", id: "pick", fields: { name: "text<=80" }, strategies: ["structured_data", "repeating_blocks"], from: "$item" },
+        {
+          do: "act",
+          action: "click",
+          effect: "add_item",
+          target: "the Add button in this free agent's row",
+          strategies: ["repeating_blocks", "infer"],
+          min_confidence: 0.8,
+          on_low: "skip",
+          subject: "$pick",
+          verify: { present: ["added to your team"] }
+        }
+      ]
+    }
+  ],
+  stop: {
+    any: [{ after_days: 30 }],
+    budgets: { tokens_per_run: 100_000, pages_per_run: 12, runtime_minutes_per_run: 15 }
+  },
+  on_failure: { retries: 1, backoff: "exponential", pause_after: 2, notify: true },
+  output: { notes: "append" },
+  safety: { approval_for: ["submit", "personal_data", "purchase", "post"], rate: "1 request / 2s" },
+  actions: {
+    request: {
+      rearrange: { mode: "auto", per_day: 10, per_run: 5 },
+      add_item: { mode: "auto", per_day: 2, per_run: 1 }
+    },
+    protect: ["<protected name>"]
+  }
+};
+
+/** The action example served to models (`GET /api/routines/schema` as `actionExample`). */
+export function routineActionExample(): RoutineSpec {
+  const fill = (value: unknown): unknown => {
+    if (typeof value === "string") {
+      return value
+        .split("<team url>").join("https://league.example.com/my-team")
+        .split("<team host>").join("league.example.com")
+        .split("<protected name>").join("Star Player");
+    }
+    if (Array.isArray(value)) return value.map(fill);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v)]));
+    return value;
+  };
+  return fill(ACTION_ROUTINE_TEMPLATE) as RoutineSpec;
+}
