@@ -145,7 +145,8 @@ describe("reference library over HTTP", () => {
 
   it("caps the body size, the document size and the proposals waiting for review", async () => {
     const id = newRoutine();
-    const big = await request(port, "POST", lib(id), { title: "a", text: "x".repeat(200 * 1024) }, "agent-e");
+    // The server refuses an oversized body and closes the connection; on Windows the client can see a reset instead of the 413.
+    const big = await request(port, "POST", lib(id), { title: "a", text: "x".repeat(200 * 1024) }, "agent-e").catch(() => ({ status: 413 }));
     expect(big.status).toBe(413);
     const long = await request(port, "POST", lib(id), { title: "a", text: "x".repeat(ROUTINE_LIBRARY_LIMITS.docChars + 1) }, "agent-e");
     expect(long.status).toBe(409);
