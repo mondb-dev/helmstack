@@ -170,15 +170,15 @@ describe("HelmstackCore routines", () => {
     const models = readFileSync(path.join(dir, "inference-models.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     expect(models).not.toMatch(/--allowedTools|--allowed-tools|--dangerously|bypassPermissions|--yolo|tool_choice|tools:|functions:/);
     // The browser the executor may use can open a tab, load a URL, read a page and close the tab...
-    const executor = readFileSync(path.join(dir, "executor.ts"), "utf8");
+    const executor = readFileSync(path.join(dir, "executor.ts"), "utf8").replace(/\r\n/g, "\n");
     const iface = /export interface RoutineBrowser extends Partial<ActBrowser> \{([\s\S]*?)\n\}/.exec(executor)![1]!;
     expect([...iface.matchAll(/^\s{2}(\w+)\(/gm)].map((m) => m[1])).toEqual(["openTab", "navigate", "collect", "closeTab"]);
     // ...and, for an `act` step only, list controls, perform one named control through HelmStack's command pipeline,
     // and re-read the page. That is the whole of what acting can touch.
-    const act = readFileSync(path.join(dir, "act.ts"), "utf8");
+    const act = readFileSync(path.join(dir, "act.ts"), "utf8").replace(/\r\n/g, "\n");
     const actIface = /export interface ActBrowser \{([\s\S]*?)\n\}/.exec(act)![1]!;
     expect([...actIface.matchAll(/^\s{2}(\w+)\(/gm)].map((m) => m[1])).toEqual(["controls", "perform", "pageState"]);
-    const core = readFileSync(path.join(dir, "..", "helmstack-core.ts"), "utf8");
+    const core = readFileSync(path.join(dir, "..", "helmstack-core.ts"), "utf8").replace(/\r\n/g, "\n");
     const performer = /private async performRoutineAct[\s\S]*?\n {2}}\n/.exec(core)![0];
     expect(performer).toContain("this.executeCommand(tabId, command)");
     expect(performer).not.toMatch(/skipApproval|approveCommand|rejectCommand|policies|clickAt|insertText|evaluateExpression/);
