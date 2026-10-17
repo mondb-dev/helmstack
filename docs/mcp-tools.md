@@ -7,7 +7,7 @@
 ## What gets registered
 
 <!-- generated:start mcp-counts -->
-The full toolset registers **81** tools by default and **91** when the agent-substrate surface is on. The lite toolset registers **14** verbs.
+The full toolset registers **86** tools by default and **96** when the agent-substrate surface is on. The lite toolset registers **14** verbs.
 <!-- generated:end -->
 
 | Setting | Effect |
@@ -56,6 +56,11 @@ First sentence of each tool's description, extracted from `packages/mcp-server/s
 | `browser_health_report` | Aggregated page-health scorecard fusing Core Web Vitals, the WCAG audit, console/JS errors, failed network requests, layout overflow and SEO (metadata, indexability, structured data) into per-category scores plus an overall score and a pass/fail gate (suitable for CI). |
 | `browser_create_report` | Prepare a downloadable report of a page analysis: ONE self-contained HTML file (plus a Markdown copy) that the user can open, save and share. |
 | `browser_list_reports` | List the page analysis reports saved on this machine (newest first): id, title, page, when, finding counts by severity, which measurements were included or skipped, and file size. |
+| `browser_routine_schema` | Read the JSON Schema for a HelmStack routine, a complete worked example and the size limits. |
+| `browser_propose_routine` | Propose a routine: a reusable procedure you compile from what the user asked HelmStack to watch, monitor or repeat. |
+| `browser_list_routines` | List the routines on this machine (newest first): id, title, state (proposed, approved, paused, stopped or rejected), trigger, hosts and the plain-language preview. |
+| `browser_get_routine` | Read one routine by id: its state, the plain-language preview and the validated spec. |
+| `browser_withdraw_routine` | Withdraw a routine you proposed while it is still waiting for the user (it becomes rejected). |
 | `browser_focus_order` | Audit keyboard tab order vs. the page's visual reading order: flags positive tabindex (which hijacks order) and points where focus jumps backwards (to an element above or left of the previous one). |
 | `browser_a11y_audit` | Run a comprehensive WCAG 2.2 accessibility audit against the live accessibility tree and DOM. |
 | `browser_seo_audit` | Deterministic SEO audit of the loaded page. |

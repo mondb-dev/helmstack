@@ -1,5 +1,6 @@
 import http from "node:http";
 
+import { ROUTINE_LIMITS } from "../../../shared/src/index.js";
 import type {
   AccountUpdate,
   AgentActivityEntry,
@@ -22,7 +23,11 @@ import type {
 } from "../../../shared/src/index.js";
 import type { AccountsApi, AgentApi, BackendKind, ExtensionsApi, OptionalCapability } from "../api.js";
 import { ReportInputError, parseCreateReportInput } from "../core/reports/report-input.js";
+import { RoutineSpecInvalidError } from "../core/routines/errors.js";
+import { routineExample } from "../core/routines/example.js";
+import { ROUTINE_SPEC_JSON_SCHEMA } from "../core/routines/schema.js";
 import { isValidReportId } from "../core/stores/report-store.js";
+import { RoutineError, isValidRoutineId } from "../core/stores/routine-store.js";
 import { resolveProfile } from "../core/runtime-config.js";
 import {
   ActivityLog,
@@ -267,11 +272,16 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * POST /api/tabs/:id/report             CreateReportInput (body limit 256 KB) → CreateReportResult (the agent's findings + HelmStack's measurements; 400 on limits)
  * GET  /api/reports                     → ReportSummary[] (newest first)
  * GET  /api/reports/:id                 ?format=html|md → the report file (attachment, nosniff). There is no agent route to delete a report.
+ * GET  /api/routines/schema             → { schema, example, limits } (JSON Schema of a routine spec, a worked example, size limits)
+ * POST /api/routines                    { spec, replaces? } (body limit 128 KB) → 201 { routine, preview, warnings, stepCount, message }; 400 { error, errors: [{ path, message }] }
+ * GET  /api/routines                    → RoutineSummary[] (newest first)
+ * GET  /api/routines/:id                → RoutineDetail (summary, plain-language preview and the validated spec)
+ * POST /api/routines/:id/withdraw       → RoutineSummary (only the agent that proposed it, only while it is still proposed). Approving, rejecting, pausing, stopping and deleting a routine are human actions in the HelmStack window and have no route.
  *
  * SSE stream
  * ----------
  * GET  /api/stream
- * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked | report_created
+ * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked | report_created | routine_proposed | routine_state_changed
  *
  * `approval_resolved` carries an `ApprovalResolution` `{ requestId, tabId, outcome,
  * reason?, status?, url?, origin?, resolvedAt }`; `outcome` is approved | rejected |
@@ -282,6 +292,8 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * backend without the `pick` capability (the daemon) simply has none.
  *
  * `report_created` carries the `ReportSummary` of a report just written.
+ *
+ * `routine_proposed` and `routine_state_changed` carry the `RoutineSummary` only (never the spec).
  */
 export class AgentServer {
   private readonly server: http.Server;
@@ -354,6 +366,7 @@ export class AgentServer {
     tabs.onReportsChanged?.((_reports, created) => {
       if (created) this.broadcastTabEvent("report_created", created, created.tabId);
     });
+    tabs.onRoutineEvent?.((e) => this.broadcast(e.type === "proposed" ? "routine_proposed" : "routine_state_changed", e.routine));
   }
 
   /** A shell "Select for agent" pick: tell listening agents and note it in the feed. */
@@ -1556,6 +1569,77 @@ export class AgentServer {
       return;
     }
 
+    // ── Routines (agents propose; only the human approves, in the shell) ────────
+    if (method === "GET" && p === "/api/routines/schema") {
+      if (!this.tabs.proposeRoutine) return unsupported(res, "routines", this.backend);
+      return json(res, { schema: ROUTINE_SPEC_JSON_SCHEMA, example: routineExample(), limits: ROUTINE_LIMITS });
+    }
+
+    if (method === "POST" && p === "/api/routines") {
+      if (!this.tabs.proposeRoutine) return unsupported(res, "routines", this.backend);
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req, ROUTINE_BODY_LIMIT_BYTES);
+      } catch (err) {
+        if (err instanceof BodyTooLargeError) return tooLarge(req, res, ROUTINE_BODY_LIMIT_BYTES);
+        return error(res, 400, "Invalid JSON body");
+      }
+      for (const key of Object.keys(body)) {
+        if (key !== "spec" && key !== "replaces") return error(res, 400, `unknown field "${key}"; send { spec, replaces? }`);
+      }
+      if (typeof body.spec !== "object" || body.spec === null || Array.isArray(body.spec)) return error(res, 400, "spec must be an object");
+      if (body.replaces !== undefined && typeof body.replaces !== "string") return error(res, 400, "replaces must be a routine id string");
+      try {
+        const agentId = this.agentIdOf(req);
+        const result = this.tabs.proposeRoutine(body.spec, {
+          ...(agentId ? { agentId } : {}),
+          ...(body.replaces !== undefined ? { replaces: body.replaces } : {})
+        });
+        return json(
+          res,
+          {
+            routine: result.routine,
+            preview: result.routine.preview,
+            warnings: result.warnings,
+            stepCount: result.stepCount,
+            message: "Proposed. Nothing runs yet: the user must review and approve this routine in the HelmStack window."
+          },
+          201
+        );
+      } catch (err) {
+        return routineFailure(res, err);
+      }
+    }
+
+    if (method === "GET" && p === "/api/routines") {
+      if (!this.tabs.listRoutines) return unsupported(res, "routines", this.backend);
+      return json(res, this.tabs.listRoutines());
+    }
+
+    const routineMatch = p.match(/^\/api\/routines\/([^/]+)$/);
+    if (method === "GET" && routineMatch) {
+      if (!this.tabs.getRoutine) return unsupported(res, "routines", this.backend);
+      let id = routineMatch[1]!;
+      try { id = decodeURIComponent(id); } catch { /* validated below */ }
+      if (!isValidRoutineId(id)) return error(res, 400, "invalid routine id");
+      const detail = this.tabs.getRoutine(id);
+      if (!detail) return error(res, 404, "Routine not found");
+      return json(res, detail);
+    }
+
+    const routineWithdrawMatch = p.match(/^\/api\/routines\/([^/]+)\/withdraw$/);
+    if (method === "POST" && routineWithdrawMatch) {
+      if (!this.tabs.withdrawRoutine) return unsupported(res, "routines", this.backend);
+      let id = routineWithdrawMatch[1]!;
+      try { id = decodeURIComponent(id); } catch { /* validated below */ }
+      if (!isValidRoutineId(id)) return error(res, 400, "invalid routine id");
+      try {
+        return json(res, this.tabs.withdrawRoutine(id, this.agentIdOf(req) ?? undefined));
+      } catch (err) {
+        return routineFailure(res, err);
+      }
+    }
+
     // ── 404 ──────────────────────────────────────────────────────────────────
     return error(res, 404, "Not found");
   }
@@ -1659,9 +1743,9 @@ function safePathname(raw: string | undefined): string {
   }
 }
 
-function json(res: http.ServerResponse, data: unknown) {
+function json(res: http.ServerResponse, data: unknown, status = 200) {
   responseData.set(res, data);
-  res.writeHead(200, { "Content-Type": "application/json" });
+  res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
 }
 
@@ -1671,7 +1755,7 @@ function error(res: http.ServerResponse, code: number, message: string) {
 }
 
 /** 501 for a route whose optional API slice this backend does not provide. */
-function unsupported(res: http.ServerResponse, feature: OptionalCapability | "reports", backend: BackendKind) {
+function unsupported(res: http.ServerResponse, feature: OptionalCapability | "reports" | "routines", backend: BackendKind) {
   res.writeHead(501, { "Content-Type": "application/json" });
   res.end(JSON.stringify({
     error: `${feature} is not supported on the ${backend} backend`,
@@ -1679,6 +1763,32 @@ function unsupported(res: http.ServerResponse, feature: OptionalCapability | "re
     feature,
     backend
   }));
+}
+
+/** Largest `POST /api/routines` body accepted. */
+export const ROUTINE_BODY_LIMIT_BYTES = ROUTINE_LIMITS.requestBytes;
+
+const ROUTINE_ERROR_STATUS: Record<RoutineError["code"], number> = {
+  invalid_id: 400,
+  not_found: 404,
+  forbidden: 403,
+  bad_state: 409,
+  limit: 409
+};
+
+/** Map a routine failure to its response; anything else is rethrown to the generic 500. */
+function routineFailure(res: http.ServerResponse, err: unknown) {
+  if (err instanceof RoutineSpecInvalidError) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: err.message, code: err.code, errors: err.errors }));
+    return;
+  }
+  if (err instanceof RoutineError) {
+    res.writeHead(ROUTINE_ERROR_STATUS[err.code], { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: err.message, code: err.code }));
+    return;
+  }
+  throw err;
 }
 
 /** Largest `POST /api/tabs/:id/report` body accepted. */

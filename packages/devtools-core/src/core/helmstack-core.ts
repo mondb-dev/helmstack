@@ -62,6 +62,10 @@ import type {
   ReportEvidenceKind,
   ReportFormat,
   ReportSummary,
+  ProposeRoutineResult,
+  RoutineDetail,
+  RoutineEngineStatus,
+  RoutineSummary,
   ResourceBudget,
   ScreenshotDiff,
   ScreenshotOptions,
@@ -91,6 +95,9 @@ import { computePerceptionDiff } from "./perception/diff.js";
 import { buildHealthReport } from "./reports/health-report.js";
 import { buildReport, type ReportEvidence } from "./reports/page-report.js";
 import { ReportInputError, parseCreateReportInput } from "./reports/report-input.js";
+import { RoutineSpecInvalidError } from "./routines/errors.js";
+import { buildPreview, countSteps, diffPreviews, triggerText } from "./routines/preview.js";
+import { validateRoutineSpec } from "./routines/validate.js";
 import { ApprovalPolicyStore } from "./stores/approval-policy-store.js";
 import { ApprovalStore, DEFAULT_APPROVAL_TTL_MS, PAGE_CHANGED_REASON, isSameApprovalPage } from "./stores/approval-store.js";
 import { AssertionWatchStore } from "./stores/assertion-watch.js";
@@ -98,6 +105,7 @@ import { PerceptionBaselineStore, type PerceptionBaselineEntry } from "./stores/
 import { HandoffStore } from "./stores/handoff-store.js";
 import { HumanPickStore } from "./stores/human-pick-store.js";
 import { ReportStore, newReportId, type ReportStoreOptions } from "./stores/report-store.js";
+import { RoutineError, RoutineStore, isValidRoutineId, type RoutineStoreEvent, type RoutineStoreOptions } from "./stores/routine-store.js";
 import { SitePatternStore } from "./stores/site-pattern-store.js";
 import { VisualDiffStore } from "./stores/visual-diff-store.js";
 import { TabSession } from "./tab-session.js";
@@ -127,6 +135,8 @@ export type HelmstackCoreOptions = {
   reportStore?: Pick<ReportStoreOptions, "maxReports" | "maxBytes" | "log">;
   /** Per-collector time limit while creating a report (ms). Default 20 000. */
   reportCollectorTimeoutMs?: number;
+  /** Routine store options (default cap 50 routines). */
+  routineStore?: Pick<RoutineStoreOptions, "maxRoutines" | "log" | "now" | "random">;
 };
 
 /** Default time limit for one report collector. */
@@ -166,6 +176,9 @@ export class HelmstackCore implements AgentApi {
   private readonly helmstackVersion: string;
   private readonly reportCollectorTimeoutMs: number;
   private readonly reportsChangedListeners = new Set<(reports: ReportSummary[], created?: ReportSummary) => void>();
+  private readonly routines: RoutineStore;
+  private readonly routinesChangedListeners = new Set<(routines: RoutineSummary[], proposed?: RoutineSummary) => void>();
+  private readonly routineEventListeners = new Set<(event: { type: "proposed" | "changed"; routine: RoutineSummary }) => void>();
 
   private readonly tabsListeners = new Set<(tabs: TabSummary[]) => void>();
   private readonly observationListeners = new Set<(observation: PageObservation) => void>();
@@ -184,6 +197,8 @@ export class HelmstackCore implements AgentApi {
     this.helmstackVersion = options.helmstackVersion ?? "unknown";
     this.reportCollectorTimeoutMs = options.reportCollectorTimeoutMs ?? REPORT_COLLECTOR_TIMEOUT_MS;
     this.reports = new ReportStore(options.dataDir, options.reportStore);
+    this.routines = new RoutineStore(options.dataDir, options.routineStore);
+    this.unsubscribers.push(this.routines.onEvent((event) => this.handleRoutineEvent(event)));
 
     this.approvals = new ApprovalStore({ ttlMs: resolveApprovalTtl(options.approvalTtlMs) });
     this.policies = new ApprovalPolicyStore(options.dataDir);
@@ -1224,6 +1239,114 @@ export class HelmstackCore implements AgentApi {
     const list = this.reports.list();
     for (const listener of this.reportsChangedListeners) {
       try { listener(list, created); } catch { /* a listener must not break report creation */ }
+    }
+  }
+
+  // ── Routines ──────────────────────────────────────────────────────────────
+  // Phase 1: routines are proposed by agents, reviewed and approved by the human.
+  // Nothing here runs a routine. The state-changing methods below are human-only:
+  // the shell calls them over IPC and there is no HTTP route for any of them.
+
+  /**
+   * Validate a spec and store it as `proposed`. Throws `RoutineSpecInvalidError` (with the
+   * error list) for a bad spec and `RoutineError` for a full store or an unknown `replaces`.
+   */
+  proposeRoutine(rawSpec: unknown, ctx: { agentId?: string; replaces?: string } = {}): ProposeRoutineResult {
+    const checked = validateRoutineSpec(rawSpec);
+    if (!checked.ok) throw new RoutineSpecInvalidError(checked.errors);
+    const spec = checked.spec;
+    let previous: RoutineSummary | undefined;
+    if (ctx.replaces !== undefined) {
+      if (!isValidRoutineId(ctx.replaces)) throw new RoutineError("replaces is not a valid routine id", "invalid_id");
+      previous = this.routines.get(ctx.replaces);
+      if (!previous) throw new RoutineError(`replaces: no routine ${ctx.replaces}`, "not_found");
+    }
+    const plain = buildPreview(spec);
+    const preview = previous ? buildPreview(spec, { changes: diffPreviews(previous.preview, plain) }) : plain;
+    const routine = this.routines.propose({
+      spec,
+      preview,
+      trigger: triggerText(spec.trigger),
+      ...(ctx.agentId ? { proposedBy: ctx.agentId } : {}),
+      ...(previous ? { replaces: previous.id } : {})
+    });
+    return { routine, warnings: preview.risks.filter((r) => r.level !== "info").map((r) => r.message), stepCount: countSteps(spec) };
+  }
+
+  /** Newest first. */
+  listRoutines(): RoutineSummary[] {
+    return this.routines.list();
+  }
+
+  /** The routine with its validated spec, or null for an unknown or malformed id. */
+  getRoutine(id: string): RoutineDetail | null {
+    return this.routines.detail(id) ?? null;
+  }
+
+  /** Agent route: withdraw the caller's own still-proposed routine (proposed -> rejected). */
+  withdrawRoutine(id: string, agentId?: string): RoutineSummary {
+    const found = this.routines.get(id);
+    if (!found) throw new RoutineError("That routine no longer exists.", "not_found");
+    if (found.proposedBy !== (agentId || undefined)) {
+      throw new RoutineError("That routine was proposed by a different agent; only its proposer can withdraw it.", "forbidden");
+    }
+    return this.routines.transition(id, "withdraw");
+  }
+
+  /** Human-only. proposed -> approved (the routine it replaces, if any, is stopped). */
+  approveRoutine(id: string): RoutineSummary {
+    return this.routines.transition(id, "approve");
+  }
+
+  /** Human-only. proposed -> rejected. */
+  rejectRoutine(id: string): RoutineSummary {
+    return this.routines.transition(id, "reject");
+  }
+
+  /** Human-only. approved -> paused. */
+  pauseRoutine(id: string): RoutineSummary {
+    return this.routines.transition(id, "pause");
+  }
+
+  /** Human-only. paused -> approved. */
+  resumeRoutine(id: string): RoutineSummary {
+    return this.routines.transition(id, "resume");
+  }
+
+  /** Human-only. approved | paused -> stopped. */
+  stopRoutine(id: string): RoutineSummary {
+    return this.routines.transition(id, "stop");
+  }
+
+  /** Human-only. Removes a routine of any state; returns whether it existed. */
+  deleteRoutine(id: string): boolean {
+    return this.routines.delete(id);
+  }
+
+  getRoutineEngineStatus(): RoutineEngineStatus {
+    return { enabled: false, reason: "Routines can be reviewed and approved, but running them isn't available yet." };
+  }
+
+  /** Full list on every propose / state change / delete; `proposed` names a new proposal. Returns an unsubscribe function. */
+  onRoutinesChanged(listener: (routines: RoutineSummary[], proposed?: RoutineSummary) => void): () => void {
+    this.routinesChangedListeners.add(listener);
+    return () => this.routinesChangedListeners.delete(listener);
+  }
+
+  /** Proposals and state changes with the affected summary (for the agent event stream). */
+  onRoutineEvent(listener: (event: { type: "proposed" | "changed"; routine: RoutineSummary }) => void): () => void {
+    this.routineEventListeners.add(listener);
+    return () => this.routineEventListeners.delete(listener);
+  }
+
+  private handleRoutineEvent(event: RoutineStoreEvent): void {
+    const list = this.routines.list();
+    for (const listener of this.routinesChangedListeners) {
+      try { listener(list, event.type === "proposed" ? event.routine : undefined); } catch { /* a listener must not break routine handling */ }
+    }
+    if (event.type === "deleted") return;
+    for (const listener of this.routineEventListeners) {
+      try { listener({ type: event.type, routine: event.routine }); } catch { /* ditto */ }
     }
   }
 

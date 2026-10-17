@@ -121,6 +121,16 @@ export type {
   ReportFormat,
   ReportSeverity,
   ReportSummary,
+  ProposeRoutineResult,
+  RoutineDetail,
+  RoutineEngineStatus,
+  RoutinePreview,
+  RoutineRisk,
+  RoutineSpec,
+  RoutineSpecError,
+  RoutineState,
+  RoutineStep,
+  RoutineSummary,
   TabId,
   TabLogSnapshot,
   TabSummary,
@@ -140,7 +150,8 @@ export type {
   VIEWPORT_PRESETS,
   REPORT_EVIDENCE_KINDS,
   REPORT_LIMITS,
-  REPORT_OFFER_HINT
+  REPORT_OFFER_HINT,
+  ROUTINE_LIMITS
 } from "../../shared/src/index.js";
 
 import type {
@@ -192,6 +203,8 @@ import type {
   ReportSummary,
   CreateReportInput,
   CreateReportResult,
+  RoutineDetail,
+  RoutineSummary,
   ResourceBudget,
   ScreenshotDiff,
   SiteCapabilityManifest,
@@ -252,6 +265,10 @@ export type StreamHandlers = {
   onElementPicked?: (pick: HumanElementPick) => void;
   /** A report finished writing (from any agent that can see the tab). */
   onReportCreated?: (report: ReportSummary) => void;
+  /** An agent proposed a routine (summary only). It still needs the user's approval. */
+  onRoutineProposed?: (routine: RoutineSummary) => void;
+  /** A routine was approved, rejected, withdrawn, paused, resumed or stopped. */
+  onRoutineStateChanged?: (routine: RoutineSummary) => void;
   onError?: (err: Error) => void;
 };
 
@@ -960,6 +977,40 @@ export class BrowserClient {
     return this.request("GET", `/api/reports/${encodeURIComponent(id)}?format=${format}`, undefined, true);
   }
 
+  // ── Routines ──────────────────────────────────────────────────────────────
+
+  /** The routine spec's JSON Schema, a worked example and the size limits. Read this before compiling a routine. */
+  async getRoutineSchema(): Promise<{ schema: Record<string, unknown>; example: Record<string, unknown>; limits: Record<string, number> }> {
+    return this.get("/api/routines/schema");
+  }
+
+  /**
+   * Propose a routine compiled from the user's request. Nothing runs: the user reviews the
+   * returned preview and approves it in the HelmStack window. An invalid spec rejects with a
+   * `HelmstackHttpError` (400) whose body lists `{ path, message }` errors. `replaces` names an
+   * earlier routine this one edits.
+   */
+  async proposeRoutine(
+    spec: Record<string, unknown>,
+    options: { replaces?: string } = {}
+  ): Promise<{ routine: RoutineSummary; preview: RoutineSummary["preview"]; warnings: string[]; stepCount: number; message: string }> {
+    return this.post("/api/routines", { spec, ...(options.replaces ? { replaces: options.replaces } : {}) });
+  }
+
+  /** Routines on this machine, newest first. */
+  async listRoutines(): Promise<RoutineSummary[]> {
+    return this.get("/api/routines");
+  }
+
+  async getRoutine(id: string): Promise<RoutineDetail> {
+    return this.get(`/api/routines/${encodeURIComponent(id)}`);
+  }
+
+  /** Withdraw your own proposal while it is still waiting for the user. There is no agent route to approve, stop or delete. */
+  async withdrawRoutine(id: string): Promise<RoutineSummary> {
+    return this.post(`/api/routines/${encodeURIComponent(id)}/withdraw`, {});
+  }
+
   /**
    * Map rendered DOM nodes back to their authoring component + source `file:line`
    * (React `_debugSource`, Svelte `__svelte_meta`, Vue `__file`). Requires a dev
@@ -1378,6 +1429,12 @@ function dispatch(eventType: string, data: unknown, handlers: StreamHandlers) {
       break;
     case "report_created":
       handlers.onReportCreated?.(data as ReportSummary);
+      break;
+    case "routine_proposed":
+      handlers.onRoutineProposed?.(data as RoutineSummary);
+      break;
+    case "routine_state_changed":
+      handlers.onRoutineStateChanged?.(data as RoutineSummary);
       break;
   }
 }

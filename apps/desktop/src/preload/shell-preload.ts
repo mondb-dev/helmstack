@@ -12,6 +12,7 @@ import {
   type HumanHandoffRecord,
   type PendingApproval,
   type ReportSummary,
+  type RoutineSummary,
   type TabId,
   type TabOverrideKind,
   type TabOverrides,
@@ -78,6 +79,16 @@ const browserShell: BrowserShellBridge = {
   openReport: (id) => ipcRenderer.invoke(BrowserShellChannel.OpenReport, id),
   revealReport: (id) => ipcRenderer.invoke(BrowserShellChannel.RevealReport, id),
   deleteReport: (id) => ipcRenderer.invoke(BrowserShellChannel.DeleteReport, id),
+  // Routines
+  listRoutines: () => ipcRenderer.invoke(BrowserShellChannel.ListRoutines),
+  getRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.GetRoutine, id),
+  getRoutineEngineStatus: () => ipcRenderer.invoke(BrowserShellChannel.GetRoutineEngineStatus),
+  approveRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.ApproveRoutine, id),
+  rejectRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.RejectRoutine, id),
+  pauseRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.PauseRoutine, id),
+  resumeRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.ResumeRoutine, id),
+  stopRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.StopRoutine, id),
+  deleteRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.DeleteRoutine, id),
   // Connect an agent
   getMcpInstallOverview: () => ipcRenderer.invoke(BrowserShellChannel.GetMcpInstallOverview),
   runMcpInstall: (request) => ipcRenderer.invoke(BrowserShellChannel.RunMcpInstall, request),
@@ -137,6 +148,12 @@ const browserShell: BrowserShellBridge = {
       callback(reports, created);
     ipcRenderer.on(BrowserShellChannel.ReportsChanged, listener);
     return () => ipcRenderer.removeListener(BrowserShellChannel.ReportsChanged, listener);
+  },
+  onRoutinesChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, routines: RoutineSummary[], proposed?: RoutineSummary) =>
+      callback(routines, proposed);
+    ipcRenderer.on(BrowserShellChannel.RoutinesChanged, listener);
+    return () => ipcRenderer.removeListener(BrowserShellChannel.RoutinesChanged, listener);
   }
 };
 

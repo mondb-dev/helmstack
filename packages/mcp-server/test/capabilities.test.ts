@@ -123,6 +123,46 @@ describe("MCP tool gating", () => {
     expect(create).toMatch(/Returns:/);
   });
 
+  it("routine tools are part of the default FE-dev surface, not substrate, not lite", async () => {
+    const names = ["browser_routine_schema", "browser_propose_routine", "browser_list_routines", "browser_get_routine", "browser_withdraw_routine"];
+    for (const name of names) {
+      expect(AGENT_SUBSTRATE_TOOLS).not.toContain(name);
+      expect(await registeredTools(undefined)).toContain(name);
+      expect(LITE_TOOLS).not.toContain(name);
+    }
+    const lite = await registeredToolsWith({ HELMSTACK_TOOLSET: "lite" });
+    for (const name of names) expect(lite).not.toContain(name);
+  });
+
+  it("there is no tool that approves, runs, stops or deletes a routine", async () => {
+    const all = await registeredTools("1");
+    const routineTools = all.filter((n) => /routine/.test(n)).sort();
+    expect(routineTools).toEqual(["browser_get_routine", "browser_list_routines", "browser_propose_routine", "browser_routine_schema", "browser_withdraw_routine"]);
+  });
+
+  it("browser_propose_routine is a translation guide for the model", async () => {
+    vi.resetModules();
+    const mod = await import("../src/index.js");
+    const tools = (mod.server as unknown as { _registeredTools: Record<string, { description?: string }> })._registeredTools;
+    const d = tools.browser_propose_routine!.description!;
+    expect(d).toMatch(/Nothing runs when you call this/);
+    expect(d).toMatch(/When to use it: the user asks you to watch, monitor/);
+    expect(d).toMatch(/call browser_routine_schema/);
+    expect(d).toMatch(/intent: the user's own words, verbatim/);
+    expect(d).toMatch(/narrow/);
+    expect(d).toMatch(/allow_hosts/);
+    expect(d).toMatch(/accept_at and reject_below/);
+    expect(d).toMatch(/on_uncertain "note_as_maybe"/);
+    expect(d).toMatch(/Always set stop conditions/);
+    expect(d).toMatch(/budgets/);
+    expect(d).toMatch(/Never try to use credentials/);
+    expect(d).toMatch(/needs their approval in the HelmStack window|needs the user's approval|approve it in the HelmStack window/);
+    expect(d).toMatch(/not run yet in this version/);
+    expect(d).toMatch(/Returns:/);
+    expect(tools.browser_routine_schema!.description).toMatch(/Call this before browser_propose_routine/);
+    expect(tools.browser_withdraw_routine!.description).toMatch(/only withdraw your own/);
+  });
+
   it("HELMSTACK_PROFILE=fe-dev keeps them off", async () => {
     const tools = await registeredToolsWith({ HELMSTACK_PROFILE: "fe-dev" });
     for (const name of AGENT_SUBSTRATE_TOOLS) expect(tools).not.toContain(name);

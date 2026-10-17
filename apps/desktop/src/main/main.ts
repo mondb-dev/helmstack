@@ -25,6 +25,7 @@ import { ElectronBackend } from "./tab-manager.js";
 import { ZoomStore } from "./zoom-store.js";
 import { McpInstallService, createMcpInstallIpc } from "./mcp-install-service.js";
 import { createReportIpc } from "./report-ipc.js";
+import { createRoutineIpc } from "./routine-ipc.js";
 import { parseFindOptions, parseFindText, parseReloadMode, parseZoomAction } from "./ipc-validate.js";
 import { installAppMenu } from "./app-menu.js";
 import { createShortcutRunner, routeKeyInput, type ShortcutHost } from "./shortcut-controller.js";
@@ -324,6 +325,11 @@ function registerIpcHandlers(
     defaultDirectory: () => app.getPath("downloads"),
     joinPath: (dir, name) => path.join(dir, name)
   });
+  // Routines: shell window only; the renderer sends an id, never spec content.
+  const routineIpc = createRoutineIpc({
+    core: manager,
+    isShellSender: (sender) => Boolean(mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents)
+  });
   const handlers: BrowserShellApi = {
     openTab: async (url?: string) => manager.createTab(url),
     navigate: async (tabId: TabId, url: string) => manager.navigate(tabId, url),
@@ -413,6 +419,16 @@ function registerIpcHandlers(
     openReport: async (id) => reportIpc.open(mainWindow?.webContents, id),
     revealReport: async (id) => reportIpc.reveal(mainWindow?.webContents, id),
     deleteReport: async (id) => reportIpc.delete(mainWindow?.webContents, id),
+    // Routines (the IPC layer re-checks the sender; here the sender is the shell itself)
+    listRoutines: async () => routineIpc.list(mainWindow?.webContents),
+    getRoutine: async (id) => routineIpc.get(mainWindow?.webContents, id),
+    getRoutineEngineStatus: async () => routineIpc.engineStatus(mainWindow?.webContents),
+    approveRoutine: async (id) => routineIpc.approve(mainWindow?.webContents, id),
+    rejectRoutine: async (id) => routineIpc.reject(mainWindow?.webContents, id),
+    pauseRoutine: async (id) => routineIpc.pause(mainWindow?.webContents, id),
+    resumeRoutine: async (id) => routineIpc.resume(mainWindow?.webContents, id),
+    stopRoutine: async (id) => routineIpc.stop(mainWindow?.webContents, id),
+    deleteRoutine: async (id) => routineIpc.delete(mainWindow?.webContents, id),
     // Connect an agent (MCP client install); see mcp-install-service.ts
     getMcpInstallOverview: async () => mcpInstall.overview(),
     runMcpInstall: async (request) => mcpInstall.handle(request)
@@ -567,6 +583,18 @@ function registerIpcHandlers(
   ipcMain.handle(BrowserShellChannel.DeleteReport, (event, id: unknown) => reportIpc.delete(event.sender, id));
   manager.onReportsChanged((reports, created) => {
     sendToShell(BrowserShellChannel.ReportsChanged, reports, created);
+  });
+  ipcMain.handle(BrowserShellChannel.ListRoutines, (event) => routineIpc.list(event.sender));
+  ipcMain.handle(BrowserShellChannel.GetRoutine, (event, id: unknown) => routineIpc.get(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.GetRoutineEngineStatus, (event) => routineIpc.engineStatus(event.sender));
+  ipcMain.handle(BrowserShellChannel.ApproveRoutine, (event, id: unknown) => routineIpc.approve(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.RejectRoutine, (event, id: unknown) => routineIpc.reject(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.PauseRoutine, (event, id: unknown) => routineIpc.pause(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.ResumeRoutine, (event, id: unknown) => routineIpc.resume(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.StopRoutine, (event, id: unknown) => routineIpc.stop(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.DeleteRoutine, (event, id: unknown) => routineIpc.delete(event.sender, id));
+  manager.onRoutinesChanged((routines, proposed) => {
+    sendToShell(BrowserShellChannel.RoutinesChanged, routines, proposed);
   });
   ipcMain.handle(BrowserShellChannel.GetConnectionStatus, () => handlers.getConnectionStatus());
   // Connect an agent: shell window only; the service validates the request

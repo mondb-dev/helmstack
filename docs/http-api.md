@@ -135,6 +135,11 @@ Generated from the route comment block in `packages/devtools-core/src/http/agent
 | POST | `/api/tabs/:id/report` | CreateReportInput (body limit 256 KB) → CreateReportResult (the agent's findings + HelmStack's measurements; 400 on limits) |
 | GET | `/api/reports` | → ReportSummary[] (newest first) |
 | GET | `/api/reports/:id` | ?format=html\|md → the report file (attachment, nosniff). There is no agent route to delete a report. |
+| GET | `/api/routines/schema` | → { schema, example, limits } (JSON Schema of a routine spec, a worked example, size limits) |
+| POST | `/api/routines` | { spec, replaces? } (body limit 128 KB) → 201 { routine, preview, warnings, stepCount, message }; 400 { error, errors: [{ path, message }] } |
+| GET | `/api/routines` | → RoutineSummary[] (newest first) |
+| GET | `/api/routines/:id` | → RoutineDetail (summary, plain-language preview and the validated spec) |
+| POST | `/api/routines/:id/withdraw` | → RoutineSummary (only the agent that proposed it, only while it is still proposed). Approving, rejecting, pausing, stopping and deleting a routine are human actions in the HelmStack window and have no route. |
 <!-- generated:end -->
 
 ### Route coverage
@@ -161,6 +166,8 @@ _None._
 - `assertion_changed`
 - `element_picked`
 - `report_created`
+- `routine_proposed`
+- `routine_state_changed`
 <!-- generated:end -->
 
 `approval_resolved` carries `{ requestId, tabId, outcome, reason?, status?, url?, origin?, resolvedAt }` where `outcome` is `approved`, `rejected`, `cancelled` (the tab navigated or closed first) or `expired`. `element_picked` carries `{ tabId, pickedAt, pick }`.

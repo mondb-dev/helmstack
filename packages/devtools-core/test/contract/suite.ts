@@ -377,6 +377,25 @@ export function defineContractSuite(factory: BackendFactory): void {
       SLOW
     );
 
+    // Routines are stored in the instance's data directory; an external (human's) instance keeps its own.
+    it.skipIf(factory.name.startsWith("external"))("routines: an agent can propose and withdraw, and nothing else changes a routine", async () => {
+      const schema = await ok("GET", "/api/routines/schema");
+      expect(schema).toMatchObject({ schema: { $schema: isString }, example: { version: 1 }, limits: { maxSteps: 60 } });
+      const bad = await call("POST", "/api/routines", { spec: { version: 1 } });
+      expect(bad.status).toBe(400);
+      const created = await call("POST", "/api/routines", { spec: schema.example });
+      expect(created.status).toBe(201);
+      const routine = JSON.parse(created.bytes.toString("utf8")).routine as Json;
+      expect(routine).toMatchObject({ id: isString, state: "proposed", specVersion: 1 });
+      expect(((await ok("GET", "/api/routines")) as Json[]).map((r) => r.id)).toContain(routine.id);
+      expect(await ok("GET", `/api/routines/${routine.id}`)).toMatchObject({ id: routine.id, state: "proposed", specJson: isString });
+      for (const action of ["approve", "reject", "pause", "stop"]) {
+        expect((await call("POST", `/api/routines/${routine.id}/${action}`)).status).toBe(404);
+      }
+      expect((await call("DELETE", `/api/routines/${routine.id}`)).status).toBe(404);
+      expect(await ok("POST", `/api/routines/${routine.id}/withdraw`)).toMatchObject({ id: routine.id, state: "rejected" });
+    });
+
     it("seo audit: a problem page fails with actionable issues and is blocked by robots.txt", async () => {
       await withTab(pages.seoBad, async (tabId) => {
         await perceive(tabId, (p) => p.result.graph.url === pages.seoBad);

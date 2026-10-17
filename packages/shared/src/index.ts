@@ -8,6 +8,8 @@ export * from "./mcp-install.js";
 export * from "./perception.js";
 export * from "./policy.js";
 export * from "./report.js";
+export * from "./routine.js";
+export * from "./routine-spec.js";
 export * from "./shell-status.js";
 export * from "./shortcuts.js";
 export * from "./substrate.js";

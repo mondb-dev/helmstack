@@ -4,6 +4,7 @@ import type { PageObservation, PerceptionResult } from "./perception.js";
 import type { ElementPickResult, PageScreenshot, PageSnapshot, TabId, TabSummary, ViewportRect } from "./browser.js";
 import type { ApprovalPolicyRecord } from "./policy.js";
 import type { ReportFormat, ReportSummary } from "./report.js";
+import type { RoutineDetail, RoutineEngineStatus, RoutineSummary } from "./routine.js";
 import type { AgentChatEvent, AgentConversationSummary, AgentRunnerStatus, StartAgentConversationInput } from "./agent-chat.js";
 import type { AgentActivityEntry, AgentConnectionStatus, TabOverrideKind, TabOverrides } from "./shell-status.js";
 import type { ShortcutId } from "./shortcuts.js";
@@ -55,6 +56,16 @@ export const BrowserShellChannel = {
   ClearTabOverrides: "browser-shell:clear-tab-overrides",
   ListAgentActivity: "browser-shell:list-agent-activity",
   GetConnectionStatus: "browser-shell:get-connection-status",
+  // Routines (reviewed and approved by the human; agents can only propose)
+  ListRoutines: "browser-shell:list-routines",
+  GetRoutine: "browser-shell:get-routine",
+  GetRoutineEngineStatus: "browser-shell:get-routine-engine-status",
+  ApproveRoutine: "browser-shell:approve-routine",
+  RejectRoutine: "browser-shell:reject-routine",
+  PauseRoutine: "browser-shell:pause-routine",
+  ResumeRoutine: "browser-shell:resume-routine",
+  StopRoutine: "browser-shell:stop-routine",
+  DeleteRoutine: "browser-shell:delete-routine",
   // Reports (files live in the app's data directory; the shell never reads their contents)
   ListReports: "browser-shell:list-reports",
   SaveReportAs: "browser-shell:save-report-as",
@@ -95,7 +106,8 @@ export const BrowserShellChannel = {
   AgentActivity: "browser-shell:agent-activity",
   ConnectionStatusChanged: "browser-shell:connection-status-changed",
   AgentChatEvent: "browser-shell:agent-chat-event",
-  ReportsChanged: "browser-shell:reports-changed"
+  ReportsChanged: "browser-shell:reports-changed",
+  RoutinesChanged: "browser-shell:routines-changed"
 } as const;
 
 /** Zoom steps the human can request for a tab. */
@@ -179,6 +191,21 @@ export type BrowserShellApi = {
   /** Most recent agent API calls, oldest first (bounded buffer). */
   listAgentActivity(): Promise<AgentActivityEntry[]>;
   getConnectionStatus(): Promise<AgentConnectionStatus>;
+  // Routines. Every state change is a human action through the shell; there is no agent route for it.
+  listRoutines(): Promise<RoutineSummary[]>;
+  getRoutine(id: string): Promise<RoutineDetail | null>;
+  getRoutineEngineStatus(): Promise<RoutineEngineStatus>;
+  /** proposed -> approved. Rejects if the routine is not currently proposed. */
+  approveRoutine(id: string): Promise<RoutineSummary>;
+  /** proposed -> rejected. */
+  rejectRoutine(id: string): Promise<RoutineSummary>;
+  /** approved -> paused. */
+  pauseRoutine(id: string): Promise<RoutineSummary>;
+  /** paused -> approved. */
+  resumeRoutine(id: string): Promise<RoutineSummary>;
+  /** approved | paused -> stopped. */
+  stopRoutine(id: string): Promise<RoutineSummary>;
+  deleteRoutine(id: string): Promise<void>;
   // Reports. Save/open/reveal/delete are human actions through the shell only.
   listReports(): Promise<ReportSummary[]>;
   /** Shows a native save dialog and copies the report there. Resolves with the chosen path, or null if cancelled. */
@@ -238,4 +265,6 @@ export type BrowserShellBridge = BrowserShellApi & {
   onAgentChatEvent(callback: (event: AgentChatEvent) => void): () => void;
   /** Fires with the full list whenever a report is created or deleted; `created` names a new one. */
   onReportsChanged(callback: (reports: ReportSummary[], created?: ReportSummary) => void): () => void;
+  /** Fires with the full list whenever a routine is proposed or changes state; `proposed` names a new proposal. */
+  onRoutinesChanged(callback: (routines: RoutineSummary[], proposed?: RoutineSummary) => void): () => void;
 };

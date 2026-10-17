@@ -61,8 +61,11 @@ import type {
   PerformanceReport,
   RecordingSession,
   RecordingStopResult,
+  ProposeRoutineResult,
   ReportFormat,
   ReportSummary,
+  RoutineDetail,
+  RoutineSummary,
   ResourceBudget,
   ScreenshotDiff,
   ScreenshotOptions,
@@ -278,6 +281,25 @@ export interface ReportsApi {
   onReportsChanged(listener: (reports: ReportSummary[], created?: ReportSummary) => void): () => void;
 }
 
+/**
+ * Routines (`docs/routines.md`). Agents can only propose, read and withdraw their own
+ * pending proposal. Approving, rejecting, pausing, resuming, stopping and deleting are
+ * human actions on `HelmstackCore` for the shell and are deliberately not part of this
+ * interface, so the HTTP server cannot reach them.
+ */
+export interface RoutinesApi {
+  /** Validates `spec` (throws `RoutineSpecInvalidError`), stores it as `proposed`. */
+  proposeRoutine(spec: unknown, ctx?: { agentId?: string; replaces?: string }): ProposeRoutineResult;
+  /** Newest first. */
+  listRoutines(): RoutineSummary[];
+  /** `null` for an unknown or malformed id. */
+  getRoutine(id: string): RoutineDetail | null;
+  /** Only the proposer's own `proposed` routine; throws `RoutineError` otherwise. */
+  withdrawRoutine(id: string, agentId?: string): RoutineSummary;
+  /** Fires on a new proposal and on every state change, with the affected summary. Returns an unsubscribe function. */
+  onRoutineEvent(listener: (event: { type: "proposed" | "changed"; routine: RoutineSummary }) => void): () => void;
+}
+
 /** Credential accounts + TOTP (desktop: `AccountStore` over `safeStorage`). */
 export interface AccountsApi {
   listAccounts(): AccountSummary[];
@@ -314,7 +336,7 @@ export interface ExtensionsApi {
  * (e.g. `HelmstackCore`); the server option takes precedence.
  */
 export interface AgentApi extends TabsApi, PerceptionApi, CommandApi, ScreenshotApi, InspectApi,
-  InputApi, LogsApi, OverridesApi, StorageApi, RecordingApi, WatchApi, EventsApi, Partial<ReportsApi> {
+  InputApi, LogsApi, OverridesApi, StorageApi, RecordingApi, WatchApi, EventsApi, Partial<ReportsApi>, Partial<RoutinesApi> {
   readonly backend?: BackendKind;
   /** Human inspect-and-click element picker. Needs a visible window → desktop only. */
   pickElement?(tabId: TabId): Promise<ElementPickResult>;

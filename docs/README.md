@@ -13,6 +13,7 @@ HelmStack lets an AI agent inspect and test a front-end in a real browser, from 
 | [Agent chat and local models](agent-chat.md) | Chat with a CLI agent or an Ollama or LM Studio model in the window |
 | [Lite toolset](lite-toolset.md) | Give a small model 14 plain-text verbs |
 | [Page analysis reports](reports.md) | Have an agent write up findings and measurements as a downloadable file |
+| [Routines](routines.md) | Have an agent turn "watch this for me" into a procedure you review and approve |
 | [Headless and CI](headless-ci.md) | Run the daemon and use it in CI |
 
 ## Reference
@@ -32,6 +33,7 @@ HelmStack lets an AI agent inspect and test a front-end in a real browser, from 
 | [Architecture](architecture.md) | Shared core, two backends; links the [ADR](adr/0001-headless-chrome-backend.md) |
 | [Security model](security-model.md) | Trust boundaries and caveats |
 | [Approvals](approvals.md) | What is gated, who decides, expiry |
+| [Routines](routines.md) | The routine spec, confidence and thresholds, and the safety model |
 | [Perception](perception.md) | What an agent sees of a page |
 | [Profiles and toolsets](profiles-and-toolsets.md) | Opt-in surfaces and tool counts |
 

@@ -25,7 +25,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { createBrowserClient, createLiteSession, LITE_TOOL_SCHEMAS, type LiteToolSchema } from "@helmstack/agent-sdk";
+import { createBrowserClient, createLiteSession, HelmstackHttpError, LITE_TOOL_SCHEMAS, type LiteToolSchema } from "@helmstack/agent-sdk";
 
 // ── Capability gating ───────────────────────────────────────────────────────
 // NOTE: kept inline (not a separate module) on purpose — the editor launches
@@ -745,6 +745,109 @@ full.tool(
   "List the page analysis reports saved on this machine (newest first): id, title, page, when, finding counts by severity, which measurements were included or skipped, and file size. Reports are created with browser_create_report; deleting them is a human action in the HelmStack window.",
   {},
   async () => jsonResult(await browser.listReports())
+);
+
+// ── Routines ──────────────────────────────────────────────────────────────────
+// Agents propose; only the human approves, in the HelmStack window. No tool here can
+// approve, reject, pause, stop or delete a routine, and nothing runs in this version.
+
+/** Readable text for a routine proposal result, so the model can read the preview back to the user. */
+function routineProposalText(r: {
+  routine: { id: string; title: string; state: string };
+  preview: { headline: string; lines: string[]; risks: Array<{ level: string; message: string }> };
+  warnings: string[];
+  message: string;
+}): string {
+  return [
+    `Routine ${r.routine.id} "${r.routine.title}" is ${r.routine.state}. ${r.message}`,
+    "",
+    r.preview.headline,
+    ...r.preview.lines.map((l) => `- ${l}`),
+    ...(r.preview.risks.length ? ["", "Flags:", ...r.preview.risks.map((x) => `- [${x.level}] ${x.message}`)] : []),
+    "",
+    "Next: tell the user, in plain words, what this routine would do, mention any flags, and say it needs their approval in the HelmStack window (Routines). Nothing runs until then, and routines are not executed yet in this version."
+  ].join("\n");
+}
+
+full.tool(
+  "browser_routine_schema",
+  `Read the JSON Schema for a HelmStack routine, a complete worked example and the size limits. Call this before browser_propose_routine so the spec you write has the right shape.
+
+A routine is JSON you compile from the user's request: a fixed skeleton of site-agnostic steps that HelmStack will run exactly, plus typed judgment points (infer) with thresholds you set. The vocabulary is closed (open, locate, extract, diff, for_each, infer, branch, note, mark_seen, open_item, wait, report); you cannot add capabilities, and unknown fields are rejected.
+
+Returns: { schema, example, limits }. The example is the "watch this page for a topic and related ones, check and note every new update" routine.`,
+  {},
+  async () => jsonResult(await browser.getRoutineSchema())
+);
+
+full.tool(
+  "browser_propose_routine",
+  `Propose a routine: a reusable procedure you compile from what the user asked HelmStack to watch, monitor or repeat. Nothing runs when you call this; the user must review and approve it in the HelmStack window.
+
+When to use it: the user asks you to watch, monitor, keep checking, track or repeat something ("tell me when this page has updates on X", "check this every day and note anything new"), or they agree after you offer. Do not propose routines unprompted. For a one-off look at a page, use the normal browser tools instead.
+
+Before writing the spec, call browser_routine_schema (JSON Schema, a full worked example and limits). Then compile the user's request into that shape:
+- intent: the user's own words, verbatim (max 2000 characters). title: a short name.
+- Keep the scope narrow: list exact start URLs, prefer scope.follow.allow_hosts to same_site, keep max_pages_per_run low, and do not leave the scope open to any site.
+- Use only the step vocabulary. No scripts, selectors, expressions or code: references are only $scope.start[i], $<step id>, $item and state.<key>, and each must point at something defined earlier.
+- Put judgment in infer steps ("is this about X?") with explicit accept_at and reject_below thresholds, samples of 2-3 for important calls, evidence "quote", and on_uncertain "note_as_maybe" so doubtful items are kept for the user instead of being dropped or trusted. Confidence numbers are only a guide; the thresholds decide.
+- Always set stop conditions (after_days, after_runs, or when_inferred) and budgets (tokens_per_run, pages_per_run, cost_usd_total). Pick a modest interval such as 6h or 1d.
+- Never try to use credentials, log in, or switch off approvals. There are no fields for that, safety.approval_for can only add approvals, and unknown fields are rejected.
+- Use "related" only if the user wants related pages found; it always needs the user's approval (needs: "human_approval").
+- To change an existing routine, pass replaces: its id. The old one stops when the user approves the new one.
+
+Returns: { routine (id, state "proposed"), preview (headline, plain-language lines, risk flags), warnings, stepCount, message }. If the spec is invalid you get a list of { path, message } errors: fix them and call again.
+
+After it succeeds: read the preview back to the user in plain words, mention any warnings, and tell them it needs their approval in the HelmStack window under Routines. Say clearly that routines can be reviewed and approved but are not run yet in this version. You can withdraw your own pending proposal with browser_withdraw_routine.`,
+  {
+    spec: z.record(z.string(), z.any()).describe("The routine spec (see browser_routine_schema): version, title, intent, scope, trigger, steps, and optionally related, state, stop, on_failure, output, safety"),
+    replaces: z.string().optional().describe("Id of an existing routine this one edits; it is stopped when the user approves this one")
+  },
+  async ({ spec, replaces }) => {
+    try {
+      const result = await browser.proposeRoutine(spec, { replaces });
+      return {
+        structuredContent: result as unknown as Record<string, unknown>,
+        content: [{ type: "text" as const, text: routineProposalText(result) }]
+      };
+    } catch (err) {
+      if (err instanceof HelmstackHttpError && err.status === 400) {
+        let detail = err.body;
+        try {
+          const parsed = JSON.parse(err.body) as { error?: string; errors?: Array<{ path: string; message: string }> };
+          detail = parsed.errors?.length
+            ? parsed.errors.map((e) => `- ${e.path}: ${e.message}`).join("\n")
+            : parsed.error ?? err.body;
+        } catch { /* keep the raw body */ }
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: `The routine was not accepted. Fix these and call browser_propose_routine again:\n${detail}` }]
+        };
+      }
+      throw err;
+    }
+  }
+);
+
+full.tool(
+  "browser_list_routines",
+  "List the routines on this machine (newest first): id, title, state (proposed, approved, paused, stopped or rejected), trigger, hosts and the plain-language preview. Routines are proposed with browser_propose_routine; approving, pausing, stopping and deleting them are human actions in the HelmStack window.",
+  {},
+  async () => jsonResult(await browser.listRoutines())
+);
+
+full.tool(
+  "browser_get_routine",
+  "Read one routine by id: its state, the plain-language preview and the validated spec. Use it to check whether the user has approved a proposal, or to start from an existing spec when the user wants a change (then propose the edit with replaces).",
+  { id: z.string().describe("Routine id, for example rt-20261017-093000-1a2b3c4d") },
+  async ({ id }) => jsonResult(await browser.getRoutine(id))
+);
+
+full.tool(
+  "browser_withdraw_routine",
+  "Withdraw a routine you proposed while it is still waiting for the user (it becomes rejected). You can only withdraw your own proposals and only before the user has decided; approving, stopping and deleting are human actions in the HelmStack window.",
+  { id: z.string().describe("Routine id") },
+  async ({ id }) => jsonResult(await browser.withdrawRoutine(id))
 );
 
 full.tool(

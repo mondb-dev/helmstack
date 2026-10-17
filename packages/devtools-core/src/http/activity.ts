@@ -180,6 +180,18 @@ export const ACTIVITY_ROUTES: readonly ActivityRoute[] = [
   },
   { method: "GET", pattern: "/api/reports", label: "List reports", summarize: arrayCount("report") },
   { method: "GET", pattern: "/api/reports/:id", label: "Download report" },
+  // Routines. Never the intent or the spec: only counts and fixed words.
+  { method: "GET", pattern: "/api/routines/schema", label: "Read routine schema" },
+  {
+    method: "POST", pattern: "/api/routines", label: "Propose routine",
+    summarize: (d) => {
+      const steps = count(d.stepCount, "step");
+      return steps ? `proposed · ${steps}` : "proposed";
+    }
+  },
+  { method: "GET", pattern: "/api/routines", label: "List routines", summarize: arrayCount("routine") },
+  { method: "GET", pattern: "/api/routines/:id", label: "Read routine" },
+  { method: "POST", pattern: "/api/routines/:id/withdraw", label: "Withdraw routine", summarize: () => "withdrawn" },
   // Input
   { method: "POST", pattern: "/api/tabs/:id/evaluate", label: "Evaluate script" },
   { method: "POST", pattern: "/api/tabs/:id/insert-text", label: "Type text" },
