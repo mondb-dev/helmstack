@@ -22,6 +22,7 @@ import { mountActivity } from "./panels/activity.js";
 import { mountChat } from "./panels/chat.js";
 import { mountSideTabs } from "./panels/side-tabs.js";
 import { mountReports, reportsSupported } from "./panels/reports.js";
+import { mountRoutines, routinesSupported } from "./panels/routines.js";
 import { mountSettings } from "./panels/settings.js";
 import { mountHandoff } from "./panels/handoff.js";
 import { mountAddressBar } from "./panels/address-bar.js";
@@ -186,11 +187,26 @@ async function bootstrap(): Promise<void> {
         onUnreadChange: (count) => sideTabs.setBadge("reports", count),
       })
     : null;
+  const hasRoutines = routinesSupported(bridge);
+  const routines = hasRoutines
+    ? mountRoutines({
+        bridge,
+        onNeedsReviewChange: (count) => sideTabs.setBadge("routines", count, "need review"),
+        onReveal: () => {
+          activity.setCollapsed(false);
+          sideTabs.select("routines");
+        },
+        onDialogOpen: overlayOpened("routine-review"),
+        onDialogClose: overlayClosed("routine-review"),
+      })
+    : null;
   const sideTabs = mountSideTabs({
     reports: hasReports,
+    routines: hasRoutines,
     onChange: (panel) => {
       if (panel === "chat") chat.show();
       if (panel === "reports") reports?.show();
+      if (panel === "routines") routines?.show();
     },
   });
 

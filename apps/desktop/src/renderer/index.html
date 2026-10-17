@@ -106,6 +106,7 @@
             <button class="side-tabs__tab" id="side-tab-activity" type="button" role="tab" data-panel="activity" aria-selected="true" aria-controls="activity-body" tabindex="0">Activity</button>
             <button class="side-tabs__tab" id="side-tab-chat" type="button" role="tab" data-panel="chat" aria-selected="false" aria-controls="chat-body" tabindex="-1">Chat</button>
             <button class="side-tabs__tab" id="side-tab-reports" type="button" role="tab" data-panel="reports" aria-selected="false" aria-controls="reports-body" tabindex="-1" hidden>Reports</button>
+            <button class="side-tabs__tab" id="side-tab-routines" type="button" role="tab" data-panel="routines" aria-selected="false" aria-controls="routines-body" tabindex="-1" hidden>Routines</button>
           </div>
           <div class="activity__body" id="activity-body" role="tabpanel" aria-labelledby="side-tab-activity">
             <form class="intent" id="intent-form" hidden>
@@ -122,6 +123,7 @@
           </div>
           <div class="chat" id="chat-body" role="tabpanel" aria-labelledby="side-tab-chat" hidden></div>
           <div class="reports" id="reports-body" role="tabpanel" aria-labelledby="side-tab-reports" hidden></div>
+          <div class="routines" id="routines-body" role="tabpanel" aria-labelledby="side-tab-routines" hidden></div>
         </aside>
       </main>
     </div>
@@ -238,6 +240,24 @@
           <button class="btn btn--sm btn--ghost" id="mcp-install-close" type="button">Close</button>
         </div>
         <div class="mcp-install" id="mcp-install-body"></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="routine-review-modal" hidden>
+      <div class="modal-backdrop" id="routine-review-backdrop"></div>
+      <div class="modal modal--wide routine-review" role="dialog" aria-modal="true" aria-labelledby="routine-review-title">
+        <div class="modal-header">
+          <span class="badge badge-info">Routine proposal</span>
+          <h2 id="routine-review-title" class="modal-title" tabindex="-1"></h2>
+          <p class="modal-meta" id="routine-review-meta"></p>
+        </div>
+        <div class="routine-review__body" id="routine-review-body"></div>
+        <p class="routine-review__gate" id="routine-review-gate" hidden></p>
+        <div class="modal-actions">
+          <button class="btn btn--ghost" id="routine-review-cancel" type="button">Cancel</button>
+          <button class="btn btn--danger" id="routine-review-reject" type="button">Reject</button>
+          <button class="btn btn--primary" id="routine-review-approve" type="button" aria-describedby="routine-review-gate">Approve</button>
+        </div>
       </div>
     </div>
 

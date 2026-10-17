@@ -1,12 +1,16 @@
 /**
- * Tabs ("Activity" | "Chat" | "Reports") in the right-hand panel. The selected tab is
+ * Tabs ("Activity" | "Chat" | "Reports" | "Routines") in the right-hand panel. The selected tab is
  * remembered in localStorage. Panels are shown/hidden with `hidden`, and the
  * aside's `data-panel` attribute lets CSS keep the activity body hidden while
  * Chat is selected without fighting the activity panel's own collapse state.
  */
 import { attachRovingKeys, applyRovingTabindex } from "../ui/roving.js";
 
-export type SidePanelId = "activity" | "chat" | "reports";
+export type SidePanelId = "activity" | "chat" | "reports" | "routines";
+
+/** Tabs the bridge may not support: hidden (and never restored) unless enabled by an option. */
+const OPTIONAL_PANELS: readonly SidePanelId[] = ["reports", "routines"];
+const ALL_PANELS: readonly SidePanelId[] = ["activity", "chat", ...OPTIONAL_PANELS];
 
 export const SIDE_TAB_STORAGE_KEY = "helmstack-side-panel-tab";
 
@@ -14,22 +18,23 @@ export interface SideTabsOptions {
   root?: ParentNode;
   /** Show the Reports tab. Off when the bridge can't list reports. */
   reports?: boolean;
+  /** Show the Routines tab. Off when the bridge can't list routines. */
+  routines?: boolean;
   onChange?: (panel: SidePanelId) => void;
 }
 
 export interface SideTabsController {
   select(panel: SidePanelId, options?: { focus?: boolean }): void;
   selected(): SidePanelId;
-  /** Unread count on a tab (0 hides the badge). */
-  setBadge(panel: SidePanelId, count: number): void;
+  /** Count on a tab (0 hides the badge); `noun` completes the screen reader text, e.g. "3 new". */
+  setBadge(panel: SidePanelId, count: number, noun?: string): void;
   destroy(): void;
 }
 
-function readStored(reportsAvailable: boolean): SidePanelId {
+function readStored(available: ReadonlySet<SidePanelId>): SidePanelId {
   try {
-    const stored = localStorage.getItem(SIDE_TAB_STORAGE_KEY);
-    if (stored === "chat") return "chat";
-    if (stored === "reports" && reportsAvailable) return "reports";
+    const stored = localStorage.getItem(SIDE_TAB_STORAGE_KEY) as SidePanelId | null;
+    if (stored && available.has(stored)) return stored;
     return "activity";
   } catch {
     return "activity";
@@ -41,14 +46,20 @@ export function mountSideTabs(options: SideTabsOptions = {}): SideTabsController
   const list = root.querySelector<HTMLElement>("#side-tabs");
   const aside = root.querySelector<HTMLElement>("#activity-panel");
   if (!list || !aside) throw new Error("Side tabs markup missing");
-  const reportsAvailable = options.reports === true;
-  const reportsTab = list.querySelector<HTMLButtonElement>('[data-panel="reports"]');
-  if (reportsTab) reportsTab.hidden = !reportsAvailable;
+  const available = new Set<SidePanelId>(["activity", "chat"]);
+  if (options.reports === true) available.add("reports");
+  if (options.routines === true) available.add("routines");
+  for (const id of OPTIONAL_PANELS) {
+    const optional = list.querySelector<HTMLButtonElement>(`[data-panel="${id}"]`);
+    if (optional) optional.hidden = !available.has(id);
+  }
   const allTabs = Array.from(list.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
   const tabs = allTabs.filter((tab) => !tab.hidden);
-  const idOf = (tab: HTMLElement): SidePanelId =>
-    tab.dataset.panel === "chat" ? "chat" : tab.dataset.panel === "reports" ? "reports" : "activity";
-  let current: SidePanelId = readStored(reportsAvailable);
+  const idOf = (tab: HTMLElement): SidePanelId => {
+    const id = tab.dataset.panel as SidePanelId | undefined;
+    return id && ALL_PANELS.includes(id) ? id : "activity";
+  };
+  let current: SidePanelId = readStored(available);
 
   const apply = (): void => {
     aside.dataset.panel = current;
@@ -75,7 +86,7 @@ export function mountSideTabs(options: SideTabsOptions = {}): SideTabsController
     if (changed) options.onChange?.(panel);
   };
 
-  const setBadge = (panel: SidePanelId, count: number): void => {
+  const setBadge = (panel: SidePanelId, count: number, noun = "new"): void => {
     const tab = tabs.find((candidate) => idOf(candidate) === panel);
     if (!tab) return;
     let badge = tab.querySelector<HTMLElement>(".side-tabs__badge");
@@ -90,7 +101,7 @@ export function mountSideTabs(options: SideTabsOptions = {}): SideTabsController
     }
     badge.hidden = count <= 0;
     badge.textContent = count > 9 ? "9+" : String(Math.max(0, count));
-    if (hint) hint.textContent = count > 0 ? ` (${count} new)` : "";
+    if (hint) hint.textContent = count > 0 ? ` (${count} ${noun})` : "";
   };
 
   const detach = attachRovingKeys(list, '[role="tab"]:not([hidden])', { orientation: "horizontal", wrap: true });

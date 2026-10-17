@@ -531,9 +531,11 @@
 
 .activity[data-panel="chat"] > #activity-body,
 .activity[data-panel="reports"] > #activity-body,
+.activity[data-panel="routines"] > #activity-body,
 .activity[data-collapsed="true"] > .side-tabs,
 .activity[data-collapsed="true"] > .chat,
-.activity[data-collapsed="true"] > .reports {
+.activity[data-collapsed="true"] > .reports,
+.activity[data-collapsed="true"] > .routines {
   display: none;
 }
 
