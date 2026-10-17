@@ -157,7 +157,8 @@ describe("MCP tool gating", () => {
     expect(d).toMatch(/budgets/);
     expect(d).toMatch(/Never try to use credentials/);
     expect(d).toMatch(/needs their approval in the HelmStack window|needs the user's approval|approve it in the HelmStack window/);
-    expect(d).toMatch(/not run yet in this version/);
+    expect(d).toMatch(/runs manual and interval routines while HelmStack is open/);
+    expect(d).toMatch(/model the user chooses in the Routines tab/);
     expect(d).toMatch(/Returns:/);
     expect(tools.browser_routine_schema!.description).toMatch(/Call this before browser_propose_routine/);
     expect(tools.browser_withdraw_routine!.description).toMatch(/only withdraw your own/);

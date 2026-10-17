@@ -10,10 +10,14 @@
  */
 
 import type {
+  AgentCliInfo,
+  AgentRunnerStatus,
   BrowserShellBridge,
   RoutineDetail,
   RoutineEngineStatus,
   RoutineMemory,
+  RoutineModelChoice,
+  RoutineModelStatus,
   RoutineNote,
   RoutineRisk,
   RoutineRiskLevel,
@@ -57,7 +61,13 @@ type RoutinesBridgeRun = Pick<
   | "openTab"
 >;
 
-export type RoutinesBridge = RoutinesBridgeCore & Partial<RoutinesBridgeRun>;
+/** Phase 3 (model for judgment calls). Feature-detected at call time. */
+type RoutinesBridgeModel = Pick<
+  BrowserShellBridge,
+  "getRoutineModel" | "setRoutineModel" | "getAgentRunnerStatus" | "refreshAgentRunner"
+>;
+
+export type RoutinesBridge = RoutinesBridgeCore & Partial<RoutinesBridgeRun> & Partial<RoutinesBridgeModel>;
 
 /** True when the preload bridge exposes every routine method. */
 export function routinesSupported(bridge: Partial<RoutinesBridge>): bridge is RoutinesBridge {
@@ -88,6 +98,24 @@ const MEMORY_PREFETCH_CAP = 30;
 const VALUE_LIMIT = 200;
 const SUMMARY_LIMIT = 160;
 const URL_LIMIT = 80;
+export const MODEL_EXPLANATION =
+  "Routines use this model to decide things like whether an update matters. It reads page text and answers with a verdict; it can't click or open anything.";
+const LOCAL_LABEL = "local, runs on this computer";
+const DEFAULT_MODEL = "__default__";
+
+/** True when a routine's preview says it makes judgment calls. */
+export function hasJudgment(routine: RoutineSummary): boolean {
+  return (routine.preview?.risks ?? []).some((risk) => risk.code === "judged_by_model");
+}
+
+const modelValue = (cli: string, model?: string): string => `${cli}::${model ?? DEFAULT_MODEL}`;
+function parseModelValue(value: string): RoutineModelChoice | null {
+  const index = value.indexOf("::");
+  if (index <= 0) return null;
+  const cli = value.slice(0, index);
+  const model = value.slice(index + 2);
+  return model === DEFAULT_MODEL || model === "" ? { cli } : { cli, model };
+}
 
 const RUN_STATUS_WORD: Record<RoutineRunStatus, string> = {
   running: "Running",
@@ -283,11 +311,21 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
   let forgetting: string | null = null;
   let killBusy = false;
   let bannerError = "";
+  // Phase 3: model for judgment calls.
+  let modelStatus: RoutineModelStatus | null = null;
+  let modelLoaded = false;
+  let modelLoadError = "";
+  let modelError = "";
+  let modelBusy = false;
+  let runner: AgentRunnerStatus | null = null;
+  let runnerError = "";
+  let modelDraft = "";
 
   const canRun = (): boolean => typeof bridge.runRoutineNow === "function";
   const canKill = (): boolean => typeof bridge.setRoutineKillSwitch === "function";
   const canDetail = (): boolean => typeof bridge.listRoutineRuns === "function";
   const isKilled = (): boolean => engine?.killed === true;
+  const canModel = (): boolean => typeof bridge.getRoutineModel === "function" && typeof bridge.setRoutineModel === "function";
 
   const engineOn = (): boolean => engine?.enabled === true;
 
@@ -341,6 +379,130 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     const alert = el("p", "routine-row__error", bannerError);
     alert.setAttribute("role", "alert");
     return alert;
+  };
+
+  // ── model for judgment calls ──────────────────────────────────────────────
+  const cliLabel = (id: string): string => runner?.clis.find((cli) => cli.id === id)?.label ?? id;
+
+  const describeChoice = (choice: RoutineModelChoice): string => {
+    const cli = runner?.clis.find((c) => c.id === choice.cli);
+    const where = cli?.kind === "local" ? ` (${LOCAL_LABEL})` : "";
+    return `${cliLabel(choice.cli)}${choice.model ? ` · ${choice.model}` : " · default model"}${where}`;
+  };
+
+  const buildModelOptions = (select: HTMLSelectElement): void => {
+    const groups: HTMLElement[] = [];
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Choose a model…";
+    const usable = (cli: AgentCliInfo): boolean => cli.available;
+    for (const cli of runner?.clis ?? []) {
+      const group = document.createElement("optgroup");
+      const isLocal = cli.kind === "local";
+      group.label = isLocal ? `${cli.label} — ${LOCAL_LABEL}` : cli.label;
+      if (!usable(cli)) {
+        group.disabled = true;
+        const only = document.createElement("option");
+        only.disabled = true;
+        only.textContent = cli.reason ?? "Unavailable";
+        group.append(only);
+      } else {
+        if (!isLocal || cli.models.length === 0) {
+          const def = document.createElement("option");
+          def.value = modelValue(cli.id);
+          def.textContent = isLocal ? `${cli.label} default (${LOCAL_LABEL})` : "Default model";
+          group.append(def);
+        }
+        for (const model of cli.models) {
+          const option = document.createElement("option");
+          option.value = modelValue(cli.id, model.id);
+          option.textContent = isLocal ? `${model.label} (${LOCAL_LABEL})` : model.label;
+          if (model.disabledReason) {
+            option.disabled = true;
+            option.textContent += ` — ${model.disabledReason}`;
+          }
+          group.append(option);
+        }
+      }
+      groups.push(group);
+    }
+    select.replaceChildren(placeholder, ...groups);
+    const values = Array.from(select.querySelectorAll<HTMLOptionElement>("option:not([disabled])")).map((o) => o.value);
+    select.value = values.includes(modelDraft) ? modelDraft : "";
+  };
+
+  const modelAlert = (text: string): HTMLElement => {
+    const alert = el("p", "routine-row__error", text);
+    alert.setAttribute("role", "alert");
+    return alert;
+  };
+
+  const buildModelSection = (): HTMLElement => {
+    const section = el("section", "routines__model");
+    section.setAttribute("aria-labelledby", "routines-model-title");
+    const title = el("h3", "routines__model-title", "Model for judgment calls");
+    title.id = "routines-model-title";
+    const explain = el("p", "routine-row__meta", MODEL_EXPLANATION);
+    explain.id = "routines-model-explain";
+    section.append(title, explain);
+
+    const status = el("p", "routines__model-status");
+    status.dataset.role = "model-status";
+    if (modelLoadError) {
+      section.append(status, modelAlert(`Couldn't load the model choice — ${modelLoadError}`));
+      status.textContent = "Unknown";
+    } else if (!modelLoaded) {
+      status.textContent = "Loading…";
+      section.append(status);
+    } else if (!modelStatus?.choice) {
+      status.textContent = `No model chosen yet.${modelStatus?.reason ? ` ${modelStatus.reason}` : ""}`;
+      section.append(status);
+    } else {
+      const text = describeChoice(modelStatus.choice);
+      status.textContent = modelStatus.available
+        ? `Chosen: ${text}. Available now.`
+        : `Chosen: ${text}. Not available right now${modelStatus.reason ? ` — ${modelStatus.reason}` : ""}.`;
+      section.append(status);
+    }
+
+    if (modelLoaded && !modelStatus?.choice && routines.some((r) => r.state === "approved" && hasJudgment(r))) {
+      const notice = el("p", "routines__notice routines__model-notice", "An approved routine makes judgment calls. Choose a model above so it can finish those steps.");
+      notice.setAttribute("role", "note");
+      section.append(notice);
+    }
+
+    const field = el("div", "field");
+    const label = el("label", "field__label", "Model");
+    label.htmlFor = "routines-model-select";
+    const row = el("div", "chat__row");
+    const select = el("select", "select chat__select");
+    select.id = "routines-model-select";
+    select.dataset.modelCtl = "select";
+    select.setAttribute("aria-describedby", "routines-model-explain");
+    select.disabled = modelBusy || !runner;
+    buildModelOptions(select);
+    row.append(select);
+    if (typeof bridge.refreshAgentRunner === "function") {
+      const refreshBtn = button("Refresh", "btn--sm btn--ghost", "model-refresh", "Detect installed models again");
+      refreshBtn.dataset.modelCtl = "model-refresh";
+      refreshBtn.disabled = modelBusy;
+      row.append(refreshBtn);
+    }
+    field.append(label, row);
+    section.append(field);
+    if (runnerError) section.append(modelAlert(`Couldn't detect models — ${runnerError}`));
+
+    const actions = el("div", "routine-row__actions");
+    const save = button(modelBusy ? "Saving…" : "Save", "btn--primary", "model-save");
+    save.dataset.modelCtl = "model-save";
+    save.disabled = modelBusy || modelDraft === "";
+    const clear = button("Clear", "btn--ghost", "model-clear");
+    clear.dataset.modelCtl = "model-clear";
+    clear.disabled = modelBusy || !modelStatus?.choice;
+    actions.append(save, clear);
+    section.append(actions);
+    if (modelError) section.append(modelAlert(modelError));
+    return section;
   };
 
   // ── list ──────────────────────────────────────────────────────────────────
@@ -642,7 +804,16 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
         line.append(" ", open);
       }
       item.append(line);
-      const fields = Object.entries(note.fields ?? {});
+      const allFields = Object.entries(note.fields ?? {});
+      const confidence = allFields.find(([key]) => String(key).toLowerCase() === "confidence");
+      const evidence = allFields.find(([key]) => String(key).toLowerCase() === "evidence");
+      if (confidence || evidence) {
+        const verdict = el("div", "routine-note__verdict");
+        if (confidence) verdict.append(clipped("p", "routine-note__field", `Model's confidence: ${String(confidence[1])}`, VALUE_LIMIT));
+        if (evidence) verdict.append(clipped("p", "routine-note__field", `Quote: ${String(evidence[1])}`, VALUE_LIMIT));
+        item.append(verdict);
+      }
+      const fields = allFields.filter((entry) => entry !== confidence && entry !== evidence);
       if (fields.length > 0) {
         const dl = el("ul", "routine-note__fields");
         for (const [key, value] of fields.slice(0, NOTE_FIELD_CAP)) {
@@ -758,6 +929,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     const focusedAction = active && host.contains(active) ? active.dataset.action : undefined;
     const focusedSection = active && host.contains(active) ? active.dataset.section : undefined;
     const focusedRun = active && host.contains(active) ? active.dataset.runId : undefined;
+    const focusedModel = active && host.contains(active) ? active.dataset.modelCtl : undefined;
     const focusedBanner = active && host.contains(active) && active.dataset.action === "kill-toggle";
 
     const children: HTMLElement[] = [];
@@ -789,6 +961,8 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       if (bannerError) bar.append(bannerAlert());
       children.push(bar);
     }
+
+    if (canModel()) children.push(buildModelSection());
 
     if (routines.length === 0) {
       const empty = el("div", "routines__empty");
@@ -853,7 +1027,11 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     }
     host.replaceChildren(...children);
 
-    if (focusedSection) {
+    if (focusedModel) {
+      const target = host.querySelector<HTMLElement>(`[data-model-ctl="${focusedModel}"]`);
+      if (target && !(target as HTMLButtonElement).disabled) target.focus();
+      else host.querySelector<HTMLElement>('[data-model-ctl="select"]')?.focus();
+    } else if (focusedSection) {
       host.querySelector<HTMLElement>(`[data-section="${focusedSection}"]`)?.focus();
     } else if (focusedBanner) {
       host.querySelector<HTMLElement>('[data-action="kill-toggle"]')?.focus();
@@ -911,6 +1089,14 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     focusNear(routine.id, order);
   };
 
+  host.addEventListener("change", (event) => {
+    const select = event.target as HTMLSelectElement | null;
+    if (select?.dataset?.modelCtl !== "select") return;
+    modelDraft = select.value;
+    const save = host.querySelector<HTMLButtonElement>('[data-model-ctl="model-save"]');
+    if (save) save.disabled = modelBusy || modelDraft === "";
+  });
+
   host.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("button");
     if (!target || !host.contains(target)) return;
@@ -921,6 +1107,18 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     }
     if (target.dataset.action === "kill-toggle") {
       void toggleKill();
+      return;
+    }
+    if (target.dataset.action === "model-save") {
+      void saveModel();
+      return;
+    }
+    if (target.dataset.action === "model-clear") {
+      void clearModel();
+      return;
+    }
+    if (target.dataset.action === "model-refresh") {
+      void loadRunner(true);
       return;
     }
     if (target.dataset.action === "open-note-url") {
@@ -1172,6 +1370,74 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     }
     render();
     rowNode(routine.id)?.querySelector<HTMLElement>('[data-action="forget"], [data-action="cancel-forget"]')?.focus();
+  }
+
+  async function loadModel(): Promise<void> {
+    if (typeof bridge.getRoutineModel !== "function") return;
+    try {
+      const next = await bridge.getRoutineModel();
+      if (destroyed) return;
+      modelStatus = next && typeof next === "object" ? next : { choice: null, available: false };
+      modelLoadError = "";
+      if (modelStatus.choice) modelDraft = modelValue(modelStatus.choice.cli, modelStatus.choice.model);
+    } catch (error) {
+      if (destroyed) return;
+      modelLoadError = errorText(error);
+    }
+    modelLoaded = true;
+    render();
+  }
+
+  async function loadRunner(refreshing: boolean): Promise<void> {
+    const fn = refreshing && typeof bridge.refreshAgentRunner === "function" ? bridge.refreshAgentRunner : bridge.getAgentRunnerStatus;
+    if (typeof fn !== "function") {
+      runnerError = "This build of HelmStack can't list models yet.";
+      render();
+      return;
+    }
+    modelBusy = refreshing;
+    if (refreshing) render();
+    try {
+      runner = await fn.call(bridge);
+      runnerError = "";
+    } catch (error) {
+      runnerError = errorText(error);
+    }
+    modelBusy = false;
+    if (!destroyed) render();
+  }
+
+  async function saveModel(): Promise<void> {
+    if (typeof bridge.setRoutineModel !== "function" || modelBusy) return;
+    const choice = parseModelValue(modelDraft);
+    if (!choice) return;
+    modelBusy = true;
+    modelError = "";
+    render();
+    try {
+      modelStatus = await bridge.setRoutineModel(choice);
+      toast("Model saved", "success");
+    } catch (error) {
+      modelError = `Couldn't save the model — ${errorText(error)}`;
+    }
+    modelBusy = false;
+    render();
+  }
+
+  async function clearModel(): Promise<void> {
+    if (typeof bridge.setRoutineModel !== "function" || modelBusy) return;
+    modelBusy = true;
+    modelError = "";
+    render();
+    try {
+      modelStatus = await bridge.setRoutineModel(null);
+      modelDraft = "";
+      toast("Model cleared", "success");
+    } catch (error) {
+      modelError = `Couldn't clear the model — ${errorText(error)}`;
+    }
+    modelBusy = false;
+    render();
   }
 
   async function toggleKill(): Promise<void> {
@@ -1491,6 +1757,10 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     }
     if (destroyed) return;
     setList(next);
+    if (canModel()) {
+      void loadModel();
+      if (!runner) void loadRunner(false);
+    }
     void loadMemories(true);
     for (const id of detailOpen) void loadDetail(id);
   };

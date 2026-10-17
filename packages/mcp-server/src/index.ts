@@ -798,7 +798,7 @@ Before writing the spec, call browser_routine_schema (JSON Schema, a full worked
 
 Returns: { routine (id, state "proposed"), preview (headline, plain-language lines, risk flags), warnings, stepCount, message }. If the spec is invalid you get a list of { path, message } errors: fix them and call again.
 
-After it succeeds: read the preview back to the user in plain words, mention any warnings, and tell them it needs their approval in the HelmStack window under Routines. Say clearly that routines can be reviewed and approved but are not run yet in this version. You can withdraw your own pending proposal with browser_withdraw_routine.`,
+After it succeeds: read the preview back to the user in plain words, mention any warnings, and tell them it needs their approval in the HelmStack window under Routines. Say clearly that once approved it runs manual and interval routines while HelmStack is open, and that any judgment in it is answered by a model the user chooses in the Routines tab, which sees only page text and has no tools. You can withdraw your own pending proposal with browser_withdraw_routine.`,
   {
     spec: z.record(z.string(), z.any()).describe("The routine spec (see browser_routine_schema): version, title, intent, scope, trigger, steps, and optionally related, state, stop, on_failure, output, safety"),
     replaces: z.string().optional().describe("Id of an existing routine this one edits; it is stopped when the user approves this one")

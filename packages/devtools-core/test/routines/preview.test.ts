@@ -87,7 +87,7 @@ describe("buildPreview", () => {
 describe("risk flags", () => {
   it("flags nothing serious on the canonical routine, only the informational ones", () => {
     const risks = assessRisks(canonical());
-    expect(risks.map((r) => r.code)).toEqual(["related_widens_scope"]);
+    expect(risks.map((r) => r.code)).toEqual(["judged_by_model", "related_widens_scope"]);
     expect(risks.every((r) => r.level === "info")).toBe(true);
   });
 
@@ -151,6 +151,16 @@ describe("risk flags", () => {
     expect(codes(minimal())).not.toContain("no_human_fallback");
   });
 
+  it("judged_by_model (info) whenever a judgment or an inferred stop condition exists", () => {
+    expect(assessRisks(canonical()).find((r) => r.code === "judged_by_model")?.level).toBe("info");
+    expect(codes(minimal())).not.toContain("judged_by_model");
+    const stopOnly = edit(minimal(), (s) => {
+      s.stop = { any: [{ when_inferred: "The topic is resolved", confidence: 0.9 }] };
+    });
+    expect(codes(stopOnly)).toContain("judged_by_model");
+    expect(assessRisks(canonical()).find((r) => r.code === "judged_by_model")?.message).toMatch(/no tools/);
+  });
+
   it("related_widens_scope (info)", () => {
     expect(codes(canonical())).toContain("related_widens_scope");
     expect(codes(edit(canonical(), (s) => { delete s.related; }))).not.toContain("related_widens_scope");
@@ -176,7 +186,7 @@ describe("risk flags", () => {
       s.trigger = { kind: "interval", every: "1m" };
       s.scope.start = ["https://example.com/login"];
     });
-    expect(assessRisks(worst).map((r) => r.code)).toEqual(["any_site", "has_login_hint", "no_stop_condition", "fast_interval", "no_budgets", "many_pages", "related_widens_scope"]);
+    expect(assessRisks(worst).map((r) => r.code)).toEqual(["any_site", "has_login_hint", "no_stop_condition", "fast_interval", "no_budgets", "many_pages", "judged_by_model", "related_widens_scope"]);
   });
 });
 

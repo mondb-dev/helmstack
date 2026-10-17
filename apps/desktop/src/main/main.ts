@@ -437,6 +437,8 @@ function registerIpcHandlers(
     getRoutineMemory: async (id) => routineIpc.memory(mainWindow?.webContents, id),
     clearRoutineMemory: async (id) => routineIpc.clearMemory(mainWindow?.webContents, id),
     setRoutineKillSwitch: async (on) => routineIpc.setKillSwitch(mainWindow?.webContents, on),
+    getRoutineModel: async () => routineIpc.getModel(mainWindow?.webContents),
+    setRoutineModel: async (choice) => routineIpc.setModel(mainWindow?.webContents, choice),
     // Connect an agent (MCP client install); see mcp-install-service.ts
     getMcpInstallOverview: async () => mcpInstall.overview(),
     runMcpInstall: async (request) => mcpInstall.handle(request)
@@ -609,6 +611,8 @@ function registerIpcHandlers(
   ipcMain.handle(BrowserShellChannel.GetRoutineMemory, (event, id: unknown) => routineIpc.memory(event.sender, id));
   ipcMain.handle(BrowserShellChannel.ClearRoutineMemory, (event, id: unknown) => routineIpc.clearMemory(event.sender, id));
   ipcMain.handle(BrowserShellChannel.SetRoutineKillSwitch, (event, on: unknown) => routineIpc.setKillSwitch(event.sender, on));
+  ipcMain.handle(BrowserShellChannel.GetRoutineModel, (event) => routineIpc.getModel(event.sender));
+  ipcMain.handle(BrowserShellChannel.SetRoutineModel, (event, choice: unknown) => routineIpc.setModel(event.sender, choice));
   manager.onRoutineRunUpdated((run) => {
     sendToShell(BrowserShellChannel.RoutineRunUpdated, run);
   });

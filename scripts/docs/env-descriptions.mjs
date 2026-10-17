@@ -91,6 +91,11 @@ export const ENV = {
     default: "8192",
     text: "Ollama context window sent as `options.num_ctx`. Clamped to 2048 to 131072."
   },
+  HELMSTACK_ROUTINE_MODEL: {
+    scope: "routines (daemon fallback)",
+    default: "unset",
+    text: "`cli[:model]`, for example `claude`, `claude:haiku` or `ollama:llama3.2:3b`: the model that answers routine judgments, used only while no choice is saved from the Routines tab. The model is given no tools. Invalid values are ignored."
+  },
   HELMSTACK_LITE_MAX_CHARS: {
     scope: "lite toolset (MCP server, local-model chat)",
     default: "2400",

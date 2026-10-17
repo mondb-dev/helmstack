@@ -8,6 +8,8 @@ import type {
   RoutineDetail,
   RoutineEngineStatus,
   RoutineMemory,
+  RoutineModelChoice,
+  RoutineModelStatus,
   RoutineNote,
   RoutineRunDetail,
   RoutineRunSummary,
@@ -82,6 +84,8 @@ export const BrowserShellChannel = {
   GetRoutineMemory: "browser-shell:get-routine-memory",
   ClearRoutineMemory: "browser-shell:clear-routine-memory",
   SetRoutineKillSwitch: "browser-shell:set-routine-kill-switch",
+  GetRoutineModel: "browser-shell:get-routine-model",
+  SetRoutineModel: "browser-shell:set-routine-model",
   // Reports (files live in the app's data directory; the shell never reads their contents)
   ListReports: "browser-shell:list-reports",
   SaveReportAs: "browser-shell:save-report-as",
@@ -237,6 +241,10 @@ export type BrowserShellApi = {
   clearRoutineMemory(id: string): Promise<void>;
   /** On: abort running routines and start nothing until turned off. */
   setRoutineKillSwitch(on: boolean): Promise<RoutineEngineStatus>;
+  /** Which model answers routine inference points (human only). */
+  getRoutineModel(): Promise<RoutineModelStatus>;
+  /** Pass null to clear. Rejects an unknown runtime or a flag-like model id. */
+  setRoutineModel(choice: RoutineModelChoice | null): Promise<RoutineModelStatus>;
   // Reports. Save/open/reveal/delete are human actions through the shell only.
   listReports(): Promise<ReportSummary[]>;
   /** Shows a native save dialog and copies the report there. Resolves with the chosen path, or null if cancelled. */

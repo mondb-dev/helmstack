@@ -160,7 +160,7 @@ describe("routine runs over HTTP", () => {
       for (const method of ["POST", "PUT", "PATCH", "DELETE"]) attempts.push([method, `/api/routines/${id}/${action}`]);
     }
     for (const action of ["memory", "run", "cancel", "start", `runs/${core.listRoutineRuns(id)[0]!.id}`]) attempts.push(["GET", `/api/routines/${id}/${action}`]);
-    for (const url of ["/api/routines/kill-switch", "/api/routines/killswitch", "/api/routines/engine", "/api/routines/run", "/api/routine-engine"]) {
+    for (const url of ["/api/routines/kill-switch", "/api/routines/killswitch", "/api/routines/engine", "/api/routines/run", "/api/routine-engine", "/api/routines/model", "/api/routine-model", "/api/routines/inference"]) {
       for (const method of ["GET", "POST", "PUT", "DELETE"]) attempts.push([method, url]);
     }
     for (const [method, url] of attempts) {
@@ -171,7 +171,7 @@ describe("routine runs over HTTP", () => {
     expect(core.getRoutineEngineStatus().killed).toBe(false);
     expect(core.listRoutineRuns(id).every((r) => r.status === "completed")).toBe(true);
     const src = await import("node:fs").then((fs) => fs.readFileSync(path.resolve(__dirname, "../src/http/agent-server.ts"), "utf8"));
-    expect(src).not.toMatch(/runRoutineNow|cancelRoutineRun|clearRoutineMemory|setRoutineKillSwitch|getRoutineMemory/);
+    expect(src).not.toMatch(/runRoutineNow|cancelRoutineRun|clearRoutineMemory|setRoutineKillSwitch|getRoutineMemory|RoutineModel/);
   });
 
   it("labels the read routes and records only counts in the activity feed", async () => {

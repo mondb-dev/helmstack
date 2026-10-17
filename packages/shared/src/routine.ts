@@ -5,8 +5,8 @@
  * agent API share about a routine's life cycle, not its internals.
  *
  * Phase 1 stores, validates, previews and approves routines. Phase 2 runs approved `manual`
- * and `interval` routines with deterministic steps only (no model calls); `infer` steps end a
- * run as `needs_human`. `RoutineEngineStatus` says what the engine can do, and the UI shows it.
+ * and `interval` routines. Phase 3 answers `infer` steps with a tool-less model call (the model
+ * the human chose); with no usable model a run ends as `needs_human`. `RoutineEngineStatus` says what the engine can do, and the UI shows it.
  */
 
 /**
@@ -78,7 +78,7 @@ export type RoutineRunOutcome =
   | "completed" //   every step ran
   | "stopped" //     a stop condition fired or the human stopped it
   | "budget" //      a page/time/note budget ran out
-  | "needs_human" // an inference point or approval needs the human (phase 3 uses this for infer)
+  | "needs_human" // an inference point or approval needs the human (used when an infer step cannot continue without a person)
   | "failed" //      a step failed
   | "cancelled"; //  the human cancelled this run or used the kill switch
 
@@ -135,4 +135,24 @@ export type RoutineMemory = {
   /** Why this routine is never started on its own (schedule/event triggers do not run yet). */
   notScheduledReason?: string;
   lastRun?: RoutineRunSummary;
+};
+
+/**
+ * The model that answers a routine's inference points. Chosen by the human; routines
+ * and agents cannot change it. The model gets page text and a question and answers
+ * with JSON only: it is given no tools, no browser and no files.
+ */
+export type RoutineModelChoice = {
+  /** An AgentCliId from agent-chat (claude, gemini, or a local runtime). */
+  cli: string;
+  /** Model id for that runtime; omitted = the runtime's default. */
+  model?: string;
+};
+
+export type RoutineModelStatus = {
+  choice: RoutineModelChoice | null;
+  /** True when the chosen runtime is installed/reachable right now. */
+  available: boolean;
+  /** Plain-language reason when choice is null or not available. */
+  reason?: string;
 };

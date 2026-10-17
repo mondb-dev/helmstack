@@ -455,7 +455,7 @@ describe("RoutineEngine scope, robots, budgets and pacing", () => {
   });
 });
 
-// ── inference is not available ───────────────────────────────────────────────
+// ── inference without a model ────────────────────────────────────────────────
 
 describe("RoutineEngine without a model", () => {
   const withInfer = (on_uncertain: "note_as_maybe" | "ask_human" | "skip" | "retry_more_context"): RoutineStep[] => [
@@ -475,36 +475,35 @@ describe("RoutineEngine without a model", () => {
     }
   ];
 
-  it.each(["note_as_maybe", "ask_human", "retry_more_context"] as const)("ends as needs_human when an infer step uses %s", async (policy) => {
+  it.each(["note_as_maybe", "ask_human", "retry_more_context", "skip"] as const)("ends as needs_human, asking for a model, when an infer step uses %s", async (policy) => {
     browser.pages.set(START, listing([article(1), article(2)]));
     const id = addRoutine(spec({}, withInfer(policy)));
     const run = await runAndWait(id);
     expect(run.status).toBe("needs_human");
-    expect(run.summary).toMatch(/needs judgment|Needs a person/);
-    expect(engine.getRun(id, run.id)!.log.some((l) => l.level === "warn" && /no model is available/.test(l.message))).toBe(true);
+    expect(run.summary).toMatch(/Choose a model for routines in the Routines tab/);
+    expect(engine.getRun(id, run.id)!.log.some((l) => l.level === "warn" && /No model is chosen/.test(l.message))).toBe(true);
     expect(engine.getMemory(id).sets.seen ?? 0).toBe(0); // nothing marked seen: it will be looked at again
     expect(engine.listNotes(id)).toHaveLength(1); // only what ran before the infer step
   });
 
-  it("skips the item when the policy is skip, and carries on", async () => {
-    browser.pages.set(START, listing([article(1), article(2)]));
-    const id = addRoutine(spec({}, withInfer("skip")));
-    const run = await runAndWait(id);
-    expect(run.status).toBe("completed");
-    expect(engine.listNotes(id).map((n) => n.fields.tag)).toEqual(["seen", "seen"]);
-  });
-
-  it("hands a branch to a human", async () => {
+  it("says the chosen model is unavailable, when one is chosen but cannot be used", async () => {
+    engine.dispose();
+    engine = build({ model: { resolve: async () => ({ ok: false as const, reason: "Ollama is not installed.", chosen: true }) } });
     browser.pages.set(START, listing([article(1)]));
-    const steps: RoutineStep[] = [
-      { do: "open", url: "$scope.start[0]" },
-      { do: "infer", id: "ok", question: "Is the page fine?", output: "bool", accept_at: 0.5, reject_below: 0.2, on_uncertain: "skip" },
-      { do: "branch", on: "ok", accept: [{ do: "note", tag: "fine" }], reject: [{ do: "note", tag: "bad" }] }
-    ];
-    const id = addRoutine(spec({}, steps));
+    const id = addRoutine(spec({}, withInfer("ask_human")));
     const run = await runAndWait(id);
     expect(run.status).toBe("needs_human");
-    expect(engine.listNotes(id)).toHaveLength(0);
+    expect(run.summary).toMatch(/chosen for routines isn't available/);
+  });
+
+  it("does not look for a model when the routine never judges anything", async () => {
+    let asked = 0;
+    engine.dispose();
+    engine = build({ model: { resolve: async () => (asked++, { ok: false as const, reason: "x", chosen: false }) } });
+    browser.pages.set(START, listing([article(1)]));
+    const run = await runAndWait(addRoutine(spec()));
+    expect(run.status).toBe("completed");
+    expect(asked).toBe(0);
   });
 
   it("applies on_low when no strategy is confident enough", async () => {
@@ -522,6 +521,104 @@ describe("RoutineEngine without a model", () => {
     const run = await runAndWait(ok);
     expect(run.status).toBe("completed");
     expect(engine.listNotes(ok)[0]!.fields).toMatchObject({ tag: "found", l_count: "1" });
+  });
+});
+
+// ── inference with a model ───────────────────────────────────────────────────
+
+describe("RoutineEngine with a model", () => {
+  const modelOf = (reply: (user: string) => string, calls: string[] = []) => ({
+    resolve: async () => ({
+      ok: true as const,
+      model: {
+        label: "fake",
+        local: true,
+        async complete(req: { user: string }) {
+          calls.push(req.user);
+          return reply(req.user);
+        }
+      }
+    })
+  });
+  const answer = (value: number | boolean, confidence: number, evidence: string) => JSON.stringify({ value, confidence, evidence });
+  const judged: RoutineStep[] = [
+    { do: "open", url: "$scope.start[0]" },
+    { do: "locate", id: "updates", target: "updates", strategies: ["structured_data"], min_confidence: 0.6, on_low: "skip" },
+    { do: "diff", id: "fresh", items: "$updates", against: "state.seen", key: ["url"] },
+    {
+      do: "for_each",
+      items: "$fresh",
+      limit: 10,
+      steps: [
+        { do: "infer", id: "rel", question: "Is it relevant?", output: "score", accept_at: 0.7, reject_below: 0.3, on_uncertain: "note_as_maybe" },
+        { do: "branch", on: "rel", accept: [{ do: "note", tag: "relevant", fields: ["$item", "$rel"] }], maybe: [{ do: "note", tag: "unsure", fields: ["$item", "$rel"] }] },
+        { do: "mark_seen" }
+      ]
+    }
+  ];
+
+  it("judges, branches, stores the verdict in notes, and keeps prompts out of logs and summaries", async () => {
+    const calls: string[] = [];
+    engine.dispose();
+    engine = build({ model: modelOf((user) => (user.includes("Article 1") ? answer(0.9, 0.9, "About Article 1") : answer(0.5, 0.9, "About Article 2")), calls) });
+    browser.pages.set(START, listing([article(1), article(2)]));
+    const id = addRoutine(spec({}, judged));
+    const run = await runAndWait(id);
+    expect(run.status).toBe("completed");
+    expect(calls).toHaveLength(2);
+    const notes = engine.listNotes(id).sort((a, b) => a.fields.title!.localeCompare(b.fields.title!));
+    expect(notes.map((n) => [n.fields.tag, n.maybe ?? false, n.fields.rel_confidence, n.fields.rel_evidence])).toEqual([
+      ["relevant", false, "0.90", "About Article 1"],
+      ["unsure", true, "0.90", "About Article 2"]
+    ]);
+    expect(engine.getMemory(id).sets.seen).toBe(2);
+    const detail = engine.getRun(id, run.id)!;
+    const everything = [run.summary, ...detail.log.map((l) => l.message)].join("\n");
+    expect(everything).not.toMatch(/Article \d|QUESTION|untrusted_data|About/);
+  });
+
+  it("ends needs_human, pausing an interval routine, when the model is gone", async () => {
+    engine.dispose();
+    engine = build({ model: { resolve: async () => ({ ok: false as const, reason: "Claude Code is not available: not installed.", chosen: true }) } });
+    engine.start();
+    browser.pages.set(START, listing([article(1)]));
+    const id = addRoutine(intervalSpec("1h", {}, { steps: judged }));
+    clock.advance(60_000);
+    await engine.whenIdle();
+    expect(engine.listRuns(id)[0]!.status).toBe("needs_human");
+    expect(store.get(id)!.state).toBe("paused");
+  });
+
+  it("stops the routine when a when_inferred condition is judged to hold", async () => {
+    engine.dispose();
+    const model = modelOf((user) => (/QUESTION: Is this true\? The topic is resolved/.test(user) ? answer(true, 0.95, "Article 1") : answer(0.9, 0.9, "Article 1")));
+    engine = build({ model });
+    browser.pages.set(START, listing([article(1)]));
+    const stoppable = spec({ stop: { any: [{ when_inferred: "The topic is resolved", confidence: 0.9 }] } }, [
+      ...judged.slice(0, 3),
+      { do: "for_each", items: "$fresh", limit: 5, steps: [{ do: "note", tag: "update", fields: ["$item"] }, { do: "mark_seen" }] }
+    ]);
+    const id = addRoutine(stoppable);
+    const run = await runAndWait(id);
+    expect(run.status).toBe("completed");
+    expect(store.get(id)!.state).toBe("stopped");
+    const log = engine.getRun(id, run.id)!.log.map((l) => l.message);
+    expect(log.some((m) => /Stop condition met \(judged: The topic is resolved\); the routine was stopped\./.test(m))).toBe(true);
+
+    // The same condition judged false leaves the routine running.
+    engine.dispose();
+    engine = build({ model: modelOf(() => answer(false, 0.95, "Article 1")) });
+    const id2 = addRoutine(stoppable);
+    await runAndWait(id2);
+    expect(store.get(id2)!.state).toBe("approved");
+  });
+
+  it("does not evaluate a when_inferred condition without a model, and the run still completes", async () => {
+    browser.pages.set(START, listing([article(1)]));
+    const id = addRoutine(spec({ stop: { any: [{ when_inferred: "The topic is resolved", confidence: 0.9 }] } }));
+    const run = await runAndWait(id);
+    expect(run.status).toBe("completed");
+    expect(store.get(id)!.state).toBe("approved");
   });
 });
 

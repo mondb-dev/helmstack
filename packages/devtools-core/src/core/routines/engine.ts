@@ -30,6 +30,7 @@ import {
 } from "../stores/routine-data-store.js";
 import { RoutineError, isValidRoutineId, type RoutineAction } from "../stores/routine-store.js";
 import { executeRoutine, type ExecutorResult, type RobotsFetcher, type RoutineBrowser } from "./executor.js";
+import type { ModelResolver } from "./routine-model.js";
 import {
   DEFAULT_PAUSE_AFTER,
   computeNextRun,
@@ -67,6 +68,8 @@ export type RoutineEngineOptions = {
   data: RoutineDataStore;
   browser: RoutineBrowser;
   fetchRobots: RobotsFetcher;
+  /** Which model answers judgments. Without one, a judgment ends a run asking for a model. */
+  model?: ModelResolver;
   now?: () => number;
   timers?: EngineTimers;
   /** Sleep used for rate limiting and `wait` steps; resolves early when the signal aborts. */
@@ -396,7 +399,7 @@ export class RoutineEngine {
         const count = key === "notes" ? this.data.noteCount(id) : (state.sets[key]?.length ?? state.logs[key]?.length ?? 0);
         if (count >= at_least) return `${key} reached ${at_least}`;
       }
-      // when_inferred needs a model; it is never evaluated in this version.
+      // when_inferred needs a model: the executor judges it at the end of a run (see `ExecutorResult.stopReason`).
     }
     return null;
   }
@@ -452,6 +455,7 @@ export class RoutineEngine {
           now: this.now,
           sleep: this.options.sleep ?? realSleep,
           random: () => randomBytes(3).toString("hex"),
+          ...(this.options.model ? { resolveModel: () => this.options.model!.resolve() } : {}),
           ...(this.options.defaultPageDelayMs !== undefined ? { defaultPageDelayMs: this.options.defaultPageDelayMs } : {}),
           ...(this.options.navTimeoutMs !== undefined ? { navTimeoutMs: this.options.navTimeoutMs } : {}),
           ...(this.options.maxRuntimeMs !== undefined ? { maxRuntimeMs: this.options.maxRuntimeMs } : {})
@@ -462,6 +466,7 @@ export class RoutineEngine {
           spec,
           state,
           signal: controller.signal,
+          recentNotes: this.recentNotes(id),
           log: (level, message, step) => this.addLog(active, level, message, step),
           onProgress: (counts) => {
             active.detail.pagesVisited = counts.pages;
@@ -551,7 +556,7 @@ export class RoutineEngine {
         const current = this.routines.get(id);
         if (spec && current && current.state === "approved" && outcome !== "cancelled") {
           const pauseAfter = spec.on_failure?.pause_after ?? DEFAULT_PAUSE_AFTER;
-          const stop = this.stopReason(id, spec, state, endedAt);
+          const stop = this.stopReason(id, spec, state, endedAt) ?? result.stopReason ?? null;
           if (stop) {
             toTransition = { action: "stop", why: `Stop condition met (${stop}); the routine was stopped.` };
           } else if (outcome === "failed" && state.consecutiveFailures >= pauseAfter) {
@@ -604,6 +609,14 @@ export class RoutineEngine {
       } catch {
         /* a listener must not break a run */
       }
+    }
+  }
+
+  private recentNotes(id: string): RoutineNote[] {
+    try {
+      return this.data.listNotes(id, 30);
+    } catch {
+      return [];
     }
   }
 

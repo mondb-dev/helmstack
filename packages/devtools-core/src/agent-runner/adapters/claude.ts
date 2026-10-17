@@ -8,7 +8,7 @@ import { classifyFailure, readJsonFile, shortToolName, toolSummary, writePrivate
 const SERVER = "helmstack";
 
 /** Built-in Claude Code tools. Disabled via `--tools ""`; also denied explicitly (belt and braces). */
-const DENIED_TOOLS = [
+export const DENIED_TOOLS = [
   "Bash",
   "BashOutput",
   "KillShell",

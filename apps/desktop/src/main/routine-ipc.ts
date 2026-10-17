@@ -11,11 +11,14 @@ import type {
   RoutineDetail,
   RoutineEngineStatus,
   RoutineMemory,
+  RoutineModelChoice,
+  RoutineModelStatus,
   RoutineNote,
   RoutineRunDetail,
   RoutineRunSummary,
   RoutineSummary
 } from "../../../../packages/shared/src/index.js";
+import { parseRoutineModelChoice } from "../../../../packages/devtools-core/src/core/routines/routine-model.js";
 import { isValidRunId } from "../../../../packages/devtools-core/src/core/stores/routine-data-store.js";
 import { isValidRoutineId } from "../../../../packages/devtools-core/src/core/stores/routine-store.js";
 
@@ -38,6 +41,8 @@ export type RoutineIpcDeps = {
     getRoutineMemory(id: string): RoutineMemory;
     clearRoutineMemory(id: string): void;
     setRoutineKillSwitch(on: boolean): RoutineEngineStatus;
+    getRoutineModel(): Promise<RoutineModelStatus>;
+    setRoutineModel(choice: RoutineModelChoice | null): Promise<RoutineModelStatus>;
   };
   /** True when the IPC sender is the shell window's own renderer. */
   isShellSender(sender: unknown): boolean;
@@ -63,6 +68,15 @@ export function parseNoteLimit(value: unknown): number | undefined {
 export function parseSwitch(value: unknown): boolean {
   if (typeof value !== "boolean") throw new Error("The kill switch must be on or off.");
   return value;
+}
+
+/**
+ * The model for routine judgments: null clears it; otherwise a runtime from the agent CLI list and,
+ * if given, a model id that starts with a letter or digit (so it can never be read as a flag).
+ */
+export function parseModelChoice(value: unknown): RoutineModelChoice | null {
+  if (value === null) return null;
+  return parseRoutineModelChoice(value);
 }
 
 export function createRoutineIpc(deps: RoutineIpcDeps) {
@@ -138,6 +152,14 @@ export function createRoutineIpc(deps: RoutineIpcDeps) {
     setKillSwitch(sender: unknown, rawOn: unknown): RoutineEngineStatus {
       guard(sender);
       return deps.core.setRoutineKillSwitch(parseSwitch(rawOn));
+    },
+    getModel(sender: unknown): Promise<RoutineModelStatus> {
+      guard(sender);
+      return deps.core.getRoutineModel();
+    },
+    setModel(sender: unknown, rawChoice: unknown): Promise<RoutineModelStatus> {
+      guard(sender);
+      return deps.core.setRoutineModel(parseModelChoice(rawChoice));
     }
   };
 }

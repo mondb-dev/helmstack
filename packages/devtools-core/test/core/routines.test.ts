@@ -139,7 +139,7 @@ describe("HelmstackCore routines", () => {
     }
   });
 
-  it("keeps the phase-2 boundary: no model calls, no filling, clicking or submitting", async () => {
+  it("keeps the boundary: only the model runtime files reach a model; nothing fills, clicks or submits", async () => {
     const { readFileSync, readdirSync } = await import("node:fs");
     const dir = path.resolve(__dirname, "../../src/core/routines");
     const files = [
@@ -147,21 +147,48 @@ describe("HelmstackCore routines", () => {
       path.resolve(__dirname, "../../src/core/stores/routine-store.ts"),
       path.resolve(__dirname, "../../src/core/stores/routine-data-store.ts")
     ];
+    // The only files that start a model CLI or talk to a local model server.
+    const MODEL_FILES = new Set(["inference-models.ts", "routine-model.ts"]);
     for (const file of files) {
       const text = readFileSync(file, "utf8");
       const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-      // Nothing that runs other programs or evaluates strings (the page script is data, run via the core).
-      expect(code, file).not.toMatch(/child_process|\beval\(|new Function|http\.request|require\(/);
-      // No model access: no agent runner, no SDK, no model endpoints.
-      expect(code, file).not.toMatch(/agent-runner|@anthropic|anthropic\.com|openai|api\/messages|\/v1\/(chat|messages|completions)/i);
+      // Nothing evaluates strings (the page script is data, run via the core).
+      expect(code, file).not.toMatch(/\beval\(|new Function|http\.request|require\(/);
+      if (!MODEL_FILES.has(path.basename(file))) {
+        // Nothing else runs other programs or reaches a model: no agent runner, no SDK, no model endpoints.
+        expect(code, file).not.toMatch(/child_process|agent-runner|@anthropic|anthropic\.com|openai|api\/messages|\/v1\/(chat|messages|completions)/i);
+      }
       // No acting on a page: no typing, clicking, key presses, uploads, approvals or commands.
       expect(code, file).not.toMatch(/insertText|clickAt|pressKey|setFileInputFiles|executeCommand|approveCommand|submit\(|\.click\(/);
       // The only network fetch is the robots.txt helper.
       if (path.basename(file) !== "robots-fetch.ts") expect(code, file).not.toMatch(/\bfetch\(/);
     }
+    // The executor reaches a model only through the InferenceModel seam, never a runtime directly.
+    const exec = readFileSync(path.join(dir, "executor.ts"), "utf8");
+    expect(exec).not.toMatch(/inference-models|child_process|agent-runner/);
+    // The model runtimes are given no way to act: no tools in any request they build.
+    const models = readFileSync(path.join(dir, "inference-models.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(models).not.toMatch(/--allowedTools|--allowed-tools|--dangerously|bypassPermissions|--yolo|tool_choice|tools:|functions:/);
     // The browser the executor may use can only open a tab, load a URL, read a page and close the tab.
     const executor = readFileSync(path.join(dir, "executor.ts"), "utf8");
     const iface = /export interface RoutineBrowser \{([\s\S]*?)\n\}/.exec(executor)![1]!;
     expect([...iface.matchAll(/^\s{2}(\w+)\(/gm)].map((m) => m[1])).toEqual(["openTab", "navigate", "collect", "closeTab"]);
   });
 });
+
+describe("HelmstackCore routine model", () => {
+  it("starts unset, saves a choice in the data dir, validates it and clears it", async () => {
+    expect(await core.getRoutineModel()).toMatchObject({ choice: null, available: false });
+    await expect(core.setRoutineModel({ cli: "claude", model: "--bad" })).rejects.toThrow();
+    await expect(core.setRoutineModel({ cli: "nope" } as never)).rejects.toThrow();
+    const status = await core.setRoutineModel({ cli: "claude", model: "haiku" });
+    expect(status.choice).toEqual({ cli: "claude", model: "haiku" });
+    expect((await core.getRoutineModel()).choice).toEqual({ cli: "claude", model: "haiku" });
+    // A new core over the same data dir remembers it.
+    const again = new HelmstackCore(new FakeBackend(), { dataDir, routineStore: { log: () => {} } });
+    expect((await again.getRoutineModel()).choice).toEqual({ cli: "claude", model: "haiku" });
+    again.dispose();
+    expect((await core.setRoutineModel(null)).choice).toBeNull();
+  });
+});
+

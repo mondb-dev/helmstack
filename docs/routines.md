@@ -6,13 +6,13 @@ A routine is a procedure an agent writes down from your request and you approve:
 
 ## What this version does
 
-Routines can be **proposed, validated, previewed, approved and now run**, with a limit: this version runs only the **deterministic** steps. It never calls a model.
+Routines can be **proposed, validated, previewed, approved, run, and now judged**: the fixed steps run exactly, and the judgment points (`infer`, `branch`) are answered by a model **you choose**, one question at a time, with no tools.
 
 | Phase | What it adds | Status |
 | --- | --- | --- |
 | 1 | Store, validate, preview in plain language, human approval | Done |
-| 2 | The engine that runs the fixed steps exactly: `manual` and `interval` triggers, memory, notes, run history, kill switch | This version |
-| 3 | The inference runtime that answers the judgment points (`infer`, `branch`) | Later |
+| 2 | The engine that runs the fixed steps exactly: `manual` and `interval` triggers, memory, notes, run history, kill switch | Done |
+| 3 | The inference runtime that answers the judgment points (`infer`, `branch`, `when_inferred` stop conditions) | This version |
 | 4 | Schedule and event triggers (cron, watches that start a routine) | Later |
 | 5 | A learned cache of where things are on a page | Later |
 
@@ -23,10 +23,12 @@ What runs now, and what does not:
 | Trigger `manual`, `interval` | Runs. `manual` runs when you press **Run now**; `interval` also runs on its own |
 | Trigger `schedule`, `event` | Does **not** run. The Routines tab shows "not run yet" with the reason |
 | Steps `open`, `locate`, `extract`, `diff`, `for_each`, `note`, `mark_seen`, `open_item`, `wait`, `report` | Run exactly. `locate` and `extract` use the `structured_data` and `repeating_blocks` strategies |
-| Step `infer` and the `infer` strategy | Never run. The step's own `on_uncertain` / `on_low` policy is applied without a model (see below) |
-| Step `branch` | Hands the run to a person: it can only branch on an `infer` verdict, and there is none |
+| Step `infer` | Runs: one tool-less question to the model you chose, grounded and routed by the thresholds (see "Judgments" below). With no model chosen the run ends as **needs_human** |
+| Step `branch` | Runs the `accept`, `maybe` or `reject` arm that matches the verdict of the earlier `infer` step |
+| The `infer` strategy of `locate` / `extract` | Still not available: the step's own `on_low` policy applies, with a log line |
 | `related` | Never followed. Widening scope needs a person |
-| `stop.budgets.tokens_per_run`, `cost_usd_total`, `stop.any.when_inferred` | Never reached or evaluated: nothing spends tokens or money, and there is no model to infer a stop |
+| `stop.budgets.tokens_per_run`, `stop.any.when_inferred` | Enforced / judged at the end of a completed run (see "Judgments") |
+| `stop.budgets.cost_usd_total` | Not enforced: local models cost nothing and command-line models report no price HelmStack can trust. The run log says so once |
 
 Nothing a run does is an action on a site: it loads pages and reads them. It never fills a field, clicks, submits, posts, buys, downloads, uploads or signs in. Those step kinds do not exist in the vocabulary.
 
@@ -134,11 +136,11 @@ There are **no expressions, property paths, interpolation or evaluation of any k
 | `uses` | Extra context: `state.<key>`, `$item` or an earlier step |
 | `model` | `default`, `cheap` or `strong` |
 
-**Routing.** For `score`, the thresholds apply to the score. For `label`, `bool` and `text`, they apply to the reported confidence. At or above `accept_at` the result is accepted, below `reject_below` it is rejected, and anything in between is **uncertain** and handled by `on_uncertain`. A `branch` then runs its `accept`, `maybe` or `reject` arm.
+**Routing.** For `score`, the thresholds apply to the score. For `label` and `text`, they apply to the reported confidence. For `bool`, they apply to the support for "true": the confidence when the answer is true, and one minus the confidence when it is false, so a confident "no" is a reject and not an accept. At or above `accept_at` the result is accepted, below `reject_below` it is rejected, and anything in between is **uncertain** and handled by `on_uncertain`. A `branch` then runs its `accept`, `maybe` or `reject` arm.
 
 ### Confidence is a guide, not a measurement
 
-A model's own confidence number is **not calibrated**: "0.9" from a model does not mean it is right nine times in ten. The thresholds are therefore only part of the design. When the engine arrives it will not trust a single self-reported number. It will use several samples, require a quote from the page that grounds the answer (`evidence: "quote"`), and send borderline results to the `maybe` path by default, so doubtful items are kept for you to look at rather than dropped or trusted. Treat the thresholds as a way to say how cautious you want to be, and prefer `note_as_maybe` and `ask_human` over `skip`. A routine whose every uncertain outcome is `skip` is flagged (`no_human_fallback`).
+A model's own confidence number is **not calibrated**: "0.9" from a model does not mean it is right nine times in ten. The thresholds are therefore only part of the design. The engine does not trust a single self-reported number. It can use several samples, it requires a quote from the page that grounds the answer (`evidence: "quote"`), and it sends borderline, unreadable, ungrounded or disputed results to the uncertain path, so doubtful items are kept for you to look at rather than dropped or trusted. Treat the thresholds as a way to say how cautious you want to be, and prefer `note_as_maybe` and `ask_human` over `skip`. A routine whose every uncertain outcome is `skip` is flagged (`no_human_fallback`).
 
 ### related
 
@@ -359,8 +361,8 @@ Reading it: open the start page, locate the list of dated updates, keep only the
 - At most **one run per routine** at a time and **2 runs at once** overall. A third waits for the next scheduler pass.
 - **Cancel** ends the current run. **Pausing, stopping or deleting** a routine cancels its run too, and so does **replacing** it with an edit you approve.
 - **Failures.** A run that fails is retried sooner than the interval, with a fixed or exponential backoff (2 minutes, 4, 8, and so on, never longer than the interval). After 3 failed runs in a row (or the spec's `on_failure.pause_after`) the routine is **paused** automatically, with a line in the run log. Resuming it starts with a clean slate.
-- **Needs a person.** If a scheduled run ends as `needs_human` (see "No model yet"), the routine is paused instead of retrying every interval for nothing.
-- **Stop conditions.** `after_runs`, `after_days` and `when_count` are checked after each run (and `after_days` also while idle). When one fires the routine is **stopped**, with a line in the run log. `when_inferred` is not evaluated.
+- **Needs a person.** If a scheduled run ends as `needs_human` (see "Judgments"), the routine is paused instead of retrying every interval for nothing.
+- **Stop conditions.** `after_runs`, `after_days` and `when_count` are checked after each run (and `after_days` also while idle). When one fires the routine is **stopped**, with a line in the run log. `when_inferred` is judged by the model at the end of a run that completed (see "Judgments").
 - **Kill switch.** The switch at the top of the Routines tab aborts every running routine and starts nothing until you turn it off, whatever the triggers say. It is remembered across restarts. There is no agent route for it.
 
 ### Scope, politeness and budgets
@@ -374,22 +376,56 @@ Every page a run loads is checked first:
 
 A refused or unreadable page inside a `for_each` skips that item and the run continues; outside a loop it fails the run.
 
-### No model yet
+### Judgments
 
-When a run reaches something that needs judgment, it uses the spec's own policy and never asks a model:
+A judgment is **one question to a model, with nothing it can do**. HelmStack sends a fixed instruction, the spec's question, and the `uses` data (page text copied from the pages the routine read), and the model can only reply with one JSON object:
 
-| Where | Policy | Result |
-| --- | --- | --- |
-| `infer` step | `on_uncertain: skip` | Skips the current item (or the step, outside a loop) and carries on |
-| `infer` step | `note_as_maybe`, `ask_human`, `retry_more_context` | The run ends as **needs_human**, with a plain log line |
-| `locate`: nothing matched with enough confidence | `on_low: skip` | The list is empty; the run carries on |
-| | `ask_human` | The run ends as **needs_human** |
-| | `fail` | The run ends as **failed** |
-| `extract`: a required field could not be read | inside a `for_each` | The item is skipped |
-| | outside a loop | **needs_human** if the step lists `infer`, otherwise **failed** |
-| `branch` | any | The run ends as **needs_human** |
+```json
+{ "value": 0.82, "confidence": 0.9, "evidence": "a sentence copied from the page" }
+```
 
-The canonical example above reaches its first `infer` step on the first new item, so in this version it ends as needs_human after finding the list and noting nothing, and (as a scheduled routine) it is paused. It becomes useful in phase 3. A routine made only of deterministic steps, such as "note every new link in this list", runs fully today.
+`value` has the spec's `output` type (`score` 0 to 1, one of the `labels`, `bool`, or short text up to `text<=N`). Labels for `label` come only from the spec.
+
+**What the model can and cannot do.** It receives text and returns text. It is started with no tools, no MCP servers, no browser, no files and no shell: Claude Code runs with `--tools=` and an empty `--strict-mcp-config`, no settings, no skills and no saved session; Ollama and OpenAI-compatible servers get a plain chat request with no `tools` field; Gemini CLI runs under a deny-all policy and no MCP server (this one could not be verified end to end, so prefer Claude or a local model). Page text is wrapped as untrusted data and the instruction says never to follow it, but the real protection is that **nothing is callable**: an instruction hidden in a page has nothing to call. Local models are reached on loopback only, with redirects refused. A page cannot choose, change or read the model (that is a setting only you have), cannot widen the routine's scope, and cannot add steps.
+
+**How an answer is checked.**
+
+- It is parsed strictly. A fenced block or a sentence around the JSON is tolerated; two different answers in one reply, the wrong type, a label that is not in the list, a missing or non-numeric confidence, or a reply over 4,000 characters is **invalid**, and invalid means uncertain.
+- Confidence is clamped to 0 to 1.
+- With `evidence: "quote"` (the default), the quote must be a real passage of the text that was sent (compared ignoring case, runs of whitespace and curly quotes, at least 6 characters). **A quote that is not in the text makes the result uncertain, whatever confidence the model claims.** For a "no" the model is asked to quote what the text is actually about; small local models often cannot, so with them expect more uncertain results than with Claude. Use `evidence: "none"` only when you accept an unchecked answer.
+- With `samples` above 1 the model is asked that many times (at most 5). An answer needs a strict majority of all samples to win; invalid and ungrounded samples count against it. The result's confidence is the mean confidence of the agreeing samples times their share of all samples (3 of 3 agreeing at 0.9 is 0.9; 2 of 3 is 0.6). Scores agree when within 0.2 of the median, and the median is used. A tie or no majority is uncertain.
+- The stored evidence is the verified quote, plain text, at most 200 characters.
+
+**What happens next** is the spec's own, never the model's:
+
+| Result | What the run does |
+| --- | --- |
+| Routed value at or above `accept_at` | Accepted |
+| Below `reject_below` | Rejected (the run carries on; a `branch` can act on it) |
+| In between, or invalid, ungrounded or disputed | Uncertain, by `on_uncertain` |
+| `note_as_maybe` | The rest of that item is recorded, and its notes are marked **maybe** |
+| `ask_human` | The run ends as **needs_human**, with nothing guessed and nothing marked seen |
+| `skip` | The item is skipped (or the step, outside a loop). A later `branch` has nothing to follow |
+| `retry_more_context` | One more try with a larger window (24,000 characters instead of 6,000) and the page's own summary added; if that adds nothing, or is still uncertain, it ends as needs_human |
+
+The verdict is kept in the step's binding, so a later `note` that lists `$<step id>` gets text fields: `<id>` (the value), `<id>_confidence`, `<id>_verdict` and, when there is one, `<id>_evidence`. `branch` runs the arm for `accept`, `maybe` or `reject`; a `maybe` arm's notes are marked maybe.
+
+**When there is no model, or it fails.** Nothing is guessed:
+
+- No model chosen: the run ends as **needs_human** with "Choose a model for routines in the Routines tab". A routine that never judges anything never needs one.
+- The chosen model is not installed, not signed in or not running: **needs_human**, immediately.
+- A call fails or times out (90 seconds): retried `on_failure.retries` times (one retry when the spec has no `on_failure`) with its backoff, then the run ends **failed** when the spec has `on_failure` (so its pause rule applies) and **needs_human** when it does not.
+- A scheduled routine that ends needs_human is paused, as before.
+
+**Budgets.** Before every call the engine estimates tokens as characters divided by 4 (the prompt plus up to 400 for the answer). A call that would pass `stop.budgets.tokens_per_run` is not made and the run ends as **budget**. Local models cost no money; for command-line models the cost is not tracked.
+
+**`stop.any.when_inferred`.** At the end of a run that completed, the model is asked twice (both answers must agree and quote the notes) whether the condition holds, over this run's notes and the newest earlier ones. If it holds at or above the condition's `confidence`, the routine is **stopped**, with "Stop condition met (judged: ...)" in the run log. If there are no notes, no model, or the model fails, the condition is simply not checked that time.
+
+**What is never recorded.** The prompt and the model's reply are not logged and never reach the activity feed or the event stream. Run log lines say only what happened ("accepted: value 0.82, confidence 0.90, 3 of 3 agree, quote verified"); the verified quote (200 characters at most) lives in the note, shown as plain text. A `text` answer is logged by its length only.
+
+**Choosing the model.** In the Routines tab you pick a runtime (Claude Code, Gemini CLI, Ollama or an OpenAI-compatible local server) and, where it applies, a model id. It is saved in `routine-model.json` in the data directory (atomic write, mode 0600) and can only be changed from the window: there is no HTTP route, MCP tool or SDK method for it. The daemon, which has no window, reads `HELMSTACK_ROUTINE_MODEL=cli[:model]` (for example `claude`, `claude:haiku` or `ollama:llama3.2:3b`) while nothing is saved. A per-step `model` of `cheap` or `strong` does not pick a different model: every judgment uses the one you chose. CLI runtimes are not started on Windows yet; use a local model there.
+
+**What still waits.** `related` is never followed, and a `report` step logs that reports from routines are not available yet. Both come later; neither calls the model.
 
 `locate` is deterministic and does not read `target` (the plain-language description). It uses what the page says about itself: JSON-LD structured data (confidence 0.9) or the largest group of similar sibling blocks that each carry a link (confidence 0.4 to 0.85, from how many there are and how complete they are). `min_confidence` decides whether that is good enough. Items have the fields `title`, `url`, `date` and `summary`, and `extract` fields use those names (with the usual aliases such as `name` for `title`).
 
@@ -412,7 +448,7 @@ A note's fields and a run's log lines contain text copied from web pages. They a
 
 ## What the preview and risk flags say
 
-The preview is built from the spec alone, with no model, so the same spec always reads the same. It has a one-sentence headline, 5 to 10 bullets and risk flags with stable codes.
+The preview is built from the spec alone (no model is asked), so the same spec always reads the same. It has a one-sentence headline, 5 to 10 bullets and risk flags with stable codes.
 
 | Code | Level | Raised when |
 | --- | --- | --- |
@@ -426,14 +462,16 @@ The preview is built from the spec alone, with no model, so the same spec always
 | `many_pages` | info | More than 50 pages per run |
 | `no_evidence_check` | info | A judgment sets `evidence` to `none` |
 | `no_human_fallback` | info | Every `on_uncertain` is `skip` |
+| `judged_by_model` | info | There is a judgment or a `when_inferred` stop condition: the model you choose answers it, sees only page text, and has no tools |
 | `related_widens_scope` | info | `related` is present |
 
 ## Safety model
 
 - **Agents propose, humans approve.** Approve, reject, pause, resume, stop and delete exist only as shell actions. The HTTP server and the MCP server have no route or tool for them, and a test asserts it. An agent can read routines and withdraw its own pending proposal.
-- **Only approved routines run, and only deterministic steps.** The engine runs `manual` and `interval` routines you approved. It never calls a model, and nothing in its vocabulary fills, clicks, submits, posts, buys, downloads or signs in; a test asserts that the engine code has no such calls. Running, cancelling, clearing memory and the kill switch are shell actions with no HTTP or MCP route.
+- **Only approved routines run.** The engine runs `manual` and `interval` routines you approved. Its only use of a model is the tool-less judgment described above, and nothing in its vocabulary fills, clicks, submits, posts, buys, downloads or signs in; a test asserts that the engine code has no such calls. Running, cancelling, clearing memory and the kill switch are shell actions with no HTTP or MCP route.
 - **Every page is checked against scope first**, then `robots.txt` for followed pages, a page budget and a rate limit. See "Scope, politeness and budgets".
-- **What a run read is untrusted.** Notes and logs hold page text and are never treated as instructions.
+- **What a run read is untrusted.** Notes and logs hold page text and are never treated as instructions. Page text sent to the model is labeled untrusted, and the model has no tools, so it cannot act on it.
+- **The model is yours to choose.** Only the window can pick it. A routine, an agent or a page cannot read or change the setting.
 - **The vocabulary is closed.** The model fills a schema. It cannot add a capability, and no string in a spec is ever evaluated.
 - **A spec can only add caution.** There is no field to disable approvals, enable stealth, type credentials or turn off a guardrail. Fields that look like that are rejected by name.
 - **Widening scope needs a human**, always: `related.needs` is fixed to `human_approval`.
@@ -450,6 +488,10 @@ The preview is built from the spec alone, with no model, so the same spec always
 | Steps | 60 in total, nested 4 levels deep |
 | `for_each.limit` | 100 |
 | `samples` | 5 |
+| Page text sent per judgment | 6,000 characters (24,000 for a `retry_more_context` retry) |
+| Model answer | 4,000 characters; 400 tokens for local models |
+| Model call time | 90 seconds |
+| Stored evidence quote | 200 characters |
 | State keys | 12 |
 | `max_pages_per_run` | 200 |
 | Routines stored | 50. A 51st proposal is refused with a clear message instead of deleting anything; delete some in the window |

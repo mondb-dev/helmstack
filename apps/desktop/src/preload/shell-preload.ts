@@ -98,6 +98,8 @@ const browserShell: BrowserShellBridge = {
   getRoutineMemory: (id) => ipcRenderer.invoke(BrowserShellChannel.GetRoutineMemory, id),
   clearRoutineMemory: (id) => ipcRenderer.invoke(BrowserShellChannel.ClearRoutineMemory, id),
   setRoutineKillSwitch: (on) => ipcRenderer.invoke(BrowserShellChannel.SetRoutineKillSwitch, on),
+  getRoutineModel: () => ipcRenderer.invoke(BrowserShellChannel.GetRoutineModel),
+  setRoutineModel: (choice) => ipcRenderer.invoke(BrowserShellChannel.SetRoutineModel, choice),
   // Connect an agent
   getMcpInstallOverview: () => ipcRenderer.invoke(BrowserShellChannel.GetMcpInstallOverview),
   runMcpInstall: (request) => ipcRenderer.invoke(BrowserShellChannel.RunMcpInstall, request),

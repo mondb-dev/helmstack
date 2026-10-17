@@ -29,6 +29,7 @@ The table is generated: the generator scans the source for environment reads and
 | `HELMSTACK_LOCAL_NUM_CTX` | desktop chat (local models) | 8192 | Ollama context window sent as `options.num_ctx`. Clamped to 2048 to 131072. |
 | `HELMSTACK_PORT` | desktop, daemon, MCP server, SDK clients | 7070 | Port of the agent API. The desktop app and daemon listen on it (desktop ignores an invalid value with a console warning and uses 7070); the MCP server connects to it. The daemon's `--port` flag wins. |
 | `HELMSTACK_PROFILE` | desktop, core, MCP server | fe-dev | `fe-dev`, `agent-substrate` or `full`. The last two turn on the opt-in agent surfaces (stealth, social perception, MCP approval/account tools). Unknown values mean `fe-dev`. |
+| `HELMSTACK_ROUTINE_MODEL` | routines (daemon fallback) | unset | `cli[:model]`, for example `claude`, `claude:haiku` or `ollama:llama3.2:3b`: the model that answers routine judgments, used only while no choice is saved from the Routines tab. The model is given no tools. Invalid values are ignored. |
 | `HELMSTACK_SOCIAL` | desktop | off (on with the agent-substrate and full profiles) | Social-surface perception (feeds, posts, composers). Read by the desktop page preload; the daemon does not read it. |
 | `HELMSTACK_STEALTH` | desktop, core | off (on with the agent-substrate and full profiles) | Human-like input timing and the desktop's anti-detection injection. An explicit value wins over the profile. |
 | `HELMSTACK_TEST_HOST` | `npm run serve:test-pages` | 127.0.0.1 | Host of the bundled test-page server. |

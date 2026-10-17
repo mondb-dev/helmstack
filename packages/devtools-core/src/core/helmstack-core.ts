@@ -66,6 +66,8 @@ import type {
   RoutineDetail,
   RoutineEngineStatus,
   RoutineMemory,
+  RoutineModelChoice,
+  RoutineModelStatus,
   RoutineNote,
   RoutineRunDetail,
   RoutineRunSummary,
@@ -104,6 +106,7 @@ import { RoutineSpecInvalidError } from "./routines/errors.js";
 import type { RoutineBrowser } from "./routines/executor.js";
 import { PAGE_COLLECTOR_SCRIPT } from "./routines/page-data.js";
 import { fetchRobotsTxt } from "./routines/robots-fetch.js";
+import { RoutineModelManager, type RoutineModelManagerOptions } from "./routines/routine-model.js";
 import { buildPreview, countSteps, diffPreviews, triggerText } from "./routines/preview.js";
 import { validateRoutineSpec } from "./routines/validate.js";
 import { ApprovalPolicyStore } from "./stores/approval-policy-store.js";
@@ -150,6 +153,8 @@ export type HelmstackCoreOptions = {
    * Routine engine seams (tests): clock, timers, sleep, robots fetcher, tick and page delays.
    * `autoStart: false` leaves the scheduler off (manual runs still work).
    */
+  /** Routine model seams (tests): detection options, spawn, fetch, a fake model. The choice itself lives in the data dir. */
+  routineModel?: Partial<Omit<RoutineModelManagerOptions, "dataDir">>;
   routineEngine?: Partial<Pick<RoutineEngineOptions, "now" | "timers" | "sleep" | "random" | "fetchRobots" | "tickMs" | "firstRunDelayMs" | "maxConcurrent" | "defaultPageDelayMs" | "navTimeoutMs" | "maxRuntimeMs">> & {
     autoStart?: boolean;
   };
@@ -194,6 +199,7 @@ export class HelmstackCore implements AgentApi {
   private readonly reportsChangedListeners = new Set<(reports: ReportSummary[], created?: ReportSummary) => void>();
   private readonly routines: RoutineStore;
   private readonly routineEngine: RoutineEngine;
+  private readonly routineModel: RoutineModelManager;
   private readonly routinesChangedListeners = new Set<(routines: RoutineSummary[], proposed?: RoutineSummary) => void>();
   private readonly routineEventListeners = new Set<(event: { type: "proposed" | "changed"; routine: RoutineSummary }) => void>();
 
@@ -217,8 +223,14 @@ export class HelmstackCore implements AgentApi {
     this.routines = new RoutineStore(options.dataDir, options.routineStore);
     this.unsubscribers.push(this.routines.onEvent((event) => this.handleRoutineEvent(event)));
     const { autoStart, ...engineOptions } = options.routineEngine ?? {};
+    this.routineModel = new RoutineModelManager({
+      dataDir: options.dataDir,
+      log: options.routineStore?.log ?? ((m) => console.log(m)),
+      ...options.routineModel
+    });
     this.routineEngine = new RoutineEngine({
       routines: this.routines,
+      model: this.routineModel,
       data: new RoutineDataStore(options.dataDir, { log: options.routineStore?.log ?? ((m) => console.log(m)) }),
       browser: this.routineBrowser(),
       fetchRobots: fetchRobotsTxt,
@@ -1393,6 +1405,19 @@ export class HelmstackCore implements AgentApi {
   /** Human-only. On: abort running routines and start nothing until it is turned off. */
   setRoutineKillSwitch(on: boolean): RoutineEngineStatus {
     return this.routineEngine.setKillSwitch(on);
+  }
+
+  /**
+   * Human-only. Which model answers routine judgments, and whether it can be used right now.
+   * There is no HTTP or MCP route for this.
+   */
+  getRoutineModel(): Promise<RoutineModelStatus> {
+    return this.routineModel.getStatus();
+  }
+
+  /** Human-only. Pass null to clear. Throws on an unknown runtime or a flag-like model id. */
+  setRoutineModel(choice: RoutineModelChoice | null): Promise<RoutineModelStatus> {
+    return this.routineModel.setChoice(choice);
   }
 
   /** Fires when a run starts, makes progress or ends. Returns an unsubscribe function. */

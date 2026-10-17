@@ -164,6 +164,7 @@ const RISK_ORDER = [
   "many_pages",
   "no_evidence_check",
   "no_human_fallback",
+  "judged_by_model",
   "related_widens_scope"
 ] as const;
 const LEVEL_RANK = { high: 0, warning: 1, info: 2 } as const;
@@ -216,6 +217,9 @@ export function assessRisks(spec: RoutineSpec): RoutineRisk[] {
   }
   if (infers.length > 0 && infers.every((s) => s.on_uncertain === "skip")) {
     flag("info", "no_human_fallback", "When a judgment is unsure it skips the item; nothing asks you.");
+  }
+  if (infers.length > 0 || (stop?.any ?? []).some((c) => "when_inferred" in c)) {
+    flag("info", "judged_by_model", "Judgments are answered by the model you choose in the Routines tab. It is sent the text of the pages the routine reads and can only reply with an answer: it has no tools and cannot click, type, browse or open anything.");
   }
   if (spec.related) {
     flag("info", "related_widens_scope", "It looks for related pages. Each one it suggests needs your approval before it is added.");

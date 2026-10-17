@@ -28,7 +28,9 @@ function setup() {
       listRoutineNotes: vi.fn(() => []),
       getRoutineMemory: vi.fn(() => ({ routineId: ID, sets: {}, values: {} })),
       clearRoutineMemory: vi.fn(() => undefined),
-      setRoutineKillSwitch: vi.fn((on: boolean) => ({ enabled: true, killed: on, running: [] }))
+      setRoutineKillSwitch: vi.fn((on: boolean) => ({ enabled: true, killed: on, running: [] })),
+      getRoutineModel: vi.fn(async () => ({ choice: null, available: false })),
+      setRoutineModel: vi.fn(async (choice: { cli: string; model?: string } | null) => ({ choice, available: true }))
     },
     isShellSender: (s: unknown) => s === SHELL
   } satisfies RoutineIpcDeps;
@@ -85,7 +87,9 @@ describe("routine IPC", () => {
       () => ipc.listNotes(stranger, ID),
       () => ipc.memory(stranger, ID),
       () => ipc.clearMemory(stranger, ID),
-      () => ipc.setKillSwitch(stranger, true)
+      () => ipc.setKillSwitch(stranger, true),
+      () => ipc.getModel(stranger),
+      () => ipc.setModel(stranger, { cli: "claude" })
     ];
     for (const call of calls) expect(call).toThrow("only available from the HelmStack window");
     for (const fn of Object.values(deps.core)) expect(fn).not.toHaveBeenCalled();
@@ -127,6 +131,35 @@ describe("routine IPC", () => {
     expect(deps.core.listRoutineNotes).not.toHaveBeenCalled();
     expect(deps.core.setRoutineKillSwitch).not.toHaveBeenCalled();
     expect(deps.core.runRoutineNow).not.toHaveBeenCalled();
+  });
+
+  it("validates the routine model choice before the core", async () => {
+    const { deps, ipc } = setup();
+    await ipc.getModel(SHELL);
+    await ipc.setModel(SHELL, { cli: "claude" });
+    await ipc.setModel(SHELL, { cli: "claude", model: "haiku" });
+    await ipc.setModel(SHELL, { cli: "ollama", model: "llama3.2:3b" });
+    await ipc.setModel(SHELL, null);
+    expect(deps.core.setRoutineModel).toHaveBeenNthCalledWith(1, { cli: "claude" });
+    expect(deps.core.setRoutineModel).toHaveBeenNthCalledWith(2, { cli: "claude", model: "haiku" });
+    expect(deps.core.setRoutineModel).toHaveBeenNthCalledWith(3, { cli: "ollama", model: "llama3.2:3b" });
+    expect(deps.core.setRoutineModel).toHaveBeenNthCalledWith(4, null);
+    const calls = deps.core.setRoutineModel.mock.calls.length;
+    const bad: unknown[] = [
+      undefined,
+      "claude",
+      [],
+      {},
+      { cli: "bash" },
+      { cli: "claude", model: "--dangerously-skip-permissions" },
+      { cli: "claude", model: "-x" },
+      { cli: "claude", model: "a b" },
+      { cli: "claude", model: "a".repeat(81) },
+      { cli: "claude", model: 5 },
+      { cli: "ollama" }
+    ];
+    for (const value of bad) expect(() => ipc.setModel(SHELL, value)).toThrow();
+    expect(deps.core.setRoutineModel).toHaveBeenCalledTimes(calls);
   });
 
   it("does not call the core with a malformed id", () => {
