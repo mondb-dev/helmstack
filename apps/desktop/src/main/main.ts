@@ -429,6 +429,14 @@ function registerIpcHandlers(
     resumeRoutine: async (id) => routineIpc.resume(mainWindow?.webContents, id),
     stopRoutine: async (id) => routineIpc.stop(mainWindow?.webContents, id),
     deleteRoutine: async (id) => routineIpc.delete(mainWindow?.webContents, id),
+    runRoutineNow: async (id) => routineIpc.runNow(mainWindow?.webContents, id),
+    cancelRoutineRun: async (id) => routineIpc.cancelRun(mainWindow?.webContents, id),
+    listRoutineRuns: async (id) => routineIpc.listRuns(mainWindow?.webContents, id),
+    getRoutineRun: async (id, runId) => routineIpc.getRun(mainWindow?.webContents, id, runId),
+    listRoutineNotes: async (id, limit) => routineIpc.listNotes(mainWindow?.webContents, id, limit),
+    getRoutineMemory: async (id) => routineIpc.memory(mainWindow?.webContents, id),
+    clearRoutineMemory: async (id) => routineIpc.clearMemory(mainWindow?.webContents, id),
+    setRoutineKillSwitch: async (on) => routineIpc.setKillSwitch(mainWindow?.webContents, on),
     // Connect an agent (MCP client install); see mcp-install-service.ts
     getMcpInstallOverview: async () => mcpInstall.overview(),
     runMcpInstall: async (request) => mcpInstall.handle(request)
@@ -593,6 +601,17 @@ function registerIpcHandlers(
   ipcMain.handle(BrowserShellChannel.ResumeRoutine, (event, id: unknown) => routineIpc.resume(event.sender, id));
   ipcMain.handle(BrowserShellChannel.StopRoutine, (event, id: unknown) => routineIpc.stop(event.sender, id));
   ipcMain.handle(BrowserShellChannel.DeleteRoutine, (event, id: unknown) => routineIpc.delete(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.RunRoutineNow, (event, id: unknown) => routineIpc.runNow(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.CancelRoutineRun, (event, id: unknown) => routineIpc.cancelRun(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.ListRoutineRuns, (event, id: unknown) => routineIpc.listRuns(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.GetRoutineRun, (event, id: unknown, runId: unknown) => routineIpc.getRun(event.sender, id, runId));
+  ipcMain.handle(BrowserShellChannel.ListRoutineNotes, (event, id: unknown, limit: unknown) => routineIpc.listNotes(event.sender, id, limit));
+  ipcMain.handle(BrowserShellChannel.GetRoutineMemory, (event, id: unknown) => routineIpc.memory(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.ClearRoutineMemory, (event, id: unknown) => routineIpc.clearMemory(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.SetRoutineKillSwitch, (event, on: unknown) => routineIpc.setKillSwitch(event.sender, on));
+  manager.onRoutineRunUpdated((run) => {
+    sendToShell(BrowserShellChannel.RoutineRunUpdated, run);
+  });
   manager.onRoutinesChanged((routines, proposed) => {
     sendToShell(BrowserShellChannel.RoutinesChanged, routines, proposed);
   });

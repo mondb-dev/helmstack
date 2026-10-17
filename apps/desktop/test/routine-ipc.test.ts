@@ -6,19 +6,29 @@ import { createRoutineIpc, parseRoutineId, type RoutineIpcDeps } from "../src/ma
 const SHELL = { shell: true };
 const ID = "rt-20261017-093000-abcdef01";
 const SUMMARY = { id: ID, state: "approved" } as RoutineSummary;
+const RUN_ID = "run-abc123-0123abcd";
+const RUN = { id: RUN_ID, routineId: ID, status: "running" } as never;
 
 function setup() {
   const deps = {
     core: {
       listRoutines: vi.fn(() => [SUMMARY]),
       getRoutine: vi.fn(() => ({ ...SUMMARY, specJson: "{}" }) as never),
-      getRoutineEngineStatus: vi.fn(() => ({ enabled: false, reason: "not yet" })),
+      getRoutineEngineStatus: vi.fn(() => ({ enabled: true, killed: false, running: [] })),
       approveRoutine: vi.fn(() => SUMMARY),
       rejectRoutine: vi.fn(() => SUMMARY),
       pauseRoutine: vi.fn(() => SUMMARY),
       resumeRoutine: vi.fn(() => SUMMARY),
       stopRoutine: vi.fn(() => SUMMARY),
-      deleteRoutine: vi.fn(() => true)
+      deleteRoutine: vi.fn(() => true),
+      runRoutineNow: vi.fn(() => RUN),
+      cancelRoutineRun: vi.fn(() => undefined),
+      listRoutineRuns: vi.fn(() => [RUN]),
+      getRoutineRun: vi.fn(() => null),
+      listRoutineNotes: vi.fn(() => []),
+      getRoutineMemory: vi.fn(() => ({ routineId: ID, sets: {}, values: {} })),
+      clearRoutineMemory: vi.fn(() => undefined),
+      setRoutineKillSwitch: vi.fn((on: boolean) => ({ enabled: true, killed: on, running: [] }))
     },
     isShellSender: (s: unknown) => s === SHELL
   } satisfies RoutineIpcDeps;
@@ -37,7 +47,7 @@ describe("routine IPC", () => {
     const { ipc } = setup();
     expect(ipc.list(SHELL)).toEqual([SUMMARY]);
     expect(ipc.get(SHELL, ID)?.id).toBe(ID);
-    expect(ipc.engineStatus(SHELL)).toEqual({ enabled: false, reason: "not yet" });
+    expect(ipc.engineStatus(SHELL)).toEqual({ enabled: true, killed: false, running: [] });
   });
 
   it("routes each action to the matching core method with only the validated id", () => {
@@ -67,10 +77,56 @@ describe("routine IPC", () => {
       () => ipc.resume(stranger, ID),
       () => ipc.stop(stranger, ID),
       () => ipc.delete(stranger, ID),
-      () => ipc.approve(undefined, ID)
+      () => ipc.approve(undefined, ID),
+      () => ipc.runNow(stranger, ID),
+      () => ipc.cancelRun(stranger, ID),
+      () => ipc.listRuns(stranger, ID),
+      () => ipc.getRun(stranger, ID, RUN_ID),
+      () => ipc.listNotes(stranger, ID),
+      () => ipc.memory(stranger, ID),
+      () => ipc.clearMemory(stranger, ID),
+      () => ipc.setKillSwitch(stranger, true)
     ];
     for (const call of calls) expect(call).toThrow("only available from the HelmStack window");
     for (const fn of Object.values(deps.core)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("routes the run controls with validated arguments only", () => {
+    const { deps, ipc } = setup();
+    expect(ipc.runNow(SHELL, ID)).toBe(RUN);
+    ipc.cancelRun(SHELL, ID);
+    ipc.listRuns(SHELL, ID);
+    ipc.getRun(SHELL, ID, RUN_ID);
+    ipc.listNotes(SHELL, ID, 25);
+    ipc.listNotes(SHELL, ID);
+    ipc.memory(SHELL, ID);
+    ipc.clearMemory(SHELL, ID);
+    expect(ipc.setKillSwitch(SHELL, true)).toMatchObject({ killed: true });
+    expect(deps.core.runRoutineNow).toHaveBeenCalledWith(ID);
+    expect(deps.core.cancelRoutineRun).toHaveBeenCalledWith(ID);
+    expect(deps.core.getRoutineRun).toHaveBeenCalledWith(ID, RUN_ID);
+    expect(deps.core.listRoutineNotes).toHaveBeenNthCalledWith(1, ID, 25);
+    expect(deps.core.listRoutineNotes).toHaveBeenNthCalledWith(2, ID, undefined);
+    expect(deps.core.clearRoutineMemory).toHaveBeenCalledWith(ID);
+    expect(deps.core.setRoutineKillSwitch).toHaveBeenCalledWith(true);
+  });
+
+  it("rejects malformed run ids, note limits and kill switch values before the core", () => {
+    const { deps, ipc } = setup();
+    for (const bad of ["../x", "", 5, null, `${RUN_ID}/..`, { id: RUN_ID }]) {
+      expect(() => ipc.getRun(SHELL, ID, bad)).toThrow("Invalid run id.");
+    }
+    for (const bad of [0, -1, 1.5, 1001, "10", NaN]) {
+      expect(() => ipc.listNotes(SHELL, ID, bad)).toThrow("Invalid note limit.");
+    }
+    for (const bad of ["true", 1, null, undefined, {}]) {
+      expect(() => ipc.setKillSwitch(SHELL, bad)).toThrow("kill switch must be on or off");
+    }
+    expect(() => ipc.runNow(SHELL, "nope")).toThrow("Invalid routine id.");
+    expect(deps.core.getRoutineRun).not.toHaveBeenCalled();
+    expect(deps.core.listRoutineNotes).not.toHaveBeenCalled();
+    expect(deps.core.setRoutineKillSwitch).not.toHaveBeenCalled();
+    expect(deps.core.runRoutineNow).not.toHaveBeenCalled();
   });
 
   it("does not call the core with a malformed id", () => {

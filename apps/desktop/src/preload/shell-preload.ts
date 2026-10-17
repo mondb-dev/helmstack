@@ -12,6 +12,7 @@ import {
   type HumanHandoffRecord,
   type PendingApproval,
   type ReportSummary,
+  type RoutineRunSummary,
   type RoutineSummary,
   type TabId,
   type TabOverrideKind,
@@ -89,6 +90,14 @@ const browserShell: BrowserShellBridge = {
   resumeRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.ResumeRoutine, id),
   stopRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.StopRoutine, id),
   deleteRoutine: (id) => ipcRenderer.invoke(BrowserShellChannel.DeleteRoutine, id),
+  runRoutineNow: (id) => ipcRenderer.invoke(BrowserShellChannel.RunRoutineNow, id),
+  cancelRoutineRun: (id) => ipcRenderer.invoke(BrowserShellChannel.CancelRoutineRun, id),
+  listRoutineRuns: (id) => ipcRenderer.invoke(BrowserShellChannel.ListRoutineRuns, id),
+  getRoutineRun: (id, runId) => ipcRenderer.invoke(BrowserShellChannel.GetRoutineRun, id, runId),
+  listRoutineNotes: (id, limit) => ipcRenderer.invoke(BrowserShellChannel.ListRoutineNotes, id, limit),
+  getRoutineMemory: (id) => ipcRenderer.invoke(BrowserShellChannel.GetRoutineMemory, id),
+  clearRoutineMemory: (id) => ipcRenderer.invoke(BrowserShellChannel.ClearRoutineMemory, id),
+  setRoutineKillSwitch: (on) => ipcRenderer.invoke(BrowserShellChannel.SetRoutineKillSwitch, on),
   // Connect an agent
   getMcpInstallOverview: () => ipcRenderer.invoke(BrowserShellChannel.GetMcpInstallOverview),
   runMcpInstall: (request) => ipcRenderer.invoke(BrowserShellChannel.RunMcpInstall, request),
@@ -148,6 +157,11 @@ const browserShell: BrowserShellBridge = {
       callback(reports, created);
     ipcRenderer.on(BrowserShellChannel.ReportsChanged, listener);
     return () => ipcRenderer.removeListener(BrowserShellChannel.ReportsChanged, listener);
+  },
+  onRoutineRunUpdated: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, run: RoutineRunSummary) => callback(run);
+    ipcRenderer.on(BrowserShellChannel.RoutineRunUpdated, listener);
+    return () => ipcRenderer.removeListener(BrowserShellChannel.RoutineRunUpdated, listener);
   },
   onRoutinesChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, routines: RoutineSummary[], proposed?: RoutineSummary) =>

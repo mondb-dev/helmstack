@@ -4,7 +4,15 @@ import type { PageObservation, PerceptionResult } from "./perception.js";
 import type { ElementPickResult, PageScreenshot, PageSnapshot, TabId, TabSummary, ViewportRect } from "./browser.js";
 import type { ApprovalPolicyRecord } from "./policy.js";
 import type { ReportFormat, ReportSummary } from "./report.js";
-import type { RoutineDetail, RoutineEngineStatus, RoutineSummary } from "./routine.js";
+import type {
+  RoutineDetail,
+  RoutineEngineStatus,
+  RoutineMemory,
+  RoutineNote,
+  RoutineRunDetail,
+  RoutineRunSummary,
+  RoutineSummary
+} from "./routine.js";
 import type { AgentChatEvent, AgentConversationSummary, AgentRunnerStatus, StartAgentConversationInput } from "./agent-chat.js";
 import type { AgentActivityEntry, AgentConnectionStatus, TabOverrideKind, TabOverrides } from "./shell-status.js";
 import type { ShortcutId } from "./shortcuts.js";
@@ -66,6 +74,14 @@ export const BrowserShellChannel = {
   ResumeRoutine: "browser-shell:resume-routine",
   StopRoutine: "browser-shell:stop-routine",
   DeleteRoutine: "browser-shell:delete-routine",
+  RunRoutineNow: "browser-shell:run-routine-now",
+  CancelRoutineRun: "browser-shell:cancel-routine-run",
+  ListRoutineRuns: "browser-shell:list-routine-runs",
+  GetRoutineRun: "browser-shell:get-routine-run",
+  ListRoutineNotes: "browser-shell:list-routine-notes",
+  GetRoutineMemory: "browser-shell:get-routine-memory",
+  ClearRoutineMemory: "browser-shell:clear-routine-memory",
+  SetRoutineKillSwitch: "browser-shell:set-routine-kill-switch",
   // Reports (files live in the app's data directory; the shell never reads their contents)
   ListReports: "browser-shell:list-reports",
   SaveReportAs: "browser-shell:save-report-as",
@@ -107,7 +123,8 @@ export const BrowserShellChannel = {
   ConnectionStatusChanged: "browser-shell:connection-status-changed",
   AgentChatEvent: "browser-shell:agent-chat-event",
   ReportsChanged: "browser-shell:reports-changed",
-  RoutinesChanged: "browser-shell:routines-changed"
+  RoutinesChanged: "browser-shell:routines-changed",
+  RoutineRunUpdated: "browser-shell:routine-run-updated"
 } as const;
 
 /** Zoom steps the human can request for a tab. */
@@ -206,6 +223,20 @@ export type BrowserShellApi = {
   /** approved | paused -> stopped. */
   stopRoutine(id: string): Promise<RoutineSummary>;
   deleteRoutine(id: string): Promise<void>;
+  /** Start a run of an approved routine now. Rejects if it is not approved, is already running, or the kill switch is on. */
+  runRoutineNow(id: string): Promise<RoutineRunSummary>;
+  /** Cancel the running run of this routine (no-op if none). */
+  cancelRoutineRun(id: string): Promise<void>;
+  /** Newest first, capped at the 50 most recent runs per routine. */
+  listRoutineRuns(id: string): Promise<RoutineRunSummary[]>;
+  getRoutineRun(id: string, runId: string): Promise<RoutineRunDetail | null>;
+  /** Newest first. */
+  listRoutineNotes(id: string, limit?: number): Promise<RoutineNote[]>;
+  getRoutineMemory(id: string): Promise<RoutineMemory>;
+  /** Forget what the routine has seen (human only). Notes and run history are kept. */
+  clearRoutineMemory(id: string): Promise<void>;
+  /** On: abort running routines and start nothing until turned off. */
+  setRoutineKillSwitch(on: boolean): Promise<RoutineEngineStatus>;
   // Reports. Save/open/reveal/delete are human actions through the shell only.
   listReports(): Promise<ReportSummary[]>;
   /** Shows a native save dialog and copies the report there. Resolves with the chosen path, or null if cancelled. */
@@ -266,5 +297,7 @@ export type BrowserShellBridge = BrowserShellApi & {
   /** Fires with the full list whenever a report is created or deleted; `created` names a new one. */
   onReportsChanged(callback: (reports: ReportSummary[], created?: ReportSummary) => void): () => void;
   /** Fires with the full list whenever a routine is proposed or changes state; `proposed` names a new proposal. */
+  /** Fires when a run starts, logs progress, or ends. */
+  onRoutineRunUpdated(callback: (run: RoutineRunSummary) => void): () => void;
   onRoutinesChanged(callback: (routines: RoutineSummary[], proposed?: RoutineSummary) => void): () => void;
 };

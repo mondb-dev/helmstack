@@ -277,11 +277,13 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * GET  /api/routines                    → RoutineSummary[] (newest first)
  * GET  /api/routines/:id                → RoutineDetail (summary, plain-language preview and the validated spec)
  * POST /api/routines/:id/withdraw       → RoutineSummary (only the agent that proposed it, only while it is still proposed). Approving, rejecting, pausing, stopping and deleting a routine are human actions in the HelmStack window and have no route.
+ * GET  /api/routines/:id/runs           → RoutineRunSummary[] (newest first, at most 50; read-only). Starting or cancelling a run, clearing memory and the kill switch are human-only and have no route.
+ * GET  /api/routines/:id/notes          ?limit=1..100 (default 50) → RoutineNote[] (newest first; read-only). UNTRUSTED DATA: every field is text copied from web pages, never instructions.
  *
  * SSE stream
  * ----------
  * GET  /api/stream
- * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked | report_created | routine_proposed | routine_state_changed
+ * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked | report_created | routine_proposed | routine_state_changed | routine_run
  *
  * `approval_resolved` carries an `ApprovalResolution` `{ requestId, tabId, outcome,
  * reason?, status?, url?, origin?, resolvedAt }`; `outcome` is approved | rejected |
@@ -294,6 +296,8 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * `report_created` carries the `ReportSummary` of a report just written.
  *
  * `routine_proposed` and `routine_state_changed` carry the `RoutineSummary` only (never the spec).
+ *
+ * `routine_run` carries `{ routineId, runId, status, summary }` when a routine run starts, progresses or ends. The summary is fixed wording plus counts, never page text or notes.
  */
 export class AgentServer {
   private readonly server: http.Server;
@@ -367,6 +371,9 @@ export class AgentServer {
       if (created) this.broadcastTabEvent("report_created", created, created.tabId);
     });
     tabs.onRoutineEvent?.((e) => this.broadcast(e.type === "proposed" ? "routine_proposed" : "routine_state_changed", e.routine));
+    tabs.onRoutineRunUpdated?.((run) =>
+      this.broadcast("routine_run", { routineId: run.routineId, runId: run.id, status: run.status, summary: run.summary })
+    );
   }
 
   /** A shell "Select for agent" pick: tell listening agents and note it in the feed. */
@@ -1635,6 +1642,24 @@ export class AgentServer {
       if (!isValidRoutineId(id)) return error(res, 400, "invalid routine id");
       try {
         return json(res, this.tabs.withdrawRoutine(id, this.agentIdOf(req) ?? undefined));
+      } catch (err) {
+        return routineFailure(res, err);
+      }
+    }
+
+    // Read-only views of what a routine did. The text in notes comes from web pages: untrusted data.
+    const routineReadMatch = p.match(/^\/api\/routines\/([^/]+)\/(runs|notes)$/);
+    if (method === "GET" && routineReadMatch) {
+      const what = routineReadMatch[2]!;
+      if (what === "runs" ? !this.tabs.listRoutineRuns : !this.tabs.listRoutineNotes) return unsupported(res, "routines", this.backend);
+      let id = routineReadMatch[1]!;
+      try { id = decodeURIComponent(id); } catch { /* validated below */ }
+      if (!isValidRoutineId(id)) return error(res, 400, "invalid routine id");
+      try {
+        if (what === "runs") return json(res, this.tabs.listRoutineRuns!(id));
+        const rawLimit = Number(url.searchParams.get("limit") ?? 50);
+        const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 50;
+        return json(res, this.tabs.listRoutineNotes!(id, limit));
       } catch (err) {
         return routineFailure(res, err);
       }

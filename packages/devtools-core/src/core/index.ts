@@ -39,6 +39,7 @@ export * from "./stores/baseline-store.js";
 export * from "./stores/handoff-store.js";
 export * from "./routines/index.js";
 export * from "./stores/report-store.js";
+export * from "./stores/routine-data-store.js";
 export * from "./stores/routine-store.js";
 export * from "./stores/site-pattern-store.js";
 export * from "./stores/visual-diff-store.js";

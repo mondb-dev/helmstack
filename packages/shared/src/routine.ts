@@ -4,8 +4,9 @@
  * deterministic steps and typed inference points. This file is what the shell and the
  * agent API share about a routine's life cycle, not its internals.
  *
- * Phase 1 stores, validates, previews and approves routines. Nothing executes them yet;
- * `RoutineEngineStatus` says so, and the UI must show it.
+ * Phase 1 stores, validates, previews and approves routines. Phase 2 runs approved `manual`
+ * and `interval` routines with deterministic steps only (no model calls); `infer` steps end a
+ * run as `needs_human`. `RoutineEngineStatus` says what the engine can do, and the UI shows it.
  */
 
 /**
@@ -62,8 +63,76 @@ export type RoutineDetail = RoutineSummary & {
 };
 
 export type RoutineEngineStatus = {
-  /** False in phase 1: routines can be reviewed and approved but nothing runs them. */
+  /** True when the engine can run approved routines on this backend. */
   enabled: boolean;
   /** Shown to the human when not enabled. */
   reason?: string;
+  /** Human kill switch: while true nothing starts, whatever the triggers say. */
+  killed?: boolean;
+  /** Ids of routines that are running right now. */
+  running?: string[];
+};
+
+/** How a run ended. */
+export type RoutineRunOutcome =
+  | "completed" //   every step ran
+  | "stopped" //     a stop condition fired or the human stopped it
+  | "budget" //      a page/time/note budget ran out
+  | "needs_human" // an inference point or approval needs the human (phase 3 uses this for infer)
+  | "failed" //      a step failed
+  | "cancelled"; //  the human cancelled this run or used the kill switch
+
+export type RoutineRunStatus = "running" | RoutineRunOutcome;
+
+/** One line of a run's log. Plain text, never page HTML. */
+export type RoutineRunLogEntry = {
+  at: number;
+  level: "info" | "warn" | "error";
+  /** Step id or kind, when the line belongs to a step. */
+  step?: string;
+  message: string;
+};
+
+export type RoutineRunSummary = {
+  id: string;
+  routineId: string;
+  trigger: "manual" | "interval";
+  startedAt: number;
+  endedAt?: number;
+  status: RoutineRunStatus;
+  pagesVisited: number;
+  notesAdded: number;
+  /** One sentence: what happened, or why it ended. */
+  summary: string;
+};
+
+export type RoutineRunDetail = RoutineRunSummary & {
+  log: RoutineRunLogEntry[];
+};
+
+/** A note a routine recorded. Fields are text the page supplied; render as text only. */
+export type RoutineNote = {
+  id: string;
+  routineId: string;
+  runId: string;
+  at: number;
+  /** Page the note came from. */
+  url: string;
+  fields: Record<string, string>;
+  /** True when it was recorded as uncertain ("maybe"). */
+  maybe?: boolean;
+};
+
+/** What the routine remembers between runs, for display. */
+export type RoutineMemory = {
+  routineId: string;
+  /** Number of items in each `set` state key, e.g. { seen: 41 }. */
+  sets: Record<string, number>;
+  /** Current value of each `value` state key. */
+  values: Record<string, string>;
+  /** Next scheduled run for an interval routine, when approved and not paused. */
+  nextRunAt?: number;
+  /** Why this routine is never started on its own (schedule/event triggers do not run yet). */
+  notScheduledReason?: string;
+  lastRun?: RoutineRunSummary;
 };

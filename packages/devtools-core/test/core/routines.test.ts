@@ -124,8 +124,8 @@ describe("HelmstackCore routines", () => {
     }
   });
 
-  it("reports that nothing runs yet", () => {
-    expect(core.getRoutineEngineStatus()).toEqual({ enabled: false, reason: "Routines can be reviewed and approved, but running them isn't available yet." });
+  it("reports that the engine is on and idle", () => {
+    expect(core.getRoutineEngineStatus()).toEqual({ enabled: true, killed: false, running: [] });
   });
 
   it("keeps routines across a restart", () => {
@@ -139,15 +139,29 @@ describe("HelmstackCore routines", () => {
     }
   });
 
-  it("contains no code that runs a routine", async () => {
+  it("keeps the phase-2 boundary: no model calls, no filling, clicking or submitting", async () => {
     const { readFileSync, readdirSync } = await import("node:fs");
     const dir = path.resolve(__dirname, "../../src/core/routines");
-    const files = [...readdirSync(dir).map((f) => path.join(dir, f)), path.resolve(__dirname, "../../src/core/stores/routine-store.ts")];
+    const files = [
+      ...readdirSync(dir).map((f) => path.join(dir, f)),
+      path.resolve(__dirname, "../../src/core/stores/routine-store.ts"),
+      path.resolve(__dirname, "../../src/core/stores/routine-data-store.ts")
+    ];
     for (const file of files) {
       const text = readFileSync(file, "utf8");
-      // Strip comments, then look for anything that could execute or dial out.
       const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-      expect(code, file).not.toMatch(/child_process|\beval\(|new Function|fetch\(|http\.request|navigate\(|setInterval|setTimeout|require\(/);
+      // Nothing that runs other programs or evaluates strings (the page script is data, run via the core).
+      expect(code, file).not.toMatch(/child_process|\beval\(|new Function|http\.request|require\(/);
+      // No model access: no agent runner, no SDK, no model endpoints.
+      expect(code, file).not.toMatch(/agent-runner|@anthropic|anthropic\.com|openai|api\/messages|\/v1\/(chat|messages|completions)/i);
+      // No acting on a page: no typing, clicking, key presses, uploads, approvals or commands.
+      expect(code, file).not.toMatch(/insertText|clickAt|pressKey|setFileInputFiles|executeCommand|approveCommand|submit\(|\.click\(/);
+      // The only network fetch is the robots.txt helper.
+      if (path.basename(file) !== "robots-fetch.ts") expect(code, file).not.toMatch(/\bfetch\(/);
     }
+    // The browser the executor may use can only open a tab, load a URL, read a page and close the tab.
+    const executor = readFileSync(path.join(dir, "executor.ts"), "utf8");
+    const iface = /export interface RoutineBrowser \{([\s\S]*?)\n\}/.exec(executor)![1]!;
+    expect([...iface.matchAll(/^\s{2}(\w+)\(/gm)].map((m) => m[1])).toEqual(["openTab", "navigate", "collect", "closeTab"]);
   });
 });

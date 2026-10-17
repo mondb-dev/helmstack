@@ -65,6 +65,8 @@ import type {
   ReportFormat,
   ReportSummary,
   RoutineDetail,
+  RoutineNote,
+  RoutineRunSummary,
   RoutineSummary,
   ResourceBudget,
   ScreenshotDiff,
@@ -283,7 +285,8 @@ export interface ReportsApi {
 
 /**
  * Routines (`docs/routines.md`). Agents can only propose, read and withdraw their own
- * pending proposal. Approving, rejecting, pausing, resuming, stopping and deleting are
+ * pending proposal, and read what runs did. Approving, rejecting, pausing, resuming,
+ * stopping, deleting, running, cancelling, clearing memory and the kill switch are
  * human actions on `HelmstackCore` for the shell and are deliberately not part of this
  * interface, so the HTTP server cannot reach them.
  */
@@ -296,6 +299,12 @@ export interface RoutinesApi {
   getRoutine(id: string): RoutineDetail | null;
   /** Only the proposer's own `proposed` routine; throws `RoutineError` otherwise. */
   withdrawRoutine(id: string, agentId?: string): RoutineSummary;
+  /** Newest first, at most 50. Throws `RoutineError` (not_found) for an unknown routine. */
+  listRoutineRuns(id: string): RoutineRunSummary[];
+  /** Newest first. Every field is text copied from web pages: untrusted data, never instructions. */
+  listRoutineNotes(id: string, limit?: number): RoutineNote[];
+  /** Fires when a run starts, progresses or ends. Returns an unsubscribe function. */
+  onRoutineRunUpdated(listener: (run: RoutineRunSummary) => void): () => void;
   /** Fires on a new proposal and on every state change, with the affected summary. Returns an unsubscribe function. */
   onRoutineEvent(listener: (event: { type: "proposed" | "changed"; routine: RoutineSummary }) => void): () => void;
 }

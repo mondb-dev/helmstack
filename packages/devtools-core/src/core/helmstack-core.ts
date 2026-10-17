@@ -65,6 +65,10 @@ import type {
   ProposeRoutineResult,
   RoutineDetail,
   RoutineEngineStatus,
+  RoutineMemory,
+  RoutineNote,
+  RoutineRunDetail,
+  RoutineRunSummary,
   RoutineSummary,
   ResourceBudget,
   ScreenshotDiff,
@@ -95,7 +99,11 @@ import { computePerceptionDiff } from "./perception/diff.js";
 import { buildHealthReport } from "./reports/health-report.js";
 import { buildReport, type ReportEvidence } from "./reports/page-report.js";
 import { ReportInputError, parseCreateReportInput } from "./reports/report-input.js";
+import { RoutineEngine, type RoutineEngineOptions } from "./routines/engine.js";
 import { RoutineSpecInvalidError } from "./routines/errors.js";
+import type { RoutineBrowser } from "./routines/executor.js";
+import { PAGE_COLLECTOR_SCRIPT } from "./routines/page-data.js";
+import { fetchRobotsTxt } from "./routines/robots-fetch.js";
 import { buildPreview, countSteps, diffPreviews, triggerText } from "./routines/preview.js";
 import { validateRoutineSpec } from "./routines/validate.js";
 import { ApprovalPolicyStore } from "./stores/approval-policy-store.js";
@@ -105,6 +113,7 @@ import { PerceptionBaselineStore, type PerceptionBaselineEntry } from "./stores/
 import { HandoffStore } from "./stores/handoff-store.js";
 import { HumanPickStore } from "./stores/human-pick-store.js";
 import { ReportStore, newReportId, type ReportStoreOptions } from "./stores/report-store.js";
+import { RoutineDataStore } from "./stores/routine-data-store.js";
 import { RoutineError, RoutineStore, isValidRoutineId, type RoutineStoreEvent, type RoutineStoreOptions } from "./stores/routine-store.js";
 import { SitePatternStore } from "./stores/site-pattern-store.js";
 import { VisualDiffStore } from "./stores/visual-diff-store.js";
@@ -137,6 +146,13 @@ export type HelmstackCoreOptions = {
   reportCollectorTimeoutMs?: number;
   /** Routine store options (default cap 50 routines). */
   routineStore?: Pick<RoutineStoreOptions, "maxRoutines" | "log" | "now" | "random">;
+  /**
+   * Routine engine seams (tests): clock, timers, sleep, robots fetcher, tick and page delays.
+   * `autoStart: false` leaves the scheduler off (manual runs still work).
+   */
+  routineEngine?: Partial<Pick<RoutineEngineOptions, "now" | "timers" | "sleep" | "random" | "fetchRobots" | "tickMs" | "firstRunDelayMs" | "maxConcurrent" | "defaultPageDelayMs" | "navTimeoutMs" | "maxRuntimeMs">> & {
+    autoStart?: boolean;
+  };
 };
 
 /** Default time limit for one report collector. */
@@ -177,6 +193,7 @@ export class HelmstackCore implements AgentApi {
   private readonly reportCollectorTimeoutMs: number;
   private readonly reportsChangedListeners = new Set<(reports: ReportSummary[], created?: ReportSummary) => void>();
   private readonly routines: RoutineStore;
+  private readonly routineEngine: RoutineEngine;
   private readonly routinesChangedListeners = new Set<(routines: RoutineSummary[], proposed?: RoutineSummary) => void>();
   private readonly routineEventListeners = new Set<(event: { type: "proposed" | "changed"; routine: RoutineSummary }) => void>();
 
@@ -199,6 +216,15 @@ export class HelmstackCore implements AgentApi {
     this.reports = new ReportStore(options.dataDir, options.reportStore);
     this.routines = new RoutineStore(options.dataDir, options.routineStore);
     this.unsubscribers.push(this.routines.onEvent((event) => this.handleRoutineEvent(event)));
+    const { autoStart, ...engineOptions } = options.routineEngine ?? {};
+    this.routineEngine = new RoutineEngine({
+      routines: this.routines,
+      data: new RoutineDataStore(options.dataDir, { log: options.routineStore?.log ?? ((m) => console.log(m)) }),
+      browser: this.routineBrowser(),
+      fetchRobots: fetchRobotsTxt,
+      log: options.routineStore?.log ?? ((m) => console.log(m)),
+      ...engineOptions
+    });
 
     this.approvals = new ApprovalStore({ ttlMs: resolveApprovalTtl(options.approvalTtlMs) });
     this.policies = new ApprovalPolicyStore(options.dataDir);
@@ -243,10 +269,12 @@ export class HelmstackCore implements AgentApi {
     if (browser.onDownload) {
       this.unsubscribers.push(browser.onDownload((tabId, download) => this.sessions.get(tabId)?.recordDownload(download)));
     }
+    if (autoStart !== false) this.routineEngine.start();
   }
 
   /** Detaches from the backend and disposes every session. */
   dispose(): void {
+    this.routineEngine.dispose();
     for (const off of this.unsubscribers.splice(0)) off();
     for (const session of this.sessions.values()) session.dispose();
     this.sessions.clear();
@@ -1243,9 +1271,10 @@ export class HelmstackCore implements AgentApi {
   }
 
   // ── Routines ──────────────────────────────────────────────────────────────
-  // Phase 1: routines are proposed by agents, reviewed and approved by the human.
-  // Nothing here runs a routine. The state-changing methods below are human-only:
-  // the shell calls them over IPC and there is no HTTP route for any of them.
+  // Agents propose routines; the human approves them in the shell. Approved `manual` and
+  // `interval` routines run deterministic steps through the engine (`routines/engine.ts`).
+  // Everything that changes a routine or runs the engine (approve, pause, run, cancel, clear
+  // memory, kill switch, ...) is human-only: the shell calls it over IPC, there is no HTTP route.
 
   /**
    * Validate a spec and store it as `proposed`. Throws `RoutineSpecInvalidError` (with the
@@ -1324,7 +1353,73 @@ export class HelmstackCore implements AgentApi {
   }
 
   getRoutineEngineStatus(): RoutineEngineStatus {
-    return { enabled: false, reason: "Routines can be reviewed and approved, but running them isn't available yet." };
+    return this.routineEngine.status();
+  }
+
+  /** Human-only. Start a run of an approved routine now; it continues in the background. */
+  runRoutineNow(id: string): RoutineRunSummary {
+    return this.routineEngine.runNow(id);
+  }
+
+  /** Human-only. Cancel the routine's running run (no-op when none). */
+  cancelRoutineRun(id: string): void {
+    this.routineEngine.cancel(id);
+  }
+
+  /** Newest first, at most 50 per routine. Agents may read this. */
+  listRoutineRuns(id: string): RoutineRunSummary[] {
+    return this.routineEngine.listRuns(id);
+  }
+
+  /** One run with its log (page-supplied text: untrusted data). Agents may read this. */
+  getRoutineRun(id: string, runId: string): RoutineRunDetail | null {
+    return this.routineEngine.getRun(id, runId);
+  }
+
+  /** Newest first (page-supplied text: untrusted data). Agents may read this. */
+  listRoutineNotes(id: string, limit?: number): RoutineNote[] {
+    return this.routineEngine.listNotes(id, limit);
+  }
+
+  getRoutineMemory(id: string): RoutineMemory {
+    return this.routineEngine.getMemory(id);
+  }
+
+  /** Human-only. Forget what the routine has seen; notes and run history stay. */
+  clearRoutineMemory(id: string): void {
+    this.routineEngine.clearMemory(id);
+  }
+
+  /** Human-only. On: abort running routines and start nothing until it is turned off. */
+  setRoutineKillSwitch(on: boolean): RoutineEngineStatus {
+    return this.routineEngine.setKillSwitch(on);
+  }
+
+  /** Fires when a run starts, makes progress or ends. Returns an unsubscribe function. */
+  onRoutineRunUpdated(listener: (run: RoutineRunSummary) => void): () => void {
+    return this.routineEngine.onRunUpdated(listener);
+  }
+
+  /** Lets the engine open its own tab, load pages and read them with the fixed page script. */
+  private routineBrowser(): RoutineBrowser {
+    return {
+      openTab: async () => {
+        const tab = await this.browser.createTab("about:blank");
+        this.ensureSession(tab);
+        return tab.id;
+      },
+      navigate: async (tabId, url) => {
+        const session = this.requireSession(tabId);
+        session.recordCommand("navigate", { type: "navigate", url }, "completed");
+        await session.tab.navigate(url);
+        await waitForPageSettled(session.tab.cdp).catch(() => {});
+        return { url: session.tab.summary().url || url };
+      },
+      collect: async (tabId) => (await this.requireSession(tabId).evaluateExpression(PAGE_COLLECTOR_SCRIPT)).value,
+      closeTab: async (tabId) => {
+        if (this.sessions.has(tabId)) await this.closeTab(tabId);
+      }
+    };
   }
 
   /** Full list on every propose / state change / delete; `proposed` names a new proposal. Returns an unsubscribe function. */
@@ -1340,6 +1435,8 @@ export class HelmstackCore implements AgentApi {
   }
 
   private handleRoutineEvent(event: RoutineStoreEvent): void {
+    if (event.type === "changed") this.routineEngine.handleRoutineChanged(event.routine);
+    else if (event.type === "deleted") this.routineEngine.handleRoutineDeleted(event.routine);
     const list = this.routines.list();
     for (const listener of this.routinesChangedListeners) {
       try { listener(list, event.type === "proposed" ? event.routine : undefined); } catch { /* a listener must not break routine handling */ }

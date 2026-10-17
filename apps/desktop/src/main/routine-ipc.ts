@@ -4,9 +4,19 @@
  * Routines are proposed by agents and decided by the human. The renderer only ever sends a
  * routine id; it never supplies spec content. The id is validated here, the sender must be
  * the shell window, and every state change goes through the core's state machine (which throws
- * a clear message for an illegal move). Nothing here runs a routine.
+ * a clear message for an illegal move). Running, cancelling, clearing memory and the kill
+ * switch are human-only too: they exist here and over IPC, never as an agent HTTP route.
  */
-import type { RoutineDetail, RoutineEngineStatus, RoutineSummary } from "../../../../packages/shared/src/index.js";
+import type {
+  RoutineDetail,
+  RoutineEngineStatus,
+  RoutineMemory,
+  RoutineNote,
+  RoutineRunDetail,
+  RoutineRunSummary,
+  RoutineSummary
+} from "../../../../packages/shared/src/index.js";
+import { isValidRunId } from "../../../../packages/devtools-core/src/core/stores/routine-data-store.js";
 import { isValidRoutineId } from "../../../../packages/devtools-core/src/core/stores/routine-store.js";
 
 export type RoutineIpcDeps = {
@@ -20,6 +30,14 @@ export type RoutineIpcDeps = {
     resumeRoutine(id: string): RoutineSummary;
     stopRoutine(id: string): RoutineSummary;
     deleteRoutine(id: string): boolean;
+    runRoutineNow(id: string): RoutineRunSummary;
+    cancelRoutineRun(id: string): void;
+    listRoutineRuns(id: string): RoutineRunSummary[];
+    getRoutineRun(id: string, runId: string): RoutineRunDetail | null;
+    listRoutineNotes(id: string, limit?: number): RoutineNote[];
+    getRoutineMemory(id: string): RoutineMemory;
+    clearRoutineMemory(id: string): void;
+    setRoutineKillSwitch(on: boolean): RoutineEngineStatus;
   };
   /** True when the IPC sender is the shell window's own renderer. */
   isShellSender(sender: unknown): boolean;
@@ -27,6 +45,23 @@ export type RoutineIpcDeps = {
 
 export function parseRoutineId(value: unknown): string {
   if (!isValidRoutineId(value)) throw new Error("Invalid routine id.");
+  return value;
+}
+
+export function parseRunId(value: unknown): string {
+  if (!isValidRunId(value)) throw new Error("Invalid run id.");
+  return value;
+}
+
+/** Optional note count: a whole number from 1 to 1000, otherwise the default. */
+export function parseNoteLimit(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 1000) throw new Error("Invalid note limit.");
+  return value;
+}
+
+export function parseSwitch(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new Error("The kill switch must be on or off.");
   return value;
 }
 
@@ -71,6 +106,38 @@ export function createRoutineIpc(deps: RoutineIpcDeps) {
     delete(sender: unknown, rawId: unknown): void {
       guard(sender);
       deps.core.deleteRoutine(parseRoutineId(rawId));
+    },
+    runNow(sender: unknown, rawId: unknown): RoutineRunSummary {
+      guard(sender);
+      return deps.core.runRoutineNow(parseRoutineId(rawId));
+    },
+    cancelRun(sender: unknown, rawId: unknown): void {
+      guard(sender);
+      deps.core.cancelRoutineRun(parseRoutineId(rawId));
+    },
+    listRuns(sender: unknown, rawId: unknown): RoutineRunSummary[] {
+      guard(sender);
+      return deps.core.listRoutineRuns(parseRoutineId(rawId));
+    },
+    getRun(sender: unknown, rawId: unknown, rawRunId: unknown): RoutineRunDetail | null {
+      guard(sender);
+      return deps.core.getRoutineRun(parseRoutineId(rawId), parseRunId(rawRunId));
+    },
+    listNotes(sender: unknown, rawId: unknown, rawLimit?: unknown): RoutineNote[] {
+      guard(sender);
+      return deps.core.listRoutineNotes(parseRoutineId(rawId), parseNoteLimit(rawLimit));
+    },
+    memory(sender: unknown, rawId: unknown): RoutineMemory {
+      guard(sender);
+      return deps.core.getRoutineMemory(parseRoutineId(rawId));
+    },
+    clearMemory(sender: unknown, rawId: unknown): void {
+      guard(sender);
+      deps.core.clearRoutineMemory(parseRoutineId(rawId));
+    },
+    setKillSwitch(sender: unknown, rawOn: unknown): RoutineEngineStatus {
+      guard(sender);
+      return deps.core.setRoutineKillSwitch(parseSwitch(rawOn));
     }
   };
 }

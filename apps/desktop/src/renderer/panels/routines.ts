@@ -13,8 +13,13 @@ import type {
   BrowserShellBridge,
   RoutineDetail,
   RoutineEngineStatus,
+  RoutineMemory,
+  RoutineNote,
   RoutineRisk,
   RoutineRiskLevel,
+  RoutineRunDetail,
+  RoutineRunStatus,
+  RoutineRunSummary,
   RoutineState,
   RoutineSummary,
 } from "../../../../../packages/shared/src/index.js";
@@ -23,7 +28,7 @@ import { plural, relativeTime } from "../ui/format.js";
 import { icon, type IconName } from "../ui/icons.js";
 import { toast } from "../ui/toast.js";
 
-export type RoutinesBridge = Pick<
+type RoutinesBridgeCore = Pick<
   BrowserShellBridge,
   | "listRoutines"
   | "getRoutine"
@@ -36,6 +41,23 @@ export type RoutinesBridge = Pick<
   | "deleteRoutine"
   | "onRoutinesChanged"
 >;
+
+/** Phase 2 (running routines). Feature-detected at call time so an older preload still works. */
+type RoutinesBridgeRun = Pick<
+  BrowserShellBridge,
+  | "runRoutineNow"
+  | "cancelRoutineRun"
+  | "listRoutineRuns"
+  | "getRoutineRun"
+  | "listRoutineNotes"
+  | "getRoutineMemory"
+  | "clearRoutineMemory"
+  | "setRoutineKillSwitch"
+  | "onRoutineRunUpdated"
+  | "openTab"
+>;
+
+export type RoutinesBridge = RoutinesBridgeCore & Partial<RoutinesBridgeRun>;
 
 /** True when the preload bridge exposes every routine method. */
 export function routinesSupported(bridge: Partial<RoutinesBridge>): bridge is RoutinesBridge {
@@ -57,7 +79,65 @@ export const ROUTINE_ROW_CAP = 100;
 export const ENGINE_FALLBACK_REASON = "Routines can be reviewed and approved, but running them isn't available yet.";
 const INTENT_LIMIT = 140;
 const HOST_CHIP_LIMIT = 6;
-const TIME_REFRESH_MS = 30_000;
+const TICK_MS = 1000;
+export const RUN_CAP = 20;
+export const NOTE_CAP = 25;
+export const NOTE_FIELD_CAP = 12;
+export const LOG_CAP = 200;
+const MEMORY_PREFETCH_CAP = 30;
+const VALUE_LIMIT = 200;
+const SUMMARY_LIMIT = 160;
+const URL_LIMIT = 80;
+
+const RUN_STATUS_WORD: Record<RoutineRunStatus, string> = {
+  running: "Running",
+  completed: "Completed",
+  stopped: "Stopped",
+  budget: "Stopped at its limit",
+  needs_human: "Needs you",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+function statusWord(status: RoutineRunStatus): string {
+  return RUN_STATUS_WORD[status] ?? "Ended";
+}
+
+/** "in 5m", "in 2h", "in a moment". */
+export function untilText(at: number, nowMs: number): string {
+  const seconds = Math.round((at - nowMs) / 1000);
+  if (seconds <= 1) return "in a moment";
+  if (seconds < 60) return `in ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
+  return `in ${Math.floor(hours / 24)}d`;
+}
+
+/** Only plain web pages get an Open link. */
+function openableUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+interface DetailData {
+  runs: RoutineRunSummary[] | null;
+  runsError?: string;
+  notes: RoutineNote[] | null;
+  notesError?: string;
+  memoryError?: string;
+}
+
+interface LogData {
+  detail: RoutineRunDetail | null;
+  loading: boolean;
+  error?: string;
+}
 
 type SectionId = "review" | "approved" | "paused" | "closed";
 interface SectionDef {
@@ -189,6 +269,25 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
   const notified = new Set<string>();
   const busyRows = new Set<string>();
   let review: ReviewState | null = null;
+  let destroyed = false;
+  // Phase 2 state (runs, notes, memory). Everything here is cleared on destroy.
+  const running = new Set<string>();
+  const cancelling = new Set<string>();
+  const detailOpen = new Set<string>();
+  const details = new Map<string, DetailData>();
+  const memories = new Map<string, RoutineMemory>();
+  const lastRuns = new Map<string, RoutineRunSummary>();
+  const openRuns = new Map<string, string>();
+  const logs = new Map<string, LogData>();
+  const rowErrors = new Map<string, string>();
+  let forgetting: string | null = null;
+  let killBusy = false;
+  let bannerError = "";
+
+  const canRun = (): boolean => typeof bridge.runRoutineNow === "function";
+  const canKill = (): boolean => typeof bridge.setRoutineKillSwitch === "function";
+  const canDetail = (): boolean => typeof bridge.listRoutineRuns === "function";
+  const isKilled = (): boolean => engine?.killed === true;
 
   const engineOn = (): boolean => engine?.enabled === true;
 
@@ -216,7 +315,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     Array.from(host.querySelectorAll<HTMLElement>(".routine-row")).map((node) => node.dataset.routineId ?? "");
 
   const focusRow = (id: string): boolean => {
-    const target = rowNode(id)?.querySelector<HTMLElement>("button[data-action]");
+    const target = rowNode(id)?.querySelector<HTMLElement>("button[data-action]:not(:disabled)");
     target?.focus();
     return target !== undefined && target !== null;
   };
@@ -231,6 +330,17 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       if (focusRow(candidate)) return;
     }
     host.querySelector<HTMLElement>(".routines__heading")?.focus();
+  };
+
+  const killButton = (stopping: boolean): HTMLButtonElement => {
+    const node = button(stopping ? "Stop all routines" : "Allow routines again", stopping ? "btn--danger" : "btn--ghost", "kill-toggle");
+    return node;
+  };
+
+  const bannerAlert = (): HTMLElement => {
+    const alert = el("p", "routine-row__error", bannerError);
+    alert.setAttribute("role", "alert");
+    return alert;
   };
 
   // ── list ──────────────────────────────────────────────────────────────────
@@ -291,6 +401,31 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     return wrap;
   };
 
+  const detailId = (id: string): string => `routine-detail-${id.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+
+  const chipFor = (routine: RoutineSummary): HTMLElement | null => {
+    if (routine.state === "paused") return statusChip("Paused", "paused");
+    if (routine.state !== "approved") return null;
+    if (running.has(routine.id)) return statusChip(cancelling.has(routine.id) ? "Cancelling…" : "Running", "running");
+    if (isKilled()) return statusChip("Switched off", "off");
+    const memory = memories.get(routine.id);
+    if (engineOn() && typeof memory?.nextRunAt === "number") {
+      const chip = statusChip(`Next run ${untilText(memory.nextRunAt, now())}`, "next");
+      chip.dataset.until = String(memory.nextRunAt);
+      chip.dataset.prefix = "Next run ";
+      return chip;
+    }
+    const last = lastRuns.get(routine.id) ?? memory?.lastRun;
+    if (last) return statusChip(`Last run: ${statusWord(last.status)}`, last.status === "completed" ? "ok" : last.status === "failed" ? "bad" : "paused");
+    if (engineOn() && memory?.notScheduledReason) return statusChip("Won't run on its own", "paused");
+    return engineOn() ? statusChip("Not run yet", "paused") : null;
+  };
+
+  function statusChip(text: string, tone: string): HTMLElement {
+    const chip = el("span", `routine-status routine-status--${tone}`, text);
+    return chip;
+  }
+
   const buildActions = (routine: RoutineSummary, confirmId: string): HTMLElement => {
     const actions = el("div", "routine-row__actions");
     actions.setAttribute("role", "group");
@@ -318,29 +453,280 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       node.disabled = busy;
       actions.append(node);
     };
+    const addRunControls = (): void => {
+      if (!canRun()) return;
+      const isRunning = running.has(routine.id);
+      const run = button("Run now", "btn--ghost", "run-now", `Run now: ${routine.title}`);
+      const why =
+        routine.state !== "approved"
+          ? "Only an approved routine can run."
+          : !engineOn()
+            ? "Running isn't available yet."
+            : isKilled()
+              ? "Routines are switched off."
+              : isRunning
+                ? "It is already running."
+                : "";
+      run.disabled = busy || why !== "";
+      if (why) run.title = why;
+      actions.append(run);
+      if (isRunning && typeof bridge.cancelRoutineRun === "function") {
+        const stopRun = button(cancelling.has(routine.id) ? "Cancelling…" : "Cancel run", "btn--quiet", "cancel-run", `Cancel the running run: ${routine.title}`);
+        stopRun.disabled = busy || cancelling.has(routine.id);
+        actions.append(stopRun);
+      }
+    };
+    const addDetails = (): void => {
+      if (!canDetail()) return;
+      const open = detailOpen.has(routine.id);
+      const toggle = button(open ? "Hide details" : "Details", "btn--quiet", "toggle-detail", `${open ? "Hide" : "Show"} runs, notes and memory: ${routine.title}`);
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-controls", detailId(routine.id));
+      actions.append(toggle);
+    };
     switch (routine.state) {
       case "proposed":
         add("Review…", "btn--primary", "review", `Review proposal: ${routine.title}`);
         break;
       case "approved":
+        addRunControls();
         add("Pause", "btn--ghost", "pause", `Pause routine: ${routine.title}`);
         add("Stop", "btn--quiet", "stop", `Stop routine: ${routine.title}`);
+        addDetails();
         break;
       case "paused":
+        addRunControls();
         add("Resume", "btn--ghost", "resume", `Resume routine: ${routine.title}`);
         add("Stop", "btn--quiet", "stop", `Stop routine: ${routine.title}`);
+        addDetails();
         break;
       default:
         add("Delete", "btn--quiet", "delete", `Delete routine: ${routine.title}`);
+        if (routine.state === "stopped") addDetails();
     }
     return actions;
   };
+
+  // ── details: runs, notes, memory (all text from pages is set with textContent) ─
+  const timeNode = (at: number): HTMLElement => {
+    const node = el("time", undefined, relativeTime(at, now()));
+    node.dataset.at = String(at);
+    node.title = new Date(at).toLocaleString();
+    return node;
+  };
+
+  const clipped = (tag: "span" | "p" | "li", className: string, value: string, max: number): HTMLElement => {
+    const node = el(tag, className, clip(value, max));
+    if (value.length > max) node.title = clip(value, 1000);
+    return node;
+  };
+
+  const detailSection = (title: string, count?: number): HTMLElement => {
+    const section = el("section", "routine-detail__section");
+    section.append(el("h5", "routine-detail__heading", count === undefined ? title : `${title} (${count})`));
+    return section;
+  };
+
+  const buildLog = (routine: RoutineSummary, run: RoutineRunSummary): HTMLElement => {
+    const box = el("div", "routine-log");
+    const data = logs.get(run.id);
+    if (!data || data.loading) {
+      const loading = el("p", "routine-row__meta", "Loading the log…");
+      loading.setAttribute("role", "status");
+      box.append(loading);
+      return box;
+    }
+    if (data.error || !data.detail) {
+      const err = el("p", "routine-row__error", data.error ? `Couldn't load the log — ${data.error}` : "This run's log isn't available.");
+      err.setAttribute("role", "alert");
+      box.append(err);
+      return box;
+    }
+    const entries = Array.isArray(data.detail.log) ? data.detail.log : [];
+    if (entries.length === 0) {
+      box.append(el("p", "routine-row__meta", "Nothing was logged for this run."));
+      return box;
+    }
+    const list = el("ol", "routine-log__list");
+    list.setAttribute("aria-label", `Log for the run ${relativeTime(run.startedAt, now())} of ${routine.title}`);
+    list.tabIndex = 0;
+    for (const entry of entries.slice(0, LOG_CAP)) {
+      const level = entry.level === "error" || entry.level === "warn" ? entry.level : "info";
+      const item = el("li", `routine-log__line routine-log__line--${level}`);
+      item.append(el("span", "routine-log__level", level === "info" ? "Info" : level === "warn" ? "Warning" : "Error"));
+      const step = typeof entry.step === "string" && entry.step ? `${clip(entry.step, 40)}: ` : "";
+      const text = el("span", "routine-log__text", `${step}${clip(String(entry.message ?? ""), 400)}`);
+      if (String(entry.message ?? "").length > 400) text.title = clip(String(entry.message), 1000);
+      item.append(text);
+      list.append(item);
+    }
+    box.append(list);
+    if (entries.length > LOG_CAP) box.append(el("p", "routine-row__meta", `Showing the first ${LOG_CAP} of ${entries.length} lines.`));
+    return box;
+  };
+
+  const buildRuns = (routine: RoutineSummary, data: DetailData): HTMLElement => {
+    const runs = data.runs;
+    const section = detailSection("Runs", runs?.length);
+    if (data.runsError) {
+      const err = el("p", "routine-row__error", `Couldn't load runs — ${data.runsError}`);
+      err.setAttribute("role", "alert");
+      section.append(err);
+      return section;
+    }
+    if (!runs) {
+      section.append(el("p", "routine-row__meta", "Loading…"));
+      return section;
+    }
+    if (runs.length === 0) {
+      section.append(el("p", "routine-row__meta", "No runs yet."));
+      return section;
+    }
+    const list = el("ol", "routine-detail__list");
+    list.setAttribute("aria-label", `Runs of ${routine.title}, newest first`);
+    const open = openRuns.get(routine.id);
+    for (const run of runs.slice(0, RUN_CAP)) {
+      const item = el("li", "routine-run");
+      const toggle = el("button", "routine-run__button");
+      toggle.type = "button";
+      toggle.dataset.action = "open-run";
+      toggle.dataset.runId = run.id;
+      toggle.setAttribute("aria-expanded", String(open === run.id));
+      toggle.setAttribute("aria-label", `${open === run.id ? "Hide" : "Show"} log: ${statusWord(run.status)}, ${relativeTime(run.startedAt, now())}`);
+      const head = el("span", "routine-run__head");
+      head.append(statusChip(statusWord(run.status), run.status === "completed" ? "ok" : run.status === "failed" ? "bad" : run.status === "running" ? "running" : "paused"), " ", timeNode(run.startedAt));
+      toggle.append(head);
+      toggle.append(el("span", "routine-run__counts", `${plural(run.pagesVisited, "page")} · ${plural(run.notesAdded, "note")}`));
+      toggle.append(clipped("span", "routine-run__summary", String(run.summary ?? ""), SUMMARY_LIMIT));
+      item.append(toggle);
+      if (open === run.id) item.append(buildLog(routine, run));
+      list.append(item);
+    }
+    section.append(list);
+    if (runs.length > RUN_CAP) section.append(el("p", "routine-row__meta", `Showing the latest ${RUN_CAP} runs.`));
+    return section;
+  };
+
+  const buildNotes = (routine: RoutineSummary, data: DetailData): HTMLElement => {
+    const notes = data.notes;
+    const section = detailSection("Notes", notes?.length);
+    if (data.notesError) {
+      const err = el("p", "routine-row__error", `Couldn't load notes — ${data.notesError}`);
+      err.setAttribute("role", "alert");
+      section.append(err);
+      return section;
+    }
+    if (!notes) {
+      section.append(el("p", "routine-row__meta", "Loading…"));
+      return section;
+    }
+    if (notes.length === 0) {
+      section.append(el("p", "routine-row__meta", "Nothing noted yet."));
+      return section;
+    }
+    const list = el("ol", "routine-detail__list");
+    list.setAttribute("aria-label", `Notes from ${routine.title}, newest first`);
+    for (const note of notes.slice(0, NOTE_CAP)) {
+      const item = el("li", "routine-note");
+      const head = el("p", "routine-note__head");
+      head.append(timeNode(note.at));
+      if (note.maybe) head.append(" ", el("span", "routine-status routine-status--paused", "uncertain"));
+      item.append(head);
+      const url = String(note.url ?? "");
+      const line = el("p", "routine-note__url");
+      line.append(clipped("span", "routine-note__url-text", url, URL_LIMIT));
+      const safe = openableUrl(url);
+      if (safe && typeof bridge.openTab === "function") {
+        const open = button("Open", "btn--quiet", "open-note-url", `Open this page in a new tab: ${clip(url, 60)}`);
+        open.dataset.url = safe;
+        line.append(" ", open);
+      }
+      item.append(line);
+      const fields = Object.entries(note.fields ?? {});
+      if (fields.length > 0) {
+        const dl = el("ul", "routine-note__fields");
+        for (const [key, value] of fields.slice(0, NOTE_FIELD_CAP)) {
+          dl.append(clipped("li", "routine-note__field", `${clip(String(key), 40)}: ${String(value)}`, VALUE_LIMIT));
+        }
+        item.append(dl);
+        if (fields.length > NOTE_FIELD_CAP) item.append(el("p", "routine-row__meta", `+${fields.length - NOTE_FIELD_CAP} more fields`));
+      }
+      list.append(item);
+    }
+    section.append(list);
+    if (notes.length > NOTE_CAP) section.append(el("p", "routine-row__meta", `Showing the latest ${NOTE_CAP} notes.`));
+    return section;
+  };
+
+  const buildMemory = (routine: RoutineSummary, data: DetailData): HTMLElement => {
+    const section = detailSection("Memory");
+    const memory = memories.get(routine.id);
+    if (data.memoryError) {
+      const err = el("p", "routine-row__error", `Couldn't load memory — ${data.memoryError}`);
+      err.setAttribute("role", "alert");
+      section.append(err);
+    } else if (!memory) {
+      section.append(el("p", "routine-row__meta", "Loading…"));
+    } else {
+      const list = el("ul", "routine-detail__facts");
+      const sets = Object.entries(memory.sets ?? {});
+      const values = Object.entries(memory.values ?? {});
+      for (const [key, count] of sets.slice(0, NOTE_FIELD_CAP)) {
+        list.append(clipped("li", "routine-note__field", `${clip(key, 40)}: ${plural(Number(count) || 0, "item")} remembered`, VALUE_LIMIT));
+      }
+      for (const [key, value] of values.slice(0, NOTE_FIELD_CAP)) {
+        list.append(clipped("li", "routine-note__field", `${clip(key, 40)}: ${String(value)}`, VALUE_LIMIT));
+      }
+      if (sets.length + values.length === 0) list.append(el("li", "routine-note__field", "It hasn't remembered anything yet."));
+      if (typeof memory.nextRunAt === "number") {
+        const next = el("li", "routine-note__field", `Next run ${untilText(memory.nextRunAt, now())}`);
+        next.dataset.until = String(memory.nextRunAt);
+        next.dataset.prefix = "Next run ";
+        list.append(next);
+      }
+      if (memory.notScheduledReason) list.append(clipped("li", "routine-note__field", memory.notScheduledReason, VALUE_LIMIT));
+      section.append(list);
+    }
+    if (typeof bridge.clearRoutineMemory === "function") {
+      if (forgetting === routine.id) {
+        const confirmId = `routine-forget-${detailId(routine.id)}`;
+        const question = el("p", "routine-row__confirm", "Forget everything this routine has seen? It may report old items as new again. Notes and run history are kept.");
+        question.id = confirmId;
+        const yes = button("Forget", "btn--danger", "confirm-forget", `Confirm: forget what ${routine.title} has seen`);
+        const no = button("Cancel", "btn--quiet", "cancel-forget");
+        no.setAttribute("aria-describedby", confirmId);
+        yes.disabled = busyRows.has(routine.id);
+        const wrap = el("div", "routine-row__actions");
+        wrap.append(question, yes, no);
+        section.append(wrap);
+      } else {
+        const forget = button("Forget what it has seen", "btn--quiet", "forget", `Forget what it has seen: ${routine.title}`);
+        forget.disabled = busyRows.has(routine.id) || running.has(routine.id);
+        if (running.has(routine.id)) forget.title = "Wait for the current run to end.";
+        section.append(forget);
+      }
+    }
+    return section;
+  };
+
+  function buildDetail(routine: RoutineSummary): HTMLElement {
+    const wrap = el("div", "routine-detail");
+    wrap.id = detailId(routine.id);
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", `Runs, notes and memory of ${routine.title}`);
+    const data = details.get(routine.id) ?? { runs: null, notes: null };
+    wrap.append(buildRuns(routine, data), buildNotes(routine, data), buildMemory(routine, data));
+    return wrap;
+  }
 
   const buildRow = (routine: RoutineSummary, serial: number): HTMLLIElement => {
     const row = el("li", `routine-row routine-row--${routine.state}`);
     row.dataset.routineId = routine.id;
     row.append(el("h4", "routine-row__title", routine.title));
-    row.append(el("p", "routine-row__state", stateLabel(routine)));
+    const stateLine = el("p", "routine-row__state", stateLabel(routine));
+    const chip = chipFor(routine);
+    if (chip) stateLine.append(" ", chip);
+    row.append(stateLine);
     row.append(buildIntent(routine));
     row.append(el("p", "routine-row__meta", `Trigger: ${routine.trigger}`));
     row.append(buildHosts(routine));
@@ -355,6 +741,13 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     if (routine.replaces) row.append(el("p", "routine-row__meta", `Replaces “${titleOf(routine.replaces)}”`));
 
     row.append(buildActions(routine, `routine-confirm-${serial}`));
+    const failure = rowErrors.get(routine.id);
+    if (failure) {
+      const alert = el("p", "routine-row__error", failure);
+      alert.setAttribute("role", "alert");
+      row.append(alert);
+    }
+    if (detailOpen.has(routine.id) && canDetail()) row.append(buildDetail(routine));
     return row;
   };
 
@@ -364,19 +757,37 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     const focusedRow = active && host.contains(active) ? active.closest<HTMLElement>(".routine-row")?.dataset.routineId : undefined;
     const focusedAction = active && host.contains(active) ? active.dataset.action : undefined;
     const focusedSection = active && host.contains(active) ? active.dataset.section : undefined;
+    const focusedRun = active && host.contains(active) ? active.dataset.runId : undefined;
+    const focusedBanner = active && host.contains(active) && active.dataset.action === "kill-toggle";
 
     const children: HTMLElement[] = [];
     const heading = el("h3", "sr-only routines__heading", "Routines");
     heading.tabIndex = -1;
     children.push(heading);
 
-    const notice = el("div", "routines__notice");
-    notice.setAttribute("role", "note");
-    if (!engineOn()) {
+    if (isKilled()) {
+      const off = el("div", "routines__notice routines__notice--off");
+      off.setAttribute("role", "note");
+      const glyph = icon("shield-alert", { size: 14 });
+      glyph.setAttribute("aria-hidden", "true");
+      const text = el("div", "routines__banner-text");
+      text.append(el("p", undefined, "Routines are switched off. Nothing will run until you allow routines again."));
+      off.append(glyph, text);
+      if (canKill()) text.append(killButton(false));
+      if (bannerError) text.append(bannerAlert());
+      children.push(off);
+    } else if (!engineOn()) {
+      const notice = el("div", "routines__notice");
+      notice.setAttribute("role", "note");
       const glyph = icon("info", { size: 14 });
       glyph.setAttribute("aria-hidden", "true");
       notice.append(glyph, el("p", undefined, engine?.reason?.trim() || ENGINE_FALLBACK_REASON));
       children.push(notice);
+    } else if (canKill()) {
+      const bar = el("div", "routines__killbar");
+      bar.append(el("p", "routines__killbar-text", running.size > 0 ? `${plural(running.size, "routine")} running now` : "Routines are on"), killButton(true));
+      if (bannerError) bar.append(bannerAlert());
+      children.push(bar);
     }
 
     if (routines.length === 0) {
@@ -444,19 +855,29 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
 
     if (focusedSection) {
       host.querySelector<HTMLElement>(`[data-section="${focusedSection}"]`)?.focus();
+    } else if (focusedBanner) {
+      host.querySelector<HTMLElement>('[data-action="kill-toggle"]')?.focus();
     } else if (focusedRow) {
       const row = rowNode(focusedRow);
-      const same = row ? Array.from(row.querySelectorAll<HTMLElement>("button[data-action]")).find((b) => b.dataset.action === focusedAction) : undefined;
-      (same ?? row?.querySelector<HTMLElement>("button[data-action]"))?.focus();
+      const same = row
+        ? Array.from(row.querySelectorAll<HTMLElement>("button[data-action]")).find(
+            (b) => b.dataset.action === focusedAction && (focusedRun === undefined || b.dataset.runId === focusedRun)
+          )
+        : undefined;
+      const usable = same && !(same as HTMLButtonElement).disabled ? same : row?.querySelector<HTMLElement>("button[data-action]:not(:disabled)");
+      usable?.focus();
     }
   }
 
   const setList = (next: RoutineSummary[]): void => {
     routines = Array.isArray(next) ? next : [];
     if (confirming && !routines.some((routine) => routine.id === confirming?.id)) confirming = null;
+    for (const id of Array.from(detailOpen)) if (!routines.some((routine) => routine.id === id)) closeDetail(id);
+    if (forgetting && !routines.some((routine) => routine.id === forgetting)) forgetting = null;
     updateNeeds();
     render();
     syncReviewWithList();
+    void loadMemories(false);
   };
 
   const upsert = (updated: RoutineSummary): void => {
@@ -498,6 +919,14 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       render();
       return;
     }
+    if (target.dataset.action === "kill-toggle") {
+      void toggleKill();
+      return;
+    }
+    if (target.dataset.action === "open-note-url") {
+      openNote(target.dataset.url ?? "");
+      return;
+    }
     const id = target.closest<HTMLElement>(".routine-row")?.dataset.routineId;
     const routine = id ? routines.find((candidate) => candidate.id === id) : undefined;
     if (!routine) return;
@@ -508,6 +937,41 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
         break;
       case "review":
         openReview(routine.id, target);
+        break;
+      case "run-now":
+        void runNow(routine);
+        break;
+      case "cancel-run":
+        void cancelRun(routine);
+        break;
+      case "toggle-detail":
+        if (detailOpen.has(routine.id)) closeDetail(routine.id);
+        else openDetail(routine.id);
+        render();
+        break;
+      case "open-run": {
+        const runId = target.dataset.runId ?? "";
+        if (openRuns.get(routine.id) === runId) {
+          openRuns.delete(routine.id);
+        } else {
+          openRuns.set(routine.id, runId);
+          void loadLog(routine.id, runId);
+        }
+        render();
+        break;
+      }
+      case "forget":
+        forgetting = routine.id;
+        render();
+        rowNode(routine.id)?.querySelector<HTMLElement>('[data-action="cancel-forget"]')?.focus();
+        break;
+      case "cancel-forget":
+        forgetting = null;
+        render();
+        rowNode(routine.id)?.querySelector<HTMLElement>('[data-action="forget"]')?.focus();
+        break;
+      case "confirm-forget":
+        void forgetMemory(routine);
         break;
       case "pause":
         void runRowAction(routine, () => bridge.pauseRoutine(routine.id), "paused", "Couldn't pause the routine", `Paused “${routine.title}”`);
@@ -541,6 +1005,14 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
   });
 
   host.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && forgetting) {
+      const id = forgetting;
+      forgetting = null;
+      event.preventDefault();
+      render();
+      rowNode(id)?.querySelector<HTMLElement>('[data-action="forget"]')?.focus();
+      return;
+    }
     if (event.key !== "Escape" || !confirming) return;
     const { id, kind } = confirming;
     confirming = null;
@@ -548,6 +1020,214 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     render();
     rowNode(id)?.querySelector<HTMLElement>(`[data-action="${kind}"]`)?.focus();
   });
+
+  // ── runs, notes, memory ───────────────────────────────────────────────────
+  function closeDetail(id: string): void {
+    detailOpen.delete(id);
+    details.delete(id);
+    const open = openRuns.get(id);
+    if (open) logs.delete(open);
+    openRuns.delete(id);
+    if (forgetting === id) forgetting = null;
+  }
+
+  function openDetail(id: string): void {
+    detailOpen.add(id);
+    details.set(id, { runs: null, notes: null });
+    void loadDetail(id);
+  }
+
+  const stillOpen = (id: string): boolean => !destroyed && detailOpen.has(id);
+
+  async function loadRuns(id: string): Promise<void> {
+    const data = details.get(id);
+    if (!data || typeof bridge.listRoutineRuns !== "function") return;
+    try {
+      const listed = await bridge.listRoutineRuns(id);
+      if (!stillOpen(id)) return;
+      data.runs = Array.isArray(listed) ? listed.slice(0, 50) : [];
+      data.runsError = undefined;
+      if (data.runs[0]) lastRuns.set(id, data.runs[0]);
+    } catch (error) {
+      if (!stillOpen(id)) return;
+      data.runsError = errorText(error);
+    }
+    render();
+  }
+
+  async function loadNotes(id: string): Promise<void> {
+    const data = details.get(id);
+    if (!data || typeof bridge.listRoutineNotes !== "function") {
+      if (data) data.notes = [];
+      return;
+    }
+    try {
+      const listed = await bridge.listRoutineNotes(id, NOTE_CAP + 1);
+      if (!stillOpen(id)) return;
+      data.notes = Array.isArray(listed) ? listed : [];
+      data.notesError = undefined;
+    } catch (error) {
+      if (!stillOpen(id)) return;
+      data.notesError = errorText(error);
+    }
+    render();
+  }
+
+  async function loadMemory(id: string, silent: boolean): Promise<void> {
+    if (typeof bridge.getRoutineMemory !== "function" || destroyed) return;
+    try {
+      const memory = await bridge.getRoutineMemory(id);
+      if (destroyed) return;
+      if (memory && typeof memory === "object") {
+        memories.set(id, memory);
+        if (memory.lastRun && !running.has(id)) lastRuns.set(id, memory.lastRun);
+      }
+      const data = details.get(id);
+      if (data) data.memoryError = undefined;
+    } catch (error) {
+      if (destroyed) return;
+      const data = details.get(id);
+      if (data && !silent) data.memoryError = errorText(error);
+    }
+    render();
+  }
+
+  async function loadDetail(id: string): Promise<void> {
+    render();
+    await Promise.all([loadRuns(id), loadNotes(id), loadMemory(id, false)]);
+  }
+
+  async function loadLog(id: string, runId: string): Promise<void> {
+    if (typeof bridge.getRoutineRun !== "function") return;
+    const prior = logs.get(runId);
+    logs.set(runId, { detail: prior?.detail ?? null, loading: !prior?.detail });
+    try {
+      const detail = await bridge.getRoutineRun(id, runId);
+      if (destroyed) return;
+      logs.set(runId, { detail: detail ?? null, loading: false });
+    } catch (error) {
+      if (destroyed) return;
+      logs.set(runId, { detail: null, loading: false, error: errorText(error) });
+    }
+    render();
+  }
+
+  /** Next-run and last-run chips need each active routine's memory; fetch the ones we lack. */
+  async function loadMemories(force: boolean): Promise<void> {
+    if (typeof bridge.getRoutineMemory !== "function") return;
+    const wanted = routines
+      .filter((routine) => routine.state === "approved" || routine.state === "paused")
+      .filter((routine) => force || !memories.has(routine.id))
+      .slice(0, MEMORY_PREFETCH_CAP);
+    await Promise.all(wanted.map((routine) => loadMemory(routine.id, true)));
+  }
+
+  async function runNow(routine: RoutineSummary): Promise<void> {
+    if (typeof bridge.runRoutineNow !== "function" || busyRows.has(routine.id)) return;
+    rowErrors.delete(routine.id);
+    busyRows.add(routine.id);
+    render();
+    try {
+      const run = await bridge.runRoutineNow(routine.id);
+      busyRows.delete(routine.id);
+      if (run && typeof run === "object") applyRun(run);
+      else running.add(routine.id);
+      toast(`Started “${clip(routine.title, 60)}”`, "success");
+    } catch (error) {
+      busyRows.delete(routine.id);
+      rowErrors.set(routine.id, `Couldn't start the routine — ${errorText(error)}`);
+    }
+    render();
+    focusRow(routine.id);
+  }
+
+  async function cancelRun(routine: RoutineSummary): Promise<void> {
+    if (typeof bridge.cancelRoutineRun !== "function" || cancelling.has(routine.id)) return;
+    rowErrors.delete(routine.id);
+    cancelling.add(routine.id);
+    render();
+    try {
+      await bridge.cancelRoutineRun(routine.id);
+    } catch (error) {
+      cancelling.delete(routine.id);
+      rowErrors.set(routine.id, `Couldn't cancel the run — ${errorText(error)}`);
+    }
+    render();
+  }
+
+  async function forgetMemory(routine: RoutineSummary): Promise<void> {
+    if (typeof bridge.clearRoutineMemory !== "function" || busyRows.has(routine.id)) return;
+    rowErrors.delete(routine.id);
+    busyRows.add(routine.id);
+    render();
+    try {
+      await bridge.clearRoutineMemory(routine.id);
+      busyRows.delete(routine.id);
+      forgetting = null;
+      toast(`“${clip(routine.title, 60)}” has forgotten what it saw`, "success");
+      await loadMemory(routine.id, false);
+    } catch (error) {
+      busyRows.delete(routine.id);
+      rowErrors.set(routine.id, `Couldn't clear the memory — ${errorText(error)}`);
+    }
+    render();
+    rowNode(routine.id)?.querySelector<HTMLElement>('[data-action="forget"], [data-action="cancel-forget"]')?.focus();
+  }
+
+  async function toggleKill(): Promise<void> {
+    if (typeof bridge.setRoutineKillSwitch !== "function" || killBusy) return;
+    const on = !isKilled();
+    killBusy = true;
+    bannerError = "";
+    render();
+    try {
+      const next = await bridge.setRoutineKillSwitch(on);
+      engine = next && typeof next === "object" ? next : { ...(engine ?? { enabled: false }), killed: on };
+      running.clear();
+      cancelling.clear();
+      for (const id of engine.running ?? []) running.add(id);
+      toast(on ? "Routines are switched off" : "Routines are allowed again", "success");
+    } catch (error) {
+      bannerError = `Couldn't ${on ? "switch routines off" : "allow routines again"} — ${errorText(error)}`;
+    }
+    killBusy = false;
+    render();
+  }
+
+  function openNote(url: string): void {
+    const safe = openableUrl(url);
+    if (!safe || typeof bridge.openTab !== "function") return;
+    void Promise.resolve(bridge.openTab(safe)).catch((error: unknown) => toast(`Couldn't open the page — ${errorText(error)}`, "error"));
+  }
+
+  /** One run changed (started, finished, cancelled). */
+  function applyRun(run: RoutineRunSummary): void {
+    const id = run.routineId;
+    const known = lastRuns.get(id);
+    if (!known || run.startedAt >= known.startedAt) lastRuns.set(id, run);
+    if (run.status === "running") {
+      running.add(id);
+    } else {
+      running.delete(id);
+      cancelling.delete(id);
+    }
+    const data = details.get(id);
+    if (data?.runs) {
+      const without = data.runs.filter((entry) => entry.id !== run.id);
+      data.runs = [run, ...without].sort((a, b) => b.startedAt - a.startedAt).slice(0, 50);
+    }
+    if (openRuns.get(id) === run.id) void loadLog(id, run.id);
+  }
+
+  const handleRunUpdated = (run: RoutineRunSummary): void => {
+    if (destroyed || !run || typeof run.routineId !== "string") return;
+    applyRun(run);
+    render();
+    if (run.status !== "running") {
+      void loadMemory(run.routineId, true);
+      if (detailOpen.has(run.routineId)) void loadNotes(run.routineId);
+    }
+  };
 
   // ── review dialog ─────────────────────────────────────────────────────────
   const hasHighRisk = (summary: RoutineSummary): boolean => (summary.preview?.risks ?? []).some((risk) => risk.level === "high");
@@ -793,6 +1473,11 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     } catch {
       engine = { enabled: false };
     }
+    if (destroyed) return;
+    if (engine && Array.isArray(engine.running)) {
+      running.clear();
+      for (const id of engine.running) running.add(id);
+    }
   };
 
   const refresh = async (): Promise<void> => {
@@ -804,16 +1489,26 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     } catch {
       next = [];
     }
+    if (destroyed) return;
     setList(next);
+    void loadMemories(true);
+    for (const id of detailOpen) void loadDetail(id);
   };
 
+  // Relative-time labels only; skipped while the tab or window is hidden.
   const timer = setInterval(() => {
+    if (host.hidden || document.visibilityState === "hidden") return;
+    const current = now();
     host.querySelectorAll<HTMLElement>("time[data-at]").forEach((node) => {
-      node.textContent = relativeTime(Number(node.dataset.at), now());
+      node.textContent = relativeTime(Number(node.dataset.at), current);
     });
-  }, TIME_REFRESH_MS);
+    host.querySelectorAll<HTMLElement>("[data-until]").forEach((node) => {
+      node.textContent = `${node.dataset.prefix ?? ""}${untilText(Number(node.dataset.until), current)}`;
+    });
+  }, TICK_MS);
 
   const unsubscribe = bridge.onRoutinesChanged(handleChanged);
+  const unsubscribeRuns = typeof bridge.onRoutineRunUpdated === "function" ? bridge.onRoutineRunUpdated(handleRunUpdated) : undefined;
   render();
   void refresh();
 
@@ -826,8 +1521,13 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     needsReview: () => needs,
     openReview,
     destroy() {
+      destroyed = true;
       clearInterval(timer);
       unsubscribe?.();
+      unsubscribeRuns?.();
+      running.clear();
+      details.clear();
+      logs.clear();
     },
   };
 }
