@@ -6,15 +6,15 @@ A routine is a procedure an agent writes down from your request and you approve:
 
 ## What this version does
 
-Routines can be **proposed, validated, previewed, approved, run, and now judged**: the fixed steps run exactly, and the judgment points (`infer`, `branch`) are answered by a model **you choose**, one question at a time, with no tools.
+Routines can be **proposed, reviewed, approved, run, judged and allowed to act**: the fixed steps run exactly, the judgment points (`infer`, `branch`) are answered by a model **you choose**, one question at a time and with no tools, and `act` steps change things only as far as you allowed.
 
 | Phase | What it adds | Status |
 | --- | --- | --- |
 | 1 | Store, validate, preview in plain language, human approval | Done |
 | 2 | The engine that runs the fixed steps exactly: `manual` and `interval` triggers, memory, notes, run history, kill switch | Done |
-| 3 | The inference runtime that answers the judgment points (`infer`, `branch`, `when_inferred` stop conditions) | This version |
-| 4 | Actions on your own account (`act` steps) inside limits **you** set; see "Actions" | This version |
-| 5 | A reference library the judgments can draw on, and a `remember` step; see "Reference library and memory" | This version |
+| 3 | The inference runtime that answers the judgment points (`infer`, `branch`, `when_inferred` stop conditions) | Done |
+| 4 | Actions on your own account (`act` steps) inside limits **you** set; see "Actions" | Done |
+| 5 | A reference library the judgments can draw on, and a `remember` step; see "Reference library and memory" | Done |
 | 6 | Schedule and event triggers (cron, watches that start a routine) | Later |
 | 7 | A learned cache of where things are on a page | Later |
 
@@ -35,7 +35,7 @@ What runs now, and what does not:
 | `stop.budgets.tokens_per_run`, `stop.any.when_inferred` | Enforced / judged at the end of a completed run (see "Judgments") |
 | `stop.budgets.cost_usd_total` | Not enforced: local models cost nothing and command-line models report no price HelmStack can trust. The run log says so once |
 
-A routine without `act` steps never changes anything on a site: it loads pages and reads them. The only step that can click, type or choose is `act`, and it is checked three ways every time (your grants, HelmStack's own approvals, and a check of the page afterwards). Submitting forms, posting, buying, downloading, uploading and signing in are not in the vocabulary.
+A routine without `act` steps never changes anything on a site: it loads pages and reads them. The only step that can click, type or choose is `act`, and it is checked three ways every time (your grants, HelmStack's own approvals, and a check of the page afterwards). There is no step for signing in or entering credentials. A control whose name reads like buying, paying, signing up, accepting terms, sending or posting, uploading, downloading or deleting always waits for you, whatever you allowed.
 
 ## How it works
 

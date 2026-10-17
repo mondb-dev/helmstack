@@ -82,11 +82,14 @@ Fingerprint hardening and human-like input timing are opt-in and off by default 
 Routines ([Routines](routines.md)) are procedures an agent writes from your request. The trust model is short.
 
 - **Agents propose; humans approve.** An agent can submit a spec, read routines and withdraw its own pending proposal. Approving, rejecting, pausing, resuming, stopping and deleting are shell actions over IPC from the shell window only, with the routine id validated. The agent server has no route for them (tests assert `404` for each) and the renderer never supplies spec content.
-- **Nothing runs in this version.** HelmStack stores, validates, previews and lets you approve routines; there is no code that executes one.
+- **Only approved routines run.** The engine runs a routine only while it is approved, on a `manual` or `interval` trigger, inside its listed sites, robots.txt, page budget and rate limit. A kill switch in the Routines tab stops every run at once.
+- **Judgments use a model with no tools.** The model you choose for routines gets the question and page text, labelled as untrusted, and must answer with JSON and a quote. HelmStack checks the quote is really in the text it supplied; an unchecked quote or a missing model never becomes a guess.
+- **Actions ask by default.** An `act` step runs on its own only for effects you allowed when approving (rearrange, add, remove), within per-run and per-day limits, and never for a name on your protected list. Offers, answers to offers and anything else always wait for you, as does any control that reads like a purchase, sign-up, terms, sending, upload, download or delete. Every action is checked on the page afterwards; a failed check stops the run and pauses the routine.
+- **Agents propose reference documents; you approve them.** A document an agent adds to a routine's library is never used until you approve it, and passages reach the model as untrusted reference text.
 - **The vocabulary is closed.** A spec is data in a fixed schema. No string is evaluated, references are limited to four forms and resolved before the routine is stored, and unknown keys are rejected at every level.
 - **A spec can only add caution.** There is no field to disable approvals, enable stealth or supply credentials, and widening a routine's scope (`related`) is fixed to need a human.
 - **Limits.** 64 KB per spec, 128 KB per request, 60 steps, 4 levels of nesting, 50 routines. A full store refuses new proposals; it never deletes one to make room.
-- **Redaction.** The activity feed records "Propose routine" with a step count, never the request text, title or spec.
+- **Redaction.** The activity feed records "Propose routine" with a step count, never the request text, title or spec. Run logs, action records and events carry fixed wording and ids, never page text, form values or library text.
 
 ## Data at rest
 

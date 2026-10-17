@@ -44,7 +44,7 @@ Tests named `*.integration.test.ts` under `apps/daemon/test` launch Chrome. They
 ## What is not covered by automated tests
 
 - The Electron shell is exercised by unit tests of its parts (renderer panels, install service, shortcuts) but there is no automated end-to-end run of the packaged app.
-- Agent CLI chat (Claude Code, Gemini CLI) and real Ollama or LM Studio servers: the runner is tested against fakes.
+- Agent CLI chat (Claude Code, Gemini CLI) and real Ollama or LM Studio servers: the suite tests the runner against fakes. Real Claude Code and Ollama runs were done by hand, not in CI.
 - Windows behavior beyond what CI's Windows runner executes (unit tests only).
 
 ## Verify it worked

@@ -77,7 +77,7 @@ HelmStack never pulls or downloads models. Choose one that supports tool calling
 ## Known limitations
 
 - In-window chat with agent CLIs is not supported on Windows: the CLIs install as `.cmd` shims that HelmStack does not run. The panel says "In-window agent chat with CLIs isn't supported on Windows yet." In the code, local-model chat is not disabled on Windows, but it was not tried there.
-- The local-model loop has been verified against fake loopback servers in the test suite, not against a real Ollama or LM Studio.
+- The local-model loop is tested against fake loopback servers in the suite and was checked live with Ollama and Llama 3.2 3B on a few short tasks. LM Studio has not been tried live. Small models still guess or give up on longer tasks.
 - The Gemini CLI path is unverified.
 - The daemon has no chat.
 - Conversations are not saved across app restarts.
