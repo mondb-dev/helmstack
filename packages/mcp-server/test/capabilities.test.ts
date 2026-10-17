@@ -124,7 +124,7 @@ describe("MCP tool gating", () => {
   });
 
   it("routine tools are part of the default FE-dev surface, not substrate, not lite", async () => {
-    const names = ["browser_routine_schema", "browser_propose_routine", "browser_list_routines", "browser_list_routine_actions", "browser_get_routine", "browser_withdraw_routine"];
+    const names = ["browser_routine_schema", "browser_propose_routine", "browser_list_routines", "browser_list_routine_actions", "browser_get_routine", "browser_withdraw_routine", "browser_add_routine_reference", "browser_list_routine_references"];
     for (const name of names) {
       expect(AGENT_SUBSTRATE_TOOLS).not.toContain(name);
       expect(await registeredTools(undefined)).toContain(name);
@@ -137,7 +137,18 @@ describe("MCP tool gating", () => {
   it("there is no tool that approves, runs, stops or deletes a routine, approves an action or sets grants", async () => {
     const all = await registeredTools("1");
     const routineTools = all.filter((n) => /routine/.test(n)).sort();
-    expect(routineTools).toEqual(["browser_get_routine", "browser_list_routine_actions", "browser_list_routines", "browser_propose_routine", "browser_routine_schema", "browser_withdraw_routine"]);
+    expect(routineTools).toEqual([
+      "browser_add_routine_reference",
+      "browser_get_routine",
+      "browser_list_routine_actions",
+      "browser_list_routine_references",
+      "browser_list_routines",
+      "browser_propose_routine",
+      "browser_routine_schema",
+      "browser_withdraw_routine"
+    ]);
+    // Nothing approves, activates or deletes a reference document either.
+    expect(all.filter((n) => /reference|library/.test(n)).sort()).toEqual(["browser_add_routine_reference", "browser_list_routine_references"]);
   });
 
   it("browser_propose_routine is a translation guide for the model", async () => {
@@ -162,6 +173,20 @@ describe("MCP tool gating", () => {
     expect(d).toMatch(/Returns:/);
     expect(tools.browser_routine_schema!.description).toMatch(/Call this before browser_propose_routine/);
     expect(tools.browser_withdraw_routine!.description).toMatch(/only withdraw your own/);
+  });
+
+  it("browser_add_routine_reference tells the model it only proposes and the text is untrusted", async () => {
+    vi.resetModules();
+    const mod = await import("../src/index.js");
+    const tools = (mod.server as unknown as { _registeredTools: Record<string, { description?: string }> })._registeredTools;
+    const d = tools.browser_add_routine_reference!.description!;
+    expect(d).toMatch(/only proposes it/);
+    expect(d).toMatch(/user reviews and approves it in the HelmStack window \(Routines tab\)/);
+    expect(d).toMatch(/cannot approve, activate, edit, delete or read back/);
+    expect(d).toMatch(/untrusted reference material/);
+    expect(tools.browser_list_routine_references!.description).toMatch(/Never the full text/);
+    expect(tools.browser_routine_schema!.description).toMatch(/recall/);
+    expect(tools.browser_routine_schema!.description).toMatch(/remember/);
   });
 
   it("HELMSTACK_PROFILE=fe-dev keeps them off", async () => {

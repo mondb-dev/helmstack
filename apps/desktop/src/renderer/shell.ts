@@ -190,8 +190,13 @@ async function bootstrap(): Promise<void> {
   const hasRoutines = routinesSupported(bridge);
   let routinesToReview = 0;
   let routinesPending = 0;
+  let routinesDocs = 0;
   const showRoutinesBadge = (): void =>
-    sideTabs.setBadge("routines", routinesToReview + routinesPending, routinesPending > 0 ? "need attention" : "need review");
+    sideTabs.setBadge(
+      "routines",
+      routinesToReview + routinesPending + routinesDocs,
+      routinesPending > 0 || routinesDocs > 0 ? "need attention" : "need review"
+    );
   const routines = hasRoutines
     ? mountRoutines({
         bridge,
@@ -201,6 +206,10 @@ async function bootstrap(): Promise<void> {
         },
         onPendingActionsChange: (count) => {
           routinesPending = count;
+          showRoutinesBadge();
+        },
+        onDocsToReviewChange: (count) => {
+          routinesDocs = count;
           showRoutinesBadge();
         },
         onReveal: () => {

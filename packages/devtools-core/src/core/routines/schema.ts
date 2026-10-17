@@ -126,7 +126,22 @@ function stepLevel(level: number): Json {
         evidence: { enum: ["quote", "none"], description: 'Default "quote": the answer must quote the page.' },
         samples: int(1, ROUTINE_LIMITS.samples, "Ask this many times and combine (default 1)."),
         uses: ref("Extra context: state.<key>, $item or an earlier step."),
-        model: { enum: [...ROUTINE_INFER_MODELS], description: 'Default "default".' }
+        model: { enum: [...ROUTINE_INFER_MODELS], description: 'Default "default".' },
+        recall: {
+          type: "object",
+          additionalProperties: false,
+          required: ["library"],
+          description:
+            "Also give the judge the best-matching passages of the routine's reference library (only documents the user added or approved; untrusted text). A quote may come from them.",
+          properties: {
+            library: {
+              type: "object",
+              additionalProperties: false,
+              required: ["top_k"],
+              properties: { top_k: int(1, ROUTINE_LIMITS.recallTopK, "Passages to hand over.") }
+            }
+          }
+        }
       },
       ["question", "output", "accept_at", "reject_below", "on_uncertain"],
       {
@@ -167,6 +182,17 @@ function stepLevel(level: number): Json {
           { if: { required: ["action"], properties: { action: { const: "click" } } }, then: { not: { required: ["value"] } }, else: { required: ["value"] } }
         ]
       }
+    ),
+    stepVariant(
+      "remember",
+      {
+        key: pattern(NAME_PATTERN, 'A state key declared as "value" under "state".'),
+        from: text(
+          'What to save: $item, an extract/infer step, state.<value key> or short literal text. Read later as state.<key>. Only kept if the run completes.',
+          ROUTINE_LIMITS.rememberChars
+        )
+      },
+      ["key", "from"]
     ),
     stepVariant("note", { tag: pattern(NAME_PATTERN, 'Short tag such as "maybe".'), fields: { type: "array", maxItems: ROUTINE_LIMITS.noteFields, items: ref("Reference to include in the note.") } }, []),
     stepVariant("mark_seen", { into: ref("A declared set. Optional inside a for_each over a diff step.") }, []),

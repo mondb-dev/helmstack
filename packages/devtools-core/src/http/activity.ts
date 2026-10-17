@@ -195,6 +195,9 @@ export const ACTIVITY_ROUTES: readonly ActivityRoute[] = [
   { method: "GET", pattern: "/api/routines/:id/runs", label: "Read routine runs", summarize: arrayCount("run") },
   { method: "GET", pattern: "/api/routines/:id/notes", label: "Read routine notes", summarize: arrayCount("note") },
   { method: "GET", pattern: "/api/routines/:id/actions", label: "Read routine actions", summarize: arrayCount("action") },
+  // Never the title or text of a document.
+  { method: "POST", pattern: "/api/routines/:id/library", label: "Propose routine reference", summarize: () => "proposed" },
+  { method: "GET", pattern: "/api/routines/:id/library", label: "List routine references", summarize: arrayCount("document") },
   // Input
   { method: "POST", pattern: "/api/tabs/:id/evaluate", label: "Evaluate script" },
   { method: "POST", pattern: "/api/tabs/:id/insert-text", label: "Type text" },

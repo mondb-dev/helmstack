@@ -1,5 +1,5 @@
 import type { RoutineSpec } from "../../../shared/src/index.js";
-import { CANONICAL_ROUTINE_TEMPLATE, fillRoutineTemplate, routineActionExample } from "../../src/core/routines/example.js";
+import { CANONICAL_ROUTINE_TEMPLATE, fillRoutineTemplate, routineActionExample, routineLibraryExample } from "../../src/core/routines/example.js";
 
 export const TOPIC = "accessibility law changes";
 export const PAGE_URL = "https://news.example.com/updates";
@@ -25,4 +25,9 @@ export function minimal(): RoutineSpec {
 /** The roster-upkeep routine: act steps (select in a branch arm, click in a loop) and an `actions` block. */
 export function actionRoutine(): RoutineSpec {
   return routineActionExample();
+}
+
+/** The library example: an infer with `recall` and a `remember` in a branch arm. */
+export function libraryRoutine(): RoutineSpec {
+  return routineLibraryExample();
 }

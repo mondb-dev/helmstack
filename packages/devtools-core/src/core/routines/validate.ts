@@ -389,8 +389,9 @@ const STEP_KEYS: Record<RoutineStepKind, readonly string[]> = {
   extract: [...COMMON, "fields", "strategies", "from"],
   diff: [...COMMON, "items", "against", "key"],
   for_each: [...COMMON, "items", "limit", "steps"],
-  infer: [...COMMON, "question", "output", "labels", "accept_at", "reject_below", "on_uncertain", "evidence", "samples", "uses", "model"],
+  infer: [...COMMON, "question", "output", "labels", "accept_at", "reject_below", "on_uncertain", "evidence", "samples", "uses", "model", "recall"],
   act: [...COMMON, "action", "effect", "target", "strategies", "min_confidence", "on_low", "subject", "value", "verify"],
+  remember: [...COMMON, "key", "from"],
   branch: [...COMMON, "on", "accept", "maybe", "reject"],
   note: [...COMMON, "tag", "fields"],
   mark_seen: [...COMMON, "into"],
@@ -531,6 +532,10 @@ function step_(ctx: Ctx, raw: unknown, path: string, scope: Scope): void {
       actStep(ctx, scope, o, path);
       break;
     }
+    case "remember": {
+      rememberStep(ctx, scope, o, path);
+      break;
+    }
     case "note": {
       patterned(ctx, o, path, "tag", NAME, "must be a short lower-case tag such as maybe", false);
       const fields = array(ctx, o, path, "fields", { max: ROUTINE_LIMITS.noteFields });
@@ -642,6 +647,36 @@ function inferStep(ctx: Ctx, scope: Scope, o: Record<string, unknown>, path: str
     });
   }
   oneOf(ctx, o, path, "model", ROUTINE_INFER_MODELS, false);
+  if (o.recall !== undefined) {
+    const rp = join(path, "recall");
+    const r = object(ctx, o.recall, rp, ["library"]);
+    if (r) {
+      if (r.library === undefined) add(ctx, join(rp, "library"), "is required");
+      else {
+        const lp = join(rp, "library");
+        const lib = object(ctx, r.library, lp, ["top_k"]);
+        if (lib) num(ctx, lib, lp, "top_k", { required: true, min: 1, max: ROUTINE_LIMITS.recallTopK, int: true });
+      }
+    }
+  }
+}
+
+/** `remember`: save a value under a declared `value` state key, from a reference or short literal text. */
+function rememberStep(ctx: Ctx, scope: Scope, o: Record<string, unknown>, path: string): void {
+  const key = patterned(ctx, o, path, "key", NAME, "must be a state key (lower-case letters, digits and underscores)");
+  if (key !== undefined) {
+    const type = ctx.state.get(key);
+    if (!type) add(ctx, join(path, "key"), `state.${key} is not declared; declare it under "state" as "value" first`);
+    else if (type !== "value") add(ctx, join(path, "key"), `state.${key} is a ${type}; remember can only save into a "value" key`);
+  }
+  if (o.from === undefined) {
+    add(ctx, join(path, "from"), "is required: a reference or short literal text");
+    return;
+  }
+  const from = str(ctx, o, path, "from", { max: ROUTINE_LIMITS.rememberChars });
+  if (from !== undefined && looksLikeRef(from)) {
+    checkRef(ctx, scope, from, join(path, "from"), { item: true, steps: ["extract", "infer"], state: ["value"] });
+  }
 }
 
 /** Text that is a reference (and so must resolve) rather than literal text. */

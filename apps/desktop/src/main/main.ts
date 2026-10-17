@@ -441,6 +441,11 @@ function registerIpcHandlers(
     listRoutineActions: async (id) => routineIpc.listActions(mainWindow?.webContents, id),
     approveRoutineAction: async (id, actionId) => routineIpc.approveAction(mainWindow?.webContents, id, actionId),
     declineRoutineAction: async (id, actionId) => routineIpc.declineAction(mainWindow?.webContents, id, actionId),
+    listRoutineDocs: async (id) => routineIpc.listDocs(mainWindow?.webContents, id),
+    getRoutineDoc: async (id, docId) => routineIpc.getDoc(mainWindow?.webContents, id, docId),
+    addRoutineDoc: async (id, doc) => routineIpc.addDoc(mainWindow?.webContents, id, doc),
+    approveRoutineDoc: async (id, docId) => routineIpc.approveDoc(mainWindow?.webContents, id, docId),
+    deleteRoutineDoc: async (id, docId) => routineIpc.deleteDoc(mainWindow?.webContents, id, docId),
     getRoutineModel: async () => routineIpc.getModel(mainWindow?.webContents),
     setRoutineModel: async (choice) => routineIpc.setModel(mainWindow?.webContents, choice),
     // Connect an agent (MCP client install); see mcp-install-service.ts
@@ -619,10 +624,18 @@ function registerIpcHandlers(
   ipcMain.handle(BrowserShellChannel.ListRoutineActions, (event, id: unknown) => routineIpc.listActions(event.sender, id));
   ipcMain.handle(BrowserShellChannel.ApproveRoutineAction, (event, id: unknown, actionId: unknown) => routineIpc.approveAction(event.sender, id, actionId));
   ipcMain.handle(BrowserShellChannel.DeclineRoutineAction, (event, id: unknown, actionId: unknown) => routineIpc.declineAction(event.sender, id, actionId));
+  ipcMain.handle(BrowserShellChannel.ListRoutineDocs, (event, id: unknown) => routineIpc.listDocs(event.sender, id));
+  ipcMain.handle(BrowserShellChannel.GetRoutineDoc, (event, id: unknown, docId: unknown) => routineIpc.getDoc(event.sender, id, docId));
+  ipcMain.handle(BrowserShellChannel.AddRoutineDoc, (event, id: unknown, doc: unknown) => routineIpc.addDoc(event.sender, id, doc));
+  ipcMain.handle(BrowserShellChannel.ApproveRoutineDoc, (event, id: unknown, docId: unknown) => routineIpc.approveDoc(event.sender, id, docId));
+  ipcMain.handle(BrowserShellChannel.DeleteRoutineDoc, (event, id: unknown, docId: unknown) => routineIpc.deleteDoc(event.sender, id, docId));
   ipcMain.handle(BrowserShellChannel.GetRoutineModel, (event) => routineIpc.getModel(event.sender));
   ipcMain.handle(BrowserShellChannel.SetRoutineModel, (event, choice: unknown) => routineIpc.setModel(event.sender, choice));
   manager.onRoutineActionUpdated((event) => {
     sendToShell(BrowserShellChannel.RoutineActionsChanged, event.routineId);
+  });
+  manager.onRoutineDocsChanged((routineId) => {
+    sendToShell(BrowserShellChannel.RoutineDocsChanged, routineId);
   });
   manager.onRoutineRunUpdated((run) => {
     sendToShell(BrowserShellChannel.RoutineRunUpdated, run);

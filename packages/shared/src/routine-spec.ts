@@ -30,6 +30,8 @@ export const ROUTINE_LIMITS = {
   maxNesting: 4,
   forEachLimit: 100,
   samples: 5,
+  recallTopK: 5,
+  rememberChars: 2_000,
   stateKeys: 12,
   stopConditions: 8,
   noteFields: 10,
@@ -81,6 +83,7 @@ export const ROUTINE_STEP_KINDS = [
   "for_each",
   "infer",
   "act",
+  "remember",
   "branch",
   "note",
   "mark_seen",
@@ -199,6 +202,21 @@ export type RoutineInferStep = {
   samples?: number;
   uses?: RoutineRef;
   model?: "default" | "cheap" | "strong";
+  /**
+   * Also hand the model the few passages of this routine's reference library that best match
+   * the question (keyword ranking, no network). Passages are shown as untrusted reference
+   * text with their titles; a quoted `evidence` may come from them.
+   */
+  recall?: { library: { top_k: number } };
+};
+
+/** Save a value the routine can read back later as `state.<key>` (the key must be declared as `value`). */
+export type RoutineRememberStep = {
+  do: "remember";
+  id?: string;
+  key: string;
+  /** What to save: a reference (an extracted record, a verdict, `state.<key>`) or short literal text. Max 2,000 characters stored. */
+  from: RoutineRef;
 };
 export type RoutineBranchStep = {
   do: "branch";
@@ -247,6 +265,7 @@ export type RoutineStep =
   | RoutineForEachStep
   | RoutineInferStep
   | RoutineActStep
+  | RoutineRememberStep
   | RoutineBranchStep
   | RoutineNoteStep
   | RoutineMarkSeenStep

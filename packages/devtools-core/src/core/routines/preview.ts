@@ -142,7 +142,9 @@ function phrase(step: RoutineStep, startCount: number): string {
     case "for_each":
       return `for each of up to ${step.limit} items: ${step.steps.map((s) => phrase(s, startCount)).join(", ")}`;
     case "infer":
-      return `judge "${clip(step.question, 100)}"`;
+      return `judge "${clip(step.question, 100)}"${step.recall ? " (drawing on your reference library)" : ""}`;
+    case "remember":
+      return `saves a value: ${step.key}`;
     case "act":
       return `${step.action === "click" ? "click" : step.action === "fill" ? "type into" : "choose in"} ${clip(step.target, 80)} (${EFFECT_TEXT[step.effect]})`;
     case "branch": {
@@ -183,6 +185,7 @@ const RISK_ORDER = [
   "no_evidence_check",
   "no_human_fallback",
   "judged_by_model",
+  "uses_library",
   "related_widens_scope"
 ] as const;
 const LEVEL_RANK = { high: 0, warning: 1, info: 2 } as const;
@@ -257,6 +260,13 @@ export function assessRisks(spec: RoutineSpec): RoutineRisk[] {
   }
   if (infers.length > 0 || (stop?.any ?? []).some((c) => "when_inferred" in c)) {
     flag("info", "judged_by_model", "Judgments are answered by the model you choose in the Routines tab. It is sent the text of the pages the routine reads and can only reply with an answer: it has no tools and cannot click, type, browse or open anything.");
+  }
+  if (infers.some((s) => s.recall)) {
+    flag(
+      "info",
+      "uses_library",
+      "A judgment is also sent short passages from this routine's reference library. Only documents you add or approve are used; a document an agent proposes is ignored until you approve it, and passages are shown to the model as untrusted text."
+    );
   }
   if (spec.related) {
     flag("info", "related_widens_scope", "It looks for related pages. Each one it suggests needs your approval before it is added.");
@@ -418,6 +428,8 @@ export function buildPreview(spec: RoutineSpec, options: BuildPreviewOptions = {
     }${report ? ` Writes a report every ${report.every}${report.when ? ` when ${report.when === "always" ? "there is anything" : "there are new notes"}` : ""}.` : ""}`
   });
 
+  const usesLibrary = steps.some((s) => s.do === "infer" && s.recall);
+  const saves = [...new Set(steps.flatMap((s) => (s.do === "remember" ? [s.key] : [])))];
   const decisions = decisionLines(spec);
   const maxDecisionLines = options.changes?.length ? 2 : 3;
   const shown =
@@ -427,6 +439,8 @@ export function buildPreview(spec: RoutineSpec, options: BuildPreviewOptions = {
   shown.forEach((text, i) => lines.push({ label: i === 0 ? "Decides" : `Decides (${i + 1})`, text: `${text[0]!.toUpperCase()}${text.slice(1)}.` }));
   if (shown.length === 0) lines.push({ label: "Decides", text: "It makes no judgments; every step is fixed." });
 
+  if (usesLibrary) lines.push({ label: "Library", text: "Draws on your reference library when judging." });
+  if (saves.length > 0) lines.push({ label: "Remembers", text: `Saves a value: ${saves.join(", ")}.` });
   lines.push({
     label: "Widening",
     text: spec.related
@@ -440,7 +454,7 @@ export function buildPreview(spec: RoutineSpec, options: BuildPreviewOptions = {
 
   const changes = options.changes?.length ? [{ label: "Changed", text: clip(options.changes.join(" "), 600) }] : [];
   // A routine that can change things gets one extra line: its "Actions" line must never be the one that is cut.
-  const all = [...changes, ...lines].slice(0, MAX_PREVIEW_LINES + (actLine ? 1 : 0));
+  const all = [...changes, ...lines].slice(0, MAX_PREVIEW_LINES + (actLine ? 1 : 0) + (usesLibrary ? 1 : 0) + (saves.length > 0 ? 1 : 0));
   return { headline, lines: all.map((l) => `${l.label}: ${l.text}`), risks };
 }
 

@@ -29,6 +29,7 @@ import type {
   RoutineState,
   RoutineSummary,
 } from "../../../../../packages/shared/src/index.js";
+import { createLibrary, type LibraryBridge } from "./routine-library.js";
 import { autoGrantLines, createGrantEditor, protectedNames, type GrantEditor } from "./routine-grants.js";
 import { openDialog, type DialogHandle } from "../ui/dialog.js";
 import { plural, relativeTime } from "../ui/format.js";
@@ -76,7 +77,11 @@ type RoutinesBridgeActions = Pick<
   "setRoutineGrants" | "listRoutineActions" | "approveRoutineAction" | "declineRoutineAction" | "onRoutineActionsChanged"
 >;
 
-export type RoutinesBridge = RoutinesBridgeCore & Partial<RoutinesBridgeRun> & Partial<RoutinesBridgeModel> & Partial<RoutinesBridgeActions>;
+export type RoutinesBridge = RoutinesBridgeCore &
+  Partial<RoutinesBridgeRun> &
+  Partial<RoutinesBridgeModel> &
+  Partial<RoutinesBridgeActions> &
+  LibraryBridge;
 
 /** True when the preload bridge exposes every routine method. */
 export function routinesSupported(bridge: Partial<RoutinesBridge>): bridge is RoutinesBridge {
@@ -255,6 +260,8 @@ export interface RoutinesOptions {
   onDialogClose?: () => void;
   /** Called whenever the number of actions waiting for a decision changes. */
   onPendingActionsChange?: (count: number) => void;
+  /** Called whenever the number of agent-proposed reference documents waiting for review changes. */
+  onDocsToReviewChange?: (count: number) => void;
   now?: () => number;
 }
 
@@ -265,6 +272,7 @@ export interface RoutinesController {
   show(): void;
   needsReview(): number;
   pendingActions(): number;
+  docsToReview(): number;
   openReview(id: string, opener?: HTMLElement | null): void;
   destroy(): void;
 }
@@ -370,6 +378,16 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
   const grantInfo = new Map<string, RoutineDetail>();
   const grantEdits = new Map<string, GrantEdit>();
   let lastPending = 0;
+
+  // Phase 5: reference library.
+  const library = createLibrary({
+    bridge,
+    now,
+    rerender: () => render(),
+    routines: () => routines,
+    onToReviewChange: (count) => options.onDocsToReviewChange?.(count),
+    onChanged: (id) => void loadMemory(id, true),
+  });
 
   const canActions = (): boolean =>
     typeof bridge.listRoutineActions === "function" &&
@@ -922,6 +940,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
         list.append(clipped("li", "routine-note__field", `${clip(key, 40)}: ${String(value)}`, VALUE_LIMIT));
       }
       if (sets.length + values.length === 0) list.append(el("li", "routine-note__field", "It hasn't remembered anything yet."));
+      if (typeof memory.docs === "number") list.append(el("li", "routine-note__field", `Reference library: ${plural(memory.docs, "document")}`));
       if (typeof memory.nextRunAt === "number") {
         const next = el("li", "routine-note__field", `Next run ${untilText(memory.nextRunAt, now())}`);
         next.dataset.until = String(memory.nextRunAt);
@@ -1106,6 +1125,11 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     wrap.setAttribute("aria-label", `Runs, notes and memory of ${routine.title}`);
     const data = details.get(routine.id) ?? { runs: null, notes: null };
     wrap.append(buildRuns(routine, data), buildNotes(routine, data), buildMemory(routine, data));
+    if (library.supported()) {
+      const lib = library.build(routine);
+      if (library.toReview(routine.id) > 0) wrap.insertBefore(lib, wrap.firstChild);
+      else wrap.append(lib);
+    }
     if (canActions() && actsOnAccount(routine)) wrap.insertBefore(buildActionsSection(routine, false), wrap.firstChild);
     return wrap;
   }
@@ -1121,6 +1145,8 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     if (waiting > 0 && (routine.state === "approved" || routine.state === "paused")) {
       stateLine.append(" ", statusChip(`${waiting} waiting for you`, "next"));
     }
+    const docsWaiting = routine.state === "approved" || routine.state === "paused" ? library.toReview(routine.id) : 0;
+    if (docsWaiting > 0) stateLine.append(" ", statusChip(`${docsWaiting} to review`, "next"));
     row.append(stateLine);
     row.append(buildIntent(routine));
     row.append(el("p", "routine-row__meta", `Trigger: ${routine.trigger}`));
@@ -1288,12 +1314,14 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     for (const id of Array.from(actionLists.keys())) if (!routines.some((routine) => routine.id === id)) actionLists.delete(id);
     for (const id of Array.from(grantEdits.keys())) if (!routines.some((routine) => routine.id === id)) grantEdits.delete(id);
     for (const id of Array.from(grantInfo.keys())) if (!routines.some((routine) => routine.id === id)) grantInfo.delete(id);
+    library.prune();
     updateNeeds();
     updatePending();
     render();
     syncReviewWithList();
     void loadMemories(false);
     void loadActionState(false);
+    library.prefetch(false);
   };
 
   const upsert = (updated: RoutineSummary): void => {
@@ -1547,7 +1575,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
 
   async function loadDetail(id: string): Promise<void> {
     render();
-    await Promise.all([loadRuns(id), loadNotes(id), loadMemory(id, false)]);
+    await Promise.all([loadRuns(id), loadNotes(id), loadMemory(id, false), library.supported() ? library.load(id) : Promise.resolve()]);
   }
 
   async function loadLog(id: string, runId: string): Promise<void> {
@@ -2141,6 +2169,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     }
     void loadMemories(true);
     void loadActionState(true);
+    library.prefetch(true);
     for (const id of detailOpen) void loadDetail(id);
   };
 
@@ -2180,6 +2209,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
     },
     needsReview: () => needs,
     pendingActions: () => lastPending,
+    docsToReview: () => library.total(),
     openReview,
     destroy() {
       destroyed = true;
@@ -2187,6 +2217,7 @@ export function mountRoutines(options: RoutinesOptions): RoutinesController {
       unsubscribe?.();
       unsubscribeRuns?.();
       unsubscribeActions?.();
+      library.destroy();
       actionLists.clear();
       grantEdits.clear();
       grantInfo.clear();

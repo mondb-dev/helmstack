@@ -36,6 +36,8 @@ beforeAll(async () => {
       if (req.method === "GET" && url === "/api/routines") return send(200, [{ id: ID }]);
       if (req.method === "GET" && url === `/api/routines/${ID}`) return send(200, { id: ID, specJson: "{}" });
       if (req.method === "POST" && url === `/api/routines/${ID}/withdraw`) return send(200, { id: ID, state: "rejected" });
+      if (req.method === "POST" && url === `/api/routines/${ID}/library`) return send(201, { document: { id: "doc-abc123-0123abcd", status: "proposed" }, message: "m" });
+      if (req.method === "GET" && url === `/api/routines/${ID}/library`) return send(200, [{ id: "doc-abc123-0123abcd", status: "proposed" }]);
       return send(404, { error: "Not found" });
     });
   });
@@ -46,6 +48,18 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((resolve) => { sse?.end(); server.close(() => resolve()); }));
 
 describe("SDK routines", () => {
+  it("proposes and lists reference documents; there is no approve or delete method", async () => {
+    const client = createBrowserClient({ port, agentId: "sdk-library" });
+    const out = await client.addRoutineReference(ID, { title: "Rules", text: "Never drop X.", source: "notes" });
+    expect(out.document.status).toBe("proposed");
+    const post = seen.find((c) => c.method === "POST" && c.url === `/api/routines/${ID}/library`)!;
+    expect(JSON.parse(post.body)).toEqual({ title: "Rules", text: "Never drop X.", source: "notes" });
+    expect(post.agent).toBe("sdk-library");
+    expect((await client.listRoutineReferences(ID))[0]!.status).toBe("proposed");
+    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(client)).filter((n) => /reference|Doc|library/i.test(n));
+    expect(methods.sort()).toEqual(["addRoutineReference", "listRoutineReferences"]);
+  });
+
   it("reads the schema, proposes, lists, reads and withdraws", async () => {
     const client = createBrowserClient({ port, agentId: "sdk-routines" });
     expect((await client.getRoutineSchema()).limits.maxSteps).toBe(60);

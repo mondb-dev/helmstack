@@ -99,9 +99,17 @@ export const CANONICAL_ROUTINE_TEMPLATE: RoutineSpec = {
 };
 
 /** A deep copy of the template with the placeholders replaced. */
-export function fillRoutineTemplate(template: RoutineSpec, vars: { topic: string; pageUrl: string }): RoutineSpec {
+export function fillRoutineTemplate(
+  template: RoutineSpec,
+  vars: { topic: string; pageUrl: string },
+  extra: Record<string, string> = {}
+): RoutineSpec {
   const fill = (value: unknown): unknown => {
-    if (typeof value === "string") return value.split("<topic>").join(vars.topic).split("<page url>").join(vars.pageUrl);
+    if (typeof value === "string") {
+      let out = value.split("<topic>").join(vars.topic).split("<page url>").join(vars.pageUrl);
+      for (const [from, to] of Object.entries(extra)) out = out.split(from).join(to);
+      return out;
+    }
     if (Array.isArray(value)) return value.map(fill);
     if (value && typeof value === "object") {
       return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v)]));
@@ -252,4 +260,87 @@ export function routineActionExample(): RoutineSpec {
     return value;
   };
   return fill(ACTION_ROUTINE_TEMPLATE) as RoutineSpec;
+}
+
+/**
+ * A routine whose judgments follow the user's own rules: each new item is judged against the
+ * passages of the reference library that match it (`recall`), and the title of the last item that
+ * mattered is kept for the next run (`remember`). Generic: any site with a list of news items.
+ */
+export const LIBRARY_ROUTINE_TEMPLATE: RoutineSpec = {
+  version: 1,
+  title: "News that matters under my rules",
+  intent:
+    "Every morning check <news url> and tell me which new items matter for my roster, using the rules and strategy I saved in the reference library.",
+  scope: {
+    start: ["<news url>"],
+    follow: { allow_hosts: ["<news host>"], max_depth: 0 },
+    max_pages_per_run: 6
+  },
+  trigger: { kind: "interval", every: "1d", active_hours: "07:00-10:00" },
+  state: { seen: "set", notes: "log", last_important: "value" },
+  steps: [
+    { do: "open", id: "news_page", url: "$scope.start[0]" },
+    {
+      do: "locate",
+      id: "items",
+      target: "the list of news items, newest first",
+      strategies: ["structured_data", "repeating_blocks"],
+      min_confidence: 0.7,
+      on_low: "ask_human"
+    },
+    { do: "diff", id: "fresh", items: "$items", against: "state.seen", key: ["url"] },
+    {
+      do: "for_each",
+      items: "$fresh",
+      limit: 20,
+      steps: [
+        {
+          do: "extract",
+          id: "entry",
+          fields: { title: "text<=200", summary: "text<=500", url: "url" },
+          strategies: ["structured_data", "repeating_blocks"],
+          from: "$item"
+        },
+        {
+          do: "infer",
+          id: "matters",
+          question: "Given my rules in the reference passages, does this item change what I should do with my roster?",
+          output: "bool",
+          accept_at: 0.8,
+          reject_below: 0.3,
+          on_uncertain: "note_as_maybe",
+          evidence: "quote",
+          samples: 2,
+          uses: "$entry",
+          recall: { library: { top_k: 3 } }
+        },
+        {
+          do: "branch",
+          on: "matters",
+          accept: [
+            { do: "note", tag: "matters", fields: ["$entry", "$matters"] },
+            { do: "remember", key: "last_important", from: "$entry" }
+          ],
+          maybe: [{ do: "note", tag: "maybe", fields: ["$entry", "$matters"] }]
+        },
+        { do: "mark_seen" }
+      ]
+    }
+  ],
+  stop: {
+    any: [{ after_days: 60 }],
+    budgets: { tokens_per_run: 150_000, pages_per_run: 6, runtime_minutes_per_run: 15 }
+  },
+  on_failure: { retries: 1, backoff: "exponential", pause_after: 2, notify: true },
+  output: { notes: "append" },
+  safety: { approval_for: ["submit", "personal_data", "purchase", "post"], rate: "1 request / 2s" }
+};
+
+/** The library example served to models (`GET /api/routines/schema` as `libraryExample`). */
+export function routineLibraryExample(): RoutineSpec {
+  return fillRoutineTemplate(LIBRARY_ROUTINE_TEMPLATE, { topic: "", pageUrl: "" }, {
+    "<news url>": "https://news.example.com/roster-news",
+    "<news host>": "news.example.com"
+  });
 }

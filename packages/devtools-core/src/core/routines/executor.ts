@@ -63,6 +63,7 @@ import {
   type InferenceModel,
   type OutputKind
 } from "./inference.js";
+import { RECALL_QUERY_CHARS, recall, type RecallDoc } from "./recall.js";
 import { CHOOSE_MODEL_MESSAGE, type InferenceResolution } from "./routine-model.js";
 import { STRUCTURED_CONFIDENCE, sanitizePageData, type PageData, type PageItem } from "./page-data.js";
 import { hostInScope, maxDepthOf, parseHttpUrl } from "./scope.js";
@@ -102,6 +103,8 @@ export type ExecutorDeps = {
   resolveModel?: () => Promise<InferenceResolution>;
   /** What an `act` step needs: grants, counters and the action list. Without it an `act` step ends the run. */
   acts?: ActGate;
+  /** The routine's ACTIVE reference documents (proposed ones must never be returned). Without it `recall` finds nothing. */
+  library?: { activeDocs(routineId: string): readonly RecallDoc[] };
 };
 
 export type ExecutorInput = {
@@ -192,6 +195,9 @@ class Executor {
   private pendingQueued = 0;
   private readonly attempts = new Map<string, number>();
   private pauseNow = false;
+  /** Values saved by `remember` this run. Visible to later steps at once; committed to the state only if the run completes. */
+  private readonly remembered = new Map<string, string>();
+  private libraryEmptyLogged = false;
 
   constructor(private readonly deps: ExecutorDeps, private readonly input: ExecutorInput) {
     this.spec = input.spec;
@@ -244,6 +250,8 @@ class Executor {
     } else if (outcome === "completed") summaryText = `Completed: ${counts}.`;
     else if (!summaryText) summaryText = outcome === "cancelled" ? "Cancelled." : `Ended: ${outcome}.`;
     else if (outcome !== "cancelled") summaryText = `${summaryText} (${counts})`;
+    // Saved values are kept only when the run got to its end; a cancelled or failed run leaves memory as it was.
+    if (outcome === "completed" || waiting) for (const [k, v] of this.remembered) this.input.state.values[k] = v;
     return {
       outcome,
       summary: summaryText,
@@ -290,6 +298,8 @@ class Executor {
         return this.actStep(step, env, label);
       case "note":
         return this.noteStep(step, env, label);
+      case "remember":
+        return this.rememberStep(step, env, label);
       case "mark_seen":
         return this.markSeenStep(step, env, label);
       case "open_item":
@@ -612,7 +622,7 @@ class Executor {
         const key = ref.slice(6);
         const set = this.input.state.sets[key];
         const log = this.input.state.logs[key];
-        const value = this.input.state.values[key];
+        const value = this.valueOf(key);
         if (set) put(`${key}_count`, String(set.length));
         else if (log) put(`${key}_count`, String(log.length));
         else if (value !== undefined) put(key, value);
@@ -626,6 +636,7 @@ class Executor {
           put(`${id}_confidence`, val.r.confidence.toFixed(2));
           put(`${id}_verdict`, val.r.verdict);
           if (val.r.evidence) put(`${id}_evidence`, val.r.evidence);
+          if (val.r.evidenceFrom) put(`${id}_evidence_from`, val.r.evidenceFrom);
         } else if (val?.t === "items") put(`${ref.slice(1)}_count`, String(val.items.length));
       }
     }
@@ -646,6 +657,34 @@ class Executor {
     });
     this.input.log("info", this.maybe ? "Recorded a note (as a maybe)." : "Recorded a note.", label);
     this.progress();
+  }
+
+  // remember ────────────────────────────────────────────────────────────────
+
+  /** A stored value, as later steps of this run see it (this run's `remember` first). */
+  private valueOf(key: string): string | undefined {
+    return this.remembered.get(key) ?? this.input.state.values[key];
+  }
+
+  /** Save one piece of text under a declared value key. Text only, at most {@link ROUTINE_LIMITS.rememberChars}. */
+  private async rememberStep(step: Extract<RoutineStep, { do: "remember" }>, env: Env, label: string): Promise<void> {
+    const raw = step.from.startsWith("$") || step.from.startsWith("state.") ? this.rememberText(step.from, env) : step.from;
+    const text = sanitizeData(raw, ROUTINE_LIMITS.rememberChars).text;
+    if (text === "") {
+      this.input.log("warn", `Nothing to save for "${step.key}"; it was left as it was.`, label);
+      return;
+    }
+    this.remembered.set(step.key, text);
+    this.input.log("info", `Saved a value: ${step.key} (${text.length} characters).`, label);
+  }
+
+  private rememberText(ref: string, env: Env): string {
+    if (ref === "$item") return recordText(env.item ?? {}, " | ");
+    if (ref.startsWith("state.")) return this.valueOf(ref.slice(6)) ?? "";
+    const val = this.vars.get(ref.slice(1));
+    if (val?.t === "record") return recordText(val.rec, " | ");
+    if (val?.t === "verdict") return valueText(val.r.value);
+    return "";
   }
 
   // infer / wait ────────────────────────────────────────────────────────────
@@ -729,7 +768,7 @@ class Executor {
       const key = ref.slice(6);
       const set = this.input.state.sets[key];
       const log = this.input.state.logs[key];
-      const value = this.input.state.values[key];
+      const value = this.valueOf(key);
       if (set) return set.slice(-100).join("\n");
       if (log) return log.slice(-100).join("\n");
       return value ?? "";
@@ -771,6 +810,7 @@ class Executor {
       return { verdict: "maybe", value: null, confidence: 0, evidence: "", grounded: false, routed: 0, samples: 0, agreed: 0, reason: "invalid" };
     }
     const model = await this.model();
+    const passages = step.recall ? this.recallPassages(step, data, label) : [];
     return this.ask(model, label, {
       question: step.question,
       output: step.output,
@@ -778,9 +818,34 @@ class Executor {
       evidence: step.evidence ?? "quote",
       samples: step.samples ?? 1,
       data,
+      ...(passages.length > 0 ? { passages: passages.map((p) => ({ title: p.title, text: p.text })) } : {}),
       accept_at: step.accept_at,
       reject_below: step.reject_below
     });
+  }
+
+  /**
+   * The best passages of the active reference documents for this question and data. Logs fixed wording
+   * and titles only, never passage text; an empty library is said once per run.
+   */
+  private recallPassages(step: Extract<RoutineStep, { do: "infer" }>, data: string, label: string) {
+    const docs = this.deps.library?.activeDocs(this.input.routineId) ?? [];
+    if (docs.length === 0) {
+      if (!this.libraryEmptyLogged) {
+        this.libraryEmptyLogged = true;
+        this.input.log("info", "The reference library is empty.", label);
+      }
+      return [];
+    }
+    const topK = step.recall?.library.top_k ?? 3;
+    const passages = recall(docs, `${step.question}\n${data}`.slice(0, RECALL_QUERY_CHARS), { topK });
+    if (passages.length > 0) {
+      const titles = [...new Set(passages.map((p) => clean(p.title, 40)))];
+      this.input.log("info", `Used ${passages.length} reference passage(s) from: ${titles.slice(0, 3).join(", ")}`, label);
+    } else {
+      this.input.log("info", "No reference passage matched this judgment.", label);
+    }
+    return passages;
   }
 
   private async ask(model: InferenceModel, label: string, req: Parameters<typeof runInference>[0]): Promise<InferResult> {
@@ -1014,7 +1079,7 @@ class Executor {
   /** Text of a reference for a subject, a value or a check. Nothing is evaluated. */
   private refPlain(ref: string, env: Env): string {
     if (ref === "$item") return primaryText(env.item ?? {});
-    if (ref.startsWith("state.")) return this.input.state.values[ref.slice(6)] ?? "";
+    if (ref.startsWith("state.")) return this.valueOf(ref.slice(6)) ?? "";
     const val = this.vars.get(ref.slice(1));
     if (val?.t === "record") return primaryText(val.rec);
     if (val?.t === "verdict") return valueText(val.r.value);

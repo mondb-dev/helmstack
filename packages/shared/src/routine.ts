@@ -136,6 +136,8 @@ export type RoutineMemory = {
   values: Record<string, string>;
   /** Next scheduled run for an interval routine, when approved and not paused. */
   nextRunAt?: number;
+  /** Active reference documents. */
+  docs?: number;
   /** Why this routine is never started on its own (schedule/event triggers do not run yet). */
   notScheduledReason?: string;
   lastRun?: RoutineRunSummary;
@@ -206,4 +208,48 @@ export type RoutineActionEvent = {
   actionId: string;
   effect: RoutineEffectName;
   status: RoutineActionStatus;
+};
+
+/**
+ * A routine's reference library: text the routine's judgment steps may draw on (your strategy,
+ * league rules, research). Documents a human adds are active at once. Documents an agent adds
+ * wait for the human to approve them, and only approved documents are ever retrieved.
+ */
+export const ROUTINE_LIBRARY_LIMITS = {
+  docsPerRoutine: 30,
+  docChars: 20_000,
+  totalChars: 200_000,
+  titleChars: 120,
+  sourceChars: 300,
+  /** Agent-proposed documents waiting for review, per routine. */
+  pendingPerRoutine: 10
+} as const;
+
+export type RoutineDocStatus = "proposed" | "active";
+export type RoutineDocOrigin = "human" | "agent";
+
+export type RoutineDoc = {
+  id: string;
+  routineId: string;
+  title: string;
+  /** Where it came from: a URL or a short label. Display only. */
+  source?: string;
+  origin: RoutineDocOrigin;
+  status: RoutineDocStatus;
+  addedAt: number;
+  chars: number;
+  /** First ~300 characters, for the review list. Text only. */
+  excerpt: string;
+};
+
+export type RoutineDocDetail = RoutineDoc & { text: string };
+
+export type AddRoutineDocInput = { title: string; text: string; source?: string };
+
+/** What the `routine_library` event (SSE) carries: ids and a status, never a title or text. */
+export type RoutineDocEvent = {
+  routineId: string;
+  docId: string;
+  /** "removed" when the document was deleted (or rejected). */
+  status: RoutineDocStatus | "removed";
 };

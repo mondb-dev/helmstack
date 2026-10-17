@@ -62,8 +62,12 @@ import type {
   ReportEvidenceKind,
   ReportFormat,
   ReportSummary,
+  AddRoutineDocInput,
   ProposeRoutineResult,
   RoutineAction,
+  RoutineDoc,
+  RoutineDocDetail,
+  RoutineDocEvent,
   RoutineActionEvent,
   RoutineDetail,
   RoutineEngineStatus,
@@ -122,6 +126,7 @@ import { HandoffStore } from "./stores/handoff-store.js";
 import { HumanPickStore } from "./stores/human-pick-store.js";
 import { ReportStore, newReportId, type ReportStoreOptions } from "./stores/report-store.js";
 import { RoutineDataStore } from "./stores/routine-data-store.js";
+import { RoutineLibraryStore } from "./stores/routine-library-store.js";
 import { RoutineError, RoutineStore, isValidRoutineId, type RoutineStoreEvent, type RoutineStoreOptions } from "./stores/routine-store.js";
 import { SitePatternStore } from "./stores/site-pattern-store.js";
 import { VisualDiffStore } from "./stores/visual-diff-store.js";
@@ -215,6 +220,9 @@ export class HelmstackCore implements AgentApi {
   private readonly routines: RoutineStore;
   private readonly routineEngine: RoutineEngine;
   private readonly routineModel: RoutineModelManager;
+  private readonly routineLibrary: RoutineLibraryStore;
+  private readonly routineDocsListeners = new Set<(routineId: string) => void>();
+  private readonly routineLibraryListeners = new Set<(event: RoutineDocEvent) => void>();
   private readonly routinesChangedListeners = new Set<(routines: RoutineSummary[], proposed?: RoutineSummary) => void>();
   /** Ids handed out by the last read of each routine tab's controls (see `collectActControls`). */
   private readonly actControls = new Map<TabId, Map<string, { backendNodeId: number; role: string; name: string }>>();
@@ -245,7 +253,9 @@ export class HelmstackCore implements AgentApi {
       log: options.routineStore?.log ?? ((m) => console.log(m)),
       ...options.routineModel
     });
+    this.routineLibrary = new RoutineLibraryStore(options.dataDir, { log: options.routineStore?.log ?? ((m) => console.log(m)) });
     this.routineEngine = new RoutineEngine({
+      library: this.routineLibrary,
       routines: this.routines,
       model: this.routineModel,
       data: new RoutineDataStore(options.dataDir, { log: options.routineStore?.log ?? ((m) => console.log(m)) }),
@@ -1454,6 +1464,89 @@ export class HelmstackCore implements AgentApi {
   /** Newest first (page-supplied text: untrusted data). Agents may read this. */
   listRoutineNotes(id: string, limit?: number): RoutineNote[] {
     return this.routineEngine.listNotes(id, limit);
+  }
+
+  // ── Reference library ─────────────────────────────────────────────────────
+  // Documents a routine's judgments may draw on. The human adds them (active at once); an agent can
+  // only PROPOSE one, and it is never used until the human approves it. Document text is untrusted.
+
+  private mustHaveRoutine(id: string): RoutineSummary {
+    if (!isValidRoutineId(id)) throw new RoutineError("invalid routine id", "invalid_id");
+    const found = this.routines.get(id);
+    if (!found) throw new RoutineError("That routine no longer exists.", "not_found");
+    return found;
+  }
+
+  private docChanged(routineId: string, docId: string, status: RoutineDocEvent["status"]): void {
+    for (const listener of this.routineDocsListeners) {
+      try { listener(routineId); } catch { /* a listener must not break the library */ }
+    }
+    for (const listener of this.routineLibraryListeners) {
+      try { listener({ routineId, docId, status }); } catch { /* ditto */ }
+    }
+  }
+
+  /** Human-only. Newest first; proposed documents are listed too, marked so. */
+  listRoutineDocs(id: string): RoutineDoc[] {
+    this.mustHaveRoutine(id);
+    return this.routineLibrary.list(id);
+  }
+
+  /** Human-only. The full text of one document, or null. */
+  getRoutineDoc(id: string, docId: string): RoutineDocDetail | null {
+    if (!this.routines.get(id)) return null;
+    return this.routineLibrary.get(id, docId);
+  }
+
+  /** Human-only. Active at once. Throws `RoutineError` for bad input or a limit. */
+  addRoutineDoc(id: string, doc: AddRoutineDocInput): RoutineDoc {
+    this.mustHaveRoutine(id);
+    const added = this.routineLibrary.add(id, doc, "human");
+    this.docChanged(id, added.id, added.status);
+    return added;
+  }
+
+  /** Human-only. proposed -> active. */
+  approveRoutineDoc(id: string, docId: string): RoutineDoc {
+    this.mustHaveRoutine(id);
+    const doc = this.routineLibrary.approve(id, docId);
+    this.docChanged(id, doc.id, "active");
+    return doc;
+  }
+
+  /** Human-only. Removes a document, proposed or active (this is also how a proposal is rejected). */
+  deleteRoutineDoc(id: string, docId: string): void {
+    this.mustHaveRoutine(id);
+    this.routineLibrary.delete(id, docId);
+    this.docChanged(id, docId, "removed");
+  }
+
+  /** Fires when a document is added (by anyone), approved or removed. Returns an unsubscribe function. */
+  onRoutineDocsChanged(listener: (routineId: string) => void): () => void {
+    this.routineDocsListeners.add(listener);
+    return () => this.routineDocsListeners.delete(listener);
+  }
+
+  /** Agent route: propose a document. Stored as `proposed`; unused until the human approves it. */
+  proposeRoutineDoc(id: string, doc: AddRoutineDocInput, ctx: { agentId?: string } = {}): RoutineDoc {
+    const routine = this.mustHaveRoutine(id);
+    if (routine.state !== "proposed" && routine.state !== "approved" && routine.state !== "paused") {
+      throw new RoutineError(`A ${routine.state} routine takes no new reference documents.`, "bad_state");
+    }
+    const added = this.routineLibrary.add(id, doc, "agent", ctx);
+    this.docChanged(id, added.id, added.status);
+    return added;
+  }
+
+  /** Agent route: titles, status, size and an excerpt of each document; never the full text. */
+  listRoutineReferences(id: string): RoutineDoc[] {
+    return this.listRoutineDocs(id);
+  }
+
+  /** Ids and a status only. Returns an unsubscribe function. */
+  onRoutineLibraryUpdated(listener: (event: RoutineDocEvent) => void): () => void {
+    this.routineLibraryListeners.add(listener);
+    return () => this.routineLibraryListeners.delete(listener);
   }
 
   getRoutineMemory(id: string): RoutineMemory {

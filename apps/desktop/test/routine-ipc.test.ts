@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { RoutineSummary } from "../../../packages/shared/src/index.js";
-import { createRoutineIpc, parseRoutineId, type RoutineIpcDeps } from "../src/main/routine-ipc.js";
+import { createRoutineIpc, parseDocInput, parseRoutineId, type RoutineIpcDeps } from "../src/main/routine-ipc.js";
 
 const SHELL = { shell: true };
 const ID = "rt-20261017-093000-abcdef01";
 const SUMMARY = { id: ID, state: "approved" } as RoutineSummary;
 const RUN_ID = "run-abc123-0123abcd";
 const ACTION = "act-abc123-0123abcd";
+const DOC = "doc-abc123-0123abcd";
 const RUN = { id: RUN_ID, routineId: ID, status: "running" } as never;
 
 function setup() {
@@ -34,6 +35,11 @@ function setup() {
       approveRoutineAction: vi.fn(async () => ({ id: ACTION } as never)),
       declineRoutineAction: vi.fn(() => ({ id: ACTION }) as never),
       setRoutineKillSwitch: vi.fn((on: boolean) => ({ enabled: true, killed: on, running: [] })),
+      listRoutineDocs: vi.fn(() => []),
+      getRoutineDoc: vi.fn(() => null),
+      addRoutineDoc: vi.fn(() => ({ id: DOC }) as never),
+      approveRoutineDoc: vi.fn(() => ({ id: DOC }) as never),
+      deleteRoutineDoc: vi.fn(() => undefined),
       getRoutineModel: vi.fn(async () => ({ choice: null, available: false })),
       setRoutineModel: vi.fn(async (choice: { cli: string; model?: string } | null) => ({ choice, available: true }))
     },
@@ -220,5 +226,76 @@ describe("routine IPC", () => {
     expect(() => ipc.declineAction(stranger, ID, ACTION)).toThrow("only available");
     expect(() => ipc.listActions(stranger, ID)).toThrow("only available");
     expect(deps.core.approveRoutineAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reference library IPC", () => {
+  it("passes validated ids and a strictly shaped document to the core", () => {
+    const { deps, ipc } = setup();
+    ipc.listDocs(SHELL, ID);
+    ipc.getDoc(SHELL, ID, DOC);
+    ipc.approveDoc(SHELL, ID, DOC);
+    ipc.deleteDoc(SHELL, ID, DOC);
+    ipc.addDoc(SHELL, ID, { title: "Rules", text: "Never drop the franchise guard.", source: " https://x.example " });
+    expect(deps.core.listRoutineDocs).toHaveBeenCalledWith(ID);
+    expect(deps.core.getRoutineDoc).toHaveBeenCalledWith(ID, DOC);
+    expect(deps.core.approveRoutineDoc).toHaveBeenCalledWith(ID, DOC);
+    expect(deps.core.deleteRoutineDoc).toHaveBeenCalledWith(ID, DOC);
+    expect(deps.core.addRoutineDoc).toHaveBeenCalledWith(ID, { title: "Rules", text: "Never drop the franchise guard.", source: " https://x.example " });
+    ipc.addDoc(SHELL, ID, { title: "T", text: "x", source: "   " });
+    expect(deps.core.addRoutineDoc).toHaveBeenLastCalledWith(ID, { title: "T", text: "x" });
+  });
+
+  it("rejects bad ids", () => {
+    const { deps, ipc } = setup();
+    for (const bad of ["../x", "", 5, null, undefined, `${DOC}/..`, `${DOC}\n`, { id: DOC }, "doc-ABC123-0123abcd"]) {
+      expect(() => ipc.getDoc(SHELL, ID, bad)).toThrow("Invalid document id.");
+      expect(() => ipc.approveDoc(SHELL, ID, bad)).toThrow("Invalid document id.");
+      expect(() => ipc.deleteDoc(SHELL, ID, bad)).toThrow("Invalid document id.");
+      expect(() => ipc.listDocs(SHELL, bad)).toThrow("Invalid routine id.");
+      expect(() => ipc.addDoc(SHELL, bad, { title: "a", text: "b" })).toThrow("Invalid routine id.");
+    }
+    expect(deps.core.getRoutineDoc).not.toHaveBeenCalled();
+    expect(deps.core.deleteRoutineDoc).not.toHaveBeenCalled();
+  });
+
+  it("treats the document as untrusted input: types, unknown fields and size caps", () => {
+    const { deps, ipc } = setup();
+    const bad: unknown[] = [
+      null,
+      "text",
+      [],
+      {},
+      { title: "a" },
+      { text: "b" },
+      { title: 1, text: "b" },
+      { title: "a", text: 2 },
+      { title: "  ", text: "b" },
+      { title: "a", text: "  " },
+      { title: "a", text: "b", source: 5 },
+      { title: "a", text: "b", status: "active" },
+      { title: "a", text: "b", origin: "agent" },
+      { title: "a", text: "b", id: DOC },
+      { title: "x".repeat(121), text: "b" },
+      { title: "a", text: "x".repeat(40_001) },
+      { title: "a", text: "b", source: "s".repeat(301) }
+    ];
+    for (const doc of bad) expect(() => parseDocInput(doc), JSON.stringify(doc)?.slice(0, 60)).toThrow();
+    for (const doc of bad) expect(() => ipc.addDoc(SHELL, ID, doc)).toThrow();
+    expect(deps.core.addRoutineDoc).not.toHaveBeenCalled();
+    expect(parseDocInput({ title: "x".repeat(120), text: "y".repeat(40_000) })).toEqual({ title: "x".repeat(120), text: "y".repeat(40_000) });
+  });
+
+  it("refuses every library call from anything but the shell window", () => {
+    const { deps, ipc } = setup();
+    const stranger = {};
+    expect(() => ipc.listDocs(stranger, ID)).toThrow("only available");
+    expect(() => ipc.getDoc(stranger, ID, DOC)).toThrow("only available");
+    expect(() => ipc.addDoc(stranger, ID, { title: "a", text: "b" })).toThrow("only available");
+    expect(() => ipc.approveDoc(stranger, ID, DOC)).toThrow("only available");
+    expect(() => ipc.deleteDoc(stranger, ID, DOC)).toThrow("only available");
+    for (const fn of ["listRoutineDocs", "getRoutineDoc", "addRoutineDoc", "approveRoutineDoc", "deleteRoutineDoc"] as const) {
+      expect(deps.core[fn]).not.toHaveBeenCalled();
+    }
   });
 });

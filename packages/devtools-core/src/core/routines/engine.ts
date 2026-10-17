@@ -28,6 +28,7 @@ import {
   type RoutineDataStore,
   type RoutineStateData
 } from "../stores/routine-data-store.js";
+import type { RoutineLibraryStore } from "../stores/routine-library-store.js";
 import { RoutineError, isValidRoutineId, type RoutineAction } from "../stores/routine-store.js";
 import { ActionService, newActionRandom, type ActionServiceOptions } from "./action-service.js";
 import { executeRoutine, type ExecutorResult, type RobotsFetcher, type RoutineBrowser } from "./executor.js";
@@ -67,6 +68,8 @@ export interface RoutineSource {
 export type RoutineEngineOptions = {
   routines: RoutineSource;
   data: RoutineDataStore;
+  /** The reference library; judgments with `recall` read its active documents. */
+  library?: RoutineLibraryStore;
   browser: RoutineBrowser;
   fetchRobots: RobotsFetcher;
   /** Which model answers judgments. Without one, a judgment ends a run asking for a model. */
@@ -276,6 +279,7 @@ export class RoutineEngine {
     };
     const spec = this.routines.spec(id);
     const kind = spec?.trigger.kind;
+    if (this.options.library) memory.docs = this.options.library.activeCount(id);
     if (kind === "schedule" || kind === "event") {
       memory.notScheduledReason = `${kind === "schedule" ? "Schedule" : "Event"} triggers don't run yet. Only manual and interval routines run in this version.`;
     } else if (routine.state === "approved" && kind === "interval" && state.nextRunAt !== undefined) {
@@ -483,6 +487,7 @@ export class RoutineEngine {
           random: () => randomBytes(3).toString("hex"),
           ...(this.options.model ? { resolveModel: () => this.options.model!.resolve() } : {}),
           acts: this.actions.gateFor(id),
+          ...(this.options.library ? { library: this.options.library } : {}),
           ...(this.options.defaultPageDelayMs !== undefined ? { defaultPageDelayMs: this.options.defaultPageDelayMs } : {}),
           ...(this.options.navTimeoutMs !== undefined ? { navTimeoutMs: this.options.navTimeoutMs } : {}),
           ...(this.options.maxRuntimeMs !== undefined ? { maxRuntimeMs: this.options.maxRuntimeMs } : {})

@@ -121,10 +121,13 @@ export type {
   ReportFormat,
   ReportSeverity,
   ReportSummary,
+  AddRoutineDocInput,
   ProposeRoutineResult,
   RoutineAction,
   RoutineActionEvent,
   RoutineDetail,
+  RoutineDoc,
+  RoutineDocEvent,
   RoutineEngineStatus,
   RoutinePreview,
   RoutineRisk,
@@ -205,9 +208,12 @@ import type {
   ReportSummary,
   CreateReportInput,
   CreateReportResult,
+  AddRoutineDocInput,
   RoutineAction,
   RoutineActionEvent,
   RoutineDetail,
+  RoutineDoc,
+  RoutineDocEvent,
   RoutineSummary,
   ResourceBudget,
   ScreenshotDiff,
@@ -275,6 +281,8 @@ export type StreamHandlers = {
   onRoutineStateChanged?: (routine: RoutineSummary) => void;
   /** A routine action was queued for the user, decided or finished (ids and words only). */
   onRoutineAction?: (event: RoutineActionEvent) => void;
+  /** A reference document was proposed, approved or removed (ids and a status only). */
+  onRoutineLibrary?: (event: RoutineDocEvent) => void;
   onError?: (err: Error) => void;
 };
 
@@ -991,6 +999,8 @@ export class BrowserClient {
     example: Record<string, unknown>;
     /** A routine with `act` steps and an `actions` block (keeping a roster in shape), in generic terms. */
     actionExample: Record<string, unknown>;
+    /** A routine whose judgments draw on the reference library and that remembers a value. */
+    libraryExample: Record<string, unknown>;
     limits: Record<string, number>;
   }> {
     return this.get("/api/routines/schema");
@@ -1007,6 +1017,20 @@ export class BrowserClient {
     options: { replaces?: string } = {}
   ): Promise<{ routine: RoutineSummary; preview: RoutineSummary["preview"]; warnings: string[]; stepCount: number; message: string }> {
     return this.post("/api/routines", { spec, ...(options.replaces ? { replaces: options.replaces } : {}) });
+  }
+
+  /**
+   * PROPOSE a reference document for a routine. It is stored as `proposed` (untrusted text) and the
+   * routine does not use it until the user approves it in the Routines tab. You cannot approve,
+   * delete or read a document back in full.
+   */
+  async addRoutineReference(id: string, doc: AddRoutineDocInput): Promise<{ document: RoutineDoc; message: string }> {
+    return this.post(`/api/routines/${encodeURIComponent(id)}/library`, { title: doc.title, text: doc.text, ...(doc.source ? { source: doc.source } : {}) });
+  }
+
+  /** A routine's reference documents, newest first: titles, status, size and a short excerpt. Never the full text. */
+  async listRoutineReferences(id: string): Promise<RoutineDoc[]> {
+    return this.get(`/api/routines/${encodeURIComponent(id)}/library`);
   }
 
   /** Routines on this machine, newest first. */
@@ -1459,6 +1483,9 @@ function dispatch(eventType: string, data: unknown, handlers: StreamHandlers) {
       break;
     case "routine_action":
       handlers.onRoutineAction?.(data as RoutineActionEvent);
+      break;
+    case "routine_library":
+      handlers.onRoutineLibrary?.(data as RoutineDocEvent);
       break;
   }
 }

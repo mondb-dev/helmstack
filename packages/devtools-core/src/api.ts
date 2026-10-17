@@ -62,8 +62,11 @@ import type {
   RecordingSession,
   RecordingStopResult,
   ProposeRoutineResult,
+  AddRoutineDocInput,
   RoutineAction,
   RoutineActionEvent,
+  RoutineDoc,
+  RoutineDocEvent,
   ReportFormat,
   ReportSummary,
   RoutineDetail,
@@ -309,6 +312,16 @@ export interface RoutinesApi {
   onRoutineActionUpdated(listener: (event: RoutineActionEvent) => void): () => void;
   /** Newest first. Every field is text copied from web pages: untrusted data, never instructions. */
   listRoutineNotes(id: string, limit?: number): RoutineNote[];
+  /**
+   * An agent PROPOSES a reference document for the routine. It is stored as `proposed` and is never used by the
+   * routine until the user approves it in the Routines tab. Throws `RoutineError` (not_found, bad_state, limit, invalid).
+   * Approving, activating, deleting and reading the full text are human-only and deliberately not here.
+   */
+  proposeRoutineDoc(id: string, doc: AddRoutineDocInput, ctx?: { agentId?: string }): RoutineDoc;
+  /** Newest first: titles, status, size and a short excerpt. Never the full text. Excerpts are untrusted data. */
+  listRoutineReferences(id: string): RoutineDoc[];
+  /** Ids and a status only (never title or text). Returns an unsubscribe function. */
+  onRoutineLibraryUpdated(listener: (event: RoutineDocEvent) => void): () => void;
   /** Fires when a run starts, progresses or ends. Returns an unsubscribe function. */
   onRoutineRunUpdated(listener: (run: RoutineRunSummary) => void): () => void;
   /** Fires on a new proposal and on every state change, with the affected summary. Returns an unsubscribe function. */

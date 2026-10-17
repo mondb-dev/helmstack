@@ -1,5 +1,5 @@
 import type { RoutineSpec } from "../../../shared/src/index.js";
-import { actionRoutine, canonical, minimal } from "./fixtures.js";
+import { actionRoutine, canonical, libraryRoutine, minimal } from "./fixtures.js";
 
 type Any = any;  
 
@@ -22,6 +22,10 @@ const a = (): Any => actionRoutine();
 const BENCH = "steps[2].steps[2].accept[0]";
 const ADD = "steps[5].steps[1]";
 const m = (): Any => minimal();
+const l = (): Any => libraryRoutine();
+/** Paths in the library example: the recall infer and the remember inside the accept arm. */
+const RECALL = "steps[3].steps[1]";
+const REMEMBER = "steps[3].steps[2].accept[1]";
 /** Path of the note step in the canonical example's accept arm. */
 const NOTE = "steps[3].steps[2].accept[1]";
 const INFER = "steps[3].steps[1]";
@@ -41,6 +45,9 @@ function nest(levels: number): Any {
 export const VALID: ValidCase[] = [
   { name: "the canonical example", spec: c },
   { name: "a minimal manual routine", spec: m },
+  { name: "the library example (recall + remember)", spec: l },
+  { name: "recall with the largest top_k", spec: () => { const s = l(); s.steps[3].steps[1].recall.library.top_k = 5; return s; } },
+  { name: "remember from literal text at the 2,000-character limit", spec: () => { const s = l(); s.steps[3].steps[2].accept[1].from = "x".repeat(2000); return s; } },
   {
     name: "a weekday schedule with a time zone",
     spec: () => ({ ...m(), trigger: { kind: "schedule", cron: "0 9 * * 1-5", timezone: "Europe/Berlin" } })
@@ -270,6 +277,22 @@ export const INVALID: InvalidCase[] = [
   { name: "a protected name listed twice", make: () => { const s = a(); s.actions.protect = ["Star Player", "star player"]; return s; }, path: "actions.protect[1]", says: "listed twice", schemaCatches: false },
   { name: "an empty protected name", make: () => { const s = a(); s.actions.protect = ["  "]; return s; }, path: "actions.protect[0]", says: "non-empty", schemaCatches: false },
   { name: "an unknown key in actions", make: () => { const s = a(); s.actions.auto_everything = true; return s; }, path: "actions.auto_everything", says: "unknown field", schemaCatches: true },
+  // ── reference library and remember ──
+  { name: "recall top_k of zero", make: () => { const s = l(); s.steps[3].steps[1].recall.library.top_k = 0; return s; }, path: `${RECALL}.recall.library.top_k`, schemaCatches: true },
+  { name: "recall top_k of six", make: () => { const s = l(); s.steps[3].steps[1].recall.library.top_k = 6; return s; }, path: `${RECALL}.recall.library.top_k`, schemaCatches: true },
+  { name: "a fractional recall top_k", make: () => { const s = l(); s.steps[3].steps[1].recall.library.top_k = 2.5; return s; }, path: `${RECALL}.recall.library.top_k`, schemaCatches: true },
+  { name: "recall without a library", make: () => { const s = l(); s.steps[3].steps[1].recall = {}; return s; }, path: `${RECALL}.recall.library`, schemaCatches: true },
+  { name: "recall without top_k", make: () => { const s = l(); s.steps[3].steps[1].recall.library = {}; return s; }, path: `${RECALL}.recall.library.top_k`, schemaCatches: true },
+  { name: "recall with an extra key", make: () => { const s = l(); s.steps[3].steps[1].recall.web = true; return s; }, path: `${RECALL}.recall.web`, says: "unknown field", schemaCatches: true },
+  { name: "recall on a locate step", make: () => { const s = l(); s.steps[1].recall = { library: { top_k: 1 } }; return s; }, path: "steps[1].recall", says: "unknown field", schemaCatches: true },
+  { name: "remember into an undeclared key", make: () => { const s = l(); s.steps[3].steps[2].accept[1].key = "nowhere"; return s; }, path: `${REMEMBER}.key`, says: "not declared", schemaCatches: false },
+  { name: "remember into a set", make: () => { const s = l(); s.steps[3].steps[2].accept[1].key = "seen"; return s; }, path: `${REMEMBER}.key`, says: "is a set", schemaCatches: false },
+  { name: "remember without a source", make: () => { const s = l(); delete s.steps[3].steps[2].accept[1].from; return s; }, path: `${REMEMBER}.from`, schemaCatches: true },
+  { name: "remember without a key", make: () => { const s = l(); delete s.steps[3].steps[2].accept[1].key; return s; }, path: `${REMEMBER}.key`, schemaCatches: true },
+  { name: "remember from text over 2,000 characters", make: () => { const s = l(); s.steps[3].steps[2].accept[1].from = "x".repeat(2001); return s; }, path: `${REMEMBER}.from`, says: "limit is 2000", schemaCatches: true },
+  { name: "remember from an unknown step", make: () => { const s = l(); s.steps[3].steps[2].accept[1].from = "$ghost"; return s; }, path: `${REMEMBER}.from`, says: "no step", schemaCatches: false },
+  { name: "remember with an extra key", make: () => { const s = l(); s.steps[3].steps[2].accept[1].tag = "x"; return s; }, path: `${REMEMBER}.tag`, says: "unknown field", schemaCatches: true },
+  { name: "remember from $item outside a loop", make: () => { const s = l(); s.steps.push({ do: "remember", key: "last_important", from: "$item" }); return s; }, path: "steps[4].from", says: "inside a for_each", schemaCatches: false },
   // ── whole-document shape ──
   { name: "version 2", make: () => ({ ...c(), version: 2 }), path: "version", schemaCatches: true },
   { name: "a missing title", make: () => { const s = c(); delete s.title; return s; }, path: "title", schemaCatches: true },

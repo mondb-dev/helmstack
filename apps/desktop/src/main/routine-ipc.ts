@@ -7,23 +7,28 @@
  * a clear message for an illegal move). Running, cancelling, clearing memory and the kill
  * switch are human-only too: they exist here and over IPC, never as an agent HTTP route.
  */
-import type {
-  RoutineAction,
-  RoutineDetail,
-  RoutineEngineStatus,
-  RoutineGrants,
-  RoutineMemory,
-  RoutineModelChoice,
-  RoutineModelStatus,
-  RoutineNote,
-  RoutineRunDetail,
-  RoutineRunSummary,
-  RoutineSummary
+import {
+  ROUTINE_LIBRARY_LIMITS,
+  type AddRoutineDocInput,
+  type RoutineAction,
+  type RoutineDetail,
+  type RoutineDoc,
+  type RoutineDocDetail,
+  type RoutineEngineStatus,
+  type RoutineGrants,
+  type RoutineMemory,
+  type RoutineModelChoice,
+  type RoutineModelStatus,
+  type RoutineNote,
+  type RoutineRunDetail,
+  type RoutineRunSummary,
+  type RoutineSummary
 } from "../../../../packages/shared/src/index.js";
 import { isValidActionId } from "../../../../packages/devtools-core/src/core/routines/action-service.js";
 import { parseGrants } from "../../../../packages/devtools-core/src/core/routines/grants.js";
 import { parseRoutineModelChoice } from "../../../../packages/devtools-core/src/core/routines/routine-model.js";
 import { isValidRunId } from "../../../../packages/devtools-core/src/core/stores/routine-data-store.js";
+import { isValidDocId } from "../../../../packages/devtools-core/src/core/stores/routine-library-store.js";
 import { isValidRoutineId } from "../../../../packages/devtools-core/src/core/stores/routine-store.js";
 
 export type RoutineIpcDeps = {
@@ -49,6 +54,11 @@ export type RoutineIpcDeps = {
     listRoutineActions(id: string): RoutineAction[];
     approveRoutineAction(id: string, actionId: string): Promise<RoutineAction>;
     declineRoutineAction(id: string, actionId: string): RoutineAction;
+    listRoutineDocs(id: string): RoutineDoc[];
+    getRoutineDoc(id: string, docId: string): RoutineDocDetail | null;
+    addRoutineDoc(id: string, doc: AddRoutineDocInput): RoutineDoc;
+    approveRoutineDoc(id: string, docId: string): RoutineDoc;
+    deleteRoutineDoc(id: string, docId: string): void;
     getRoutineModel(): Promise<RoutineModelStatus>;
     setRoutineModel(choice: RoutineModelChoice | null): Promise<RoutineModelStatus>;
   };
@@ -87,6 +97,29 @@ export function parseGrantsInput(value: unknown): RoutineGrants {
   const parsed = parseGrants(value);
   if (!parsed.ok) throw new Error(parsed.error);
   return parsed.grants;
+}
+
+export function parseDocId(value: unknown): string {
+  if (!isValidDocId(value)) throw new Error("Invalid document id.");
+  return value;
+}
+
+/**
+ * A document from the renderer: exactly `{ title, text, source? }`, all text, within size bounds
+ * (the store applies the precise limits again after normalising the text). Anything else is refused.
+ */
+export function parseDocInput(value: unknown): AddRoutineDocInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("A document must be an object.");
+  const o = value as Record<string, unknown>;
+  for (const key of Object.keys(o)) if (key !== "title" && key !== "text" && key !== "source") throw new Error(`Unknown document field "${key}".`);
+  const L = ROUTINE_LIBRARY_LIMITS;
+  if (typeof o.title !== "string" || o.title.trim() === "") throw new Error("A document needs a title.");
+  if (o.title.length > L.titleChars) throw new Error(`The title is longer than ${L.titleChars} characters.`);
+  if (typeof o.text !== "string" || o.text.trim() === "") throw new Error("A document needs text.");
+  if (o.text.length > L.docChars * 2) throw new Error(`The text is longer than ${L.docChars} characters.`);
+  if (o.source !== undefined && typeof o.source !== "string") throw new Error("The source must be text.");
+  if (typeof o.source === "string" && o.source.length > L.sourceChars) throw new Error(`The source is longer than ${L.sourceChars} characters.`);
+  return { title: o.title, text: o.text, ...(typeof o.source === "string" && o.source.trim() !== "" ? { source: o.source } : {}) };
 }
 
 export function parseSwitch(value: unknown): boolean {
@@ -194,6 +227,26 @@ export function createRoutineIpc(deps: RoutineIpcDeps) {
     setKillSwitch(sender: unknown, rawOn: unknown): RoutineEngineStatus {
       guard(sender);
       return deps.core.setRoutineKillSwitch(parseSwitch(rawOn));
+    },
+    listDocs(sender: unknown, rawId: unknown): RoutineDoc[] {
+      guard(sender);
+      return deps.core.listRoutineDocs(parseRoutineId(rawId));
+    },
+    getDoc(sender: unknown, rawId: unknown, rawDocId: unknown): RoutineDocDetail | null {
+      guard(sender);
+      return deps.core.getRoutineDoc(parseRoutineId(rawId), parseDocId(rawDocId));
+    },
+    addDoc(sender: unknown, rawId: unknown, rawDoc: unknown): RoutineDoc {
+      guard(sender);
+      return deps.core.addRoutineDoc(parseRoutineId(rawId), parseDocInput(rawDoc));
+    },
+    approveDoc(sender: unknown, rawId: unknown, rawDocId: unknown): RoutineDoc {
+      guard(sender);
+      return deps.core.approveRoutineDoc(parseRoutineId(rawId), parseDocId(rawDocId));
+    },
+    deleteDoc(sender: unknown, rawId: unknown, rawDocId: unknown): void {
+      guard(sender);
+      deps.core.deleteRoutineDoc(parseRoutineId(rawId), parseDocId(rawDocId));
     },
     getModel(sender: unknown): Promise<RoutineModelStatus> {
       guard(sender);

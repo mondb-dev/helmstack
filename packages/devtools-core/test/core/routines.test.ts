@@ -145,7 +145,8 @@ describe("HelmstackCore routines", () => {
     const files = [
       ...readdirSync(dir).map((f) => path.join(dir, f)),
       path.resolve(__dirname, "../../src/core/stores/routine-store.ts"),
-      path.resolve(__dirname, "../../src/core/stores/routine-data-store.ts")
+      path.resolve(__dirname, "../../src/core/stores/routine-data-store.ts"),
+      path.resolve(__dirname, "../../src/core/stores/routine-library-store.ts")
     ];
     // The only files that start a model CLI or talk to a local model server.
     const MODEL_FILES = new Set(["inference-models.ts", "routine-model.ts"]);
@@ -163,6 +164,9 @@ describe("HelmstackCore routines", () => {
       // The only network fetch is the robots.txt helper.
       if (path.basename(file) !== "robots-fetch.ts") expect(code, file).not.toMatch(/\bfetch\(/);
     }
+    // Recall is plain keyword ranking: it imports nothing, so it can reach no network, model or file.
+    const recallSrc = readFileSync(path.join(dir, "recall.ts"), "utf8").replace(/\r\n/g, "\n");
+    expect(recallSrc).not.toMatch(/^import |\brequire\(|\bfetch\(|node:/m);
     // The executor reaches a model only through the InferenceModel seam, never a runtime directly.
     const exec = readFileSync(path.join(dir, "executor.ts"), "utf8");
     expect(exec).not.toMatch(/inference-models|child_process|agent-runner/);

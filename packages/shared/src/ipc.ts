@@ -7,7 +7,10 @@ import type { ReportFormat, ReportSummary } from "./report.js";
 import type {
   RoutineDetail,
   RoutineEngineStatus,
+  AddRoutineDocInput,
   RoutineAction,
+  RoutineDoc,
+  RoutineDocDetail,
   RoutineGrants,
   RoutineMemory,
   RoutineModelChoice,
@@ -90,6 +93,11 @@ export const BrowserShellChannel = {
   ListRoutineActions: "browser-shell:list-routine-actions",
   ApproveRoutineAction: "browser-shell:approve-routine-action",
   DeclineRoutineAction: "browser-shell:decline-routine-action",
+  ListRoutineDocs: "browser-shell:list-routine-docs",
+  GetRoutineDoc: "browser-shell:get-routine-doc",
+  AddRoutineDoc: "browser-shell:add-routine-doc",
+  ApproveRoutineDoc: "browser-shell:approve-routine-doc",
+  DeleteRoutineDoc: "browser-shell:delete-routine-doc",
   GetRoutineModel: "browser-shell:get-routine-model",
   SetRoutineModel: "browser-shell:set-routine-model",
   // Reports (files live in the app's data directory; the shell never reads their contents)
@@ -135,7 +143,8 @@ export const BrowserShellChannel = {
   ReportsChanged: "browser-shell:reports-changed",
   RoutinesChanged: "browser-shell:routines-changed",
   RoutineRunUpdated: "browser-shell:routine-run-updated",
-  RoutineActionsChanged: "browser-shell:routine-actions-changed"
+  RoutineActionsChanged: "browser-shell:routine-actions-changed",
+  RoutineDocsChanged: "browser-shell:routine-docs-changed"
 } as const;
 
 /** Zoom steps the human can request for a tab. */
@@ -255,6 +264,15 @@ export type BrowserShellApi = {
   /** Run a pending action now (re-checks the page and the target first). */
   approveRoutineAction(id: string, actionId: string): Promise<RoutineAction>;
   declineRoutineAction(id: string, actionId: string): Promise<RoutineAction>;
+  /** The routine's reference library, newest first. Proposed documents (from agents) are listed too, marked so. */
+  listRoutineDocs(id: string): Promise<RoutineDoc[]>;
+  getRoutineDoc(id: string, docId: string): Promise<RoutineDocDetail | null>;
+  /** The human adds a document; it is active immediately. Rejects when a limit is hit. */
+  addRoutineDoc(id: string, doc: AddRoutineDocInput): Promise<RoutineDoc>;
+  /** proposed -> active. Rejects if it is not proposed. */
+  approveRoutineDoc(id: string, docId: string): Promise<RoutineDoc>;
+  /** Removes a document, proposed or active (this is also how a proposed one is rejected). */
+  deleteRoutineDoc(id: string, docId: string): Promise<void>;
   /** Which model answers routine inference points (human only). */
   getRoutineModel(): Promise<RoutineModelStatus>;
   /** Pass null to clear. Rejects an unknown runtime or a flag-like model id. */
@@ -322,6 +340,8 @@ export type BrowserShellBridge = BrowserShellApi & {
   /** Fires when a run starts, logs progress, or ends. */
   /** Fires when an action is queued, decided or finished. */
   onRoutineActionsChanged(callback: (routineId: string) => void): () => void;
+  /** Fires when a document is added, approved or removed. */
+  onRoutineDocsChanged(callback: (routineId: string) => void): () => void;
   onRoutineRunUpdated(callback: (run: RoutineRunSummary) => void): () => void;
   onRoutinesChanged(callback: (routines: RoutineSummary[], proposed?: RoutineSummary) => void): () => void;
 };

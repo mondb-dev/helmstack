@@ -102,6 +102,11 @@ const browserShell: BrowserShellBridge = {
   listRoutineActions: (id) => ipcRenderer.invoke(BrowserShellChannel.ListRoutineActions, id),
   approveRoutineAction: (id, actionId) => ipcRenderer.invoke(BrowserShellChannel.ApproveRoutineAction, id, actionId),
   declineRoutineAction: (id, actionId) => ipcRenderer.invoke(BrowserShellChannel.DeclineRoutineAction, id, actionId),
+  listRoutineDocs: (id) => ipcRenderer.invoke(BrowserShellChannel.ListRoutineDocs, id),
+  getRoutineDoc: (id, docId) => ipcRenderer.invoke(BrowserShellChannel.GetRoutineDoc, id, docId),
+  addRoutineDoc: (id, doc) => ipcRenderer.invoke(BrowserShellChannel.AddRoutineDoc, id, doc),
+  approveRoutineDoc: (id, docId) => ipcRenderer.invoke(BrowserShellChannel.ApproveRoutineDoc, id, docId),
+  deleteRoutineDoc: (id, docId) => ipcRenderer.invoke(BrowserShellChannel.DeleteRoutineDoc, id, docId),
   getRoutineModel: () => ipcRenderer.invoke(BrowserShellChannel.GetRoutineModel),
   setRoutineModel: (choice) => ipcRenderer.invoke(BrowserShellChannel.SetRoutineModel, choice),
   // Connect an agent
@@ -168,6 +173,11 @@ const browserShell: BrowserShellBridge = {
     const listener = (_event: Electron.IpcRendererEvent, routineId: string) => callback(routineId);
     ipcRenderer.on(BrowserShellChannel.RoutineActionsChanged, listener);
     return () => ipcRenderer.removeListener(BrowserShellChannel.RoutineActionsChanged, listener);
+  },
+  onRoutineDocsChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, routineId: string) => callback(routineId);
+    ipcRenderer.on(BrowserShellChannel.RoutineDocsChanged, listener);
+    return () => ipcRenderer.removeListener(BrowserShellChannel.RoutineDocsChanged, listener);
   },
   onRoutineRunUpdated: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, run: RoutineRunSummary) => callback(run);

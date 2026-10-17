@@ -24,7 +24,7 @@ import type {
 import type { AccountsApi, AgentApi, BackendKind, ExtensionsApi, OptionalCapability } from "../api.js";
 import { ReportInputError, parseCreateReportInput } from "../core/reports/report-input.js";
 import { RoutineSpecInvalidError } from "../core/routines/errors.js";
-import { routineActionExample, routineExample } from "../core/routines/example.js";
+import { routineActionExample, routineExample, routineLibraryExample } from "../core/routines/example.js";
 import { ROUTINE_SPEC_JSON_SCHEMA } from "../core/routines/schema.js";
 import { isValidReportId } from "../core/stores/report-store.js";
 import { RoutineError, isValidRoutineId } from "../core/stores/routine-store.js";
@@ -272,19 +272,21 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * POST /api/tabs/:id/report             CreateReportInput (body limit 256 KB) → CreateReportResult (the agent's findings + HelmStack's measurements; 400 on limits)
  * GET  /api/reports                     → ReportSummary[] (newest first)
  * GET  /api/reports/:id                 ?format=html|md → the report file (attachment, nosniff). There is no agent route to delete a report.
- * GET  /api/routines/schema             → { schema, example, limits } (JSON Schema of a routine spec, a worked example, size limits)
+ * GET  /api/routines/schema             → { schema, example, actionExample, libraryExample, limits } (JSON Schema of a routine spec, worked examples, size limits)
  * POST /api/routines                    { spec, replaces? } (body limit 128 KB) → 201 { routine, preview, warnings, stepCount, message }; 400 { error, errors: [{ path, message }] }
  * GET  /api/routines                    → RoutineSummary[] (newest first)
  * GET  /api/routines/:id                → RoutineDetail (summary, plain-language preview and the validated spec)
  * POST /api/routines/:id/withdraw       → RoutineSummary (only the agent that proposed it, only while it is still proposed). Approving, rejecting, pausing, stopping and deleting a routine are human actions in the HelmStack window and have no route.
  * GET  /api/routines/:id/runs           → RoutineRunSummary[] (newest first, at most 50; read-only). Starting or cancelling a run, clearing memory and the kill switch are human-only and have no route.
+ * POST /api/routines/:id/library       { title, text, source? } (body limit 128 KB; 6 per minute per agent) → 201 { document, message }. PROPOSES a reference document (status "proposed"): the routine ignores it until the user approves it in the Routines tab. The text is stored as untrusted reference material. Allowed while the routine is proposed, approved or paused.
+ * GET  /api/routines/:id/library        → RoutineDoc[] (newest first: id, title, source, origin, status, chars and a ~300-character excerpt; never the full text). UNTRUSTED DATA. Approving, activating, deleting and reading full text are human-only and have no route.
  * GET  /api/routines/:id/actions        → RoutineAction[] (newest first, at most 100; read-only). Approving, declining and the grants that let a routine act without asking are human-only and have no route. UNTRUSTED DATA: descriptions contain control names and subjects copied from web pages, never instructions.
  * GET  /api/routines/:id/notes          ?limit=1..100 (default 50) → RoutineNote[] (newest first; read-only). UNTRUSTED DATA: every field is text copied from web pages, never instructions.
  *
  * SSE stream
  * ----------
  * GET  /api/stream
- * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked | report_created | routine_proposed | routine_state_changed | routine_run | routine_action
+ * Events: tabs_changed | page_observed | approval_queued | approval_resolved | human_handoff_requested | human_handoff_resolved | intent_changed | agent_log | assertion_changed | element_picked | report_created | routine_proposed | routine_state_changed | routine_run | routine_action | routine_library
  *
  * `approval_resolved` carries an `ApprovalResolution` `{ requestId, tabId, outcome,
  * reason?, status?, url?, origin?, resolvedAt }`; `outcome` is approved | rejected |
@@ -299,6 +301,7 @@ export function isAllowedOrigin(originHeader: string | undefined): boolean {
  * `routine_proposed` and `routine_state_changed` carry the `RoutineSummary` only (never the spec).
  *
  * `routine_action` carries `{ routineId, actionId, effect, status }` when a routine action is queued, decided or finished: ids and words only, never page text.
+ * `routine_library` carries `{ routineId, docId, status }` ("proposed" | "active" | "removed") when a reference document is added, approved or removed: ids and a status only, never a title or text.
  * `routine_run` carries `{ routineId, runId, status, summary }` when a routine run starts, progresses or ends. The summary is fixed wording plus counts, never page text or notes.
  */
 export class AgentServer {
@@ -374,6 +377,7 @@ export class AgentServer {
     });
     tabs.onRoutineEvent?.((e) => this.broadcast(e.type === "proposed" ? "routine_proposed" : "routine_state_changed", e.routine));
     tabs.onRoutineActionUpdated?.((e) => this.broadcast("routine_action", e));
+    tabs.onRoutineLibraryUpdated?.((e) => this.broadcast("routine_library", { routineId: e.routineId, docId: e.docId, status: e.status }));
     tabs.onRoutineRunUpdated?.((run) =>
       this.broadcast("routine_run", { routineId: run.routineId, runId: run.id, status: run.status, summary: run.summary })
     );
@@ -1582,7 +1586,7 @@ export class AgentServer {
     // ── Routines (agents propose; only the human approves, in the shell) ────────
     if (method === "GET" && p === "/api/routines/schema") {
       if (!this.tabs.proposeRoutine) return unsupported(res, "routines", this.backend);
-      return json(res, { schema: ROUTINE_SPEC_JSON_SCHEMA, example: routineExample(), actionExample: routineActionExample(), limits: ROUTINE_LIMITS });
+      return json(res, { schema: ROUTINE_SPEC_JSON_SCHEMA, example: routineExample(), actionExample: routineActionExample(), libraryExample: routineLibraryExample(), limits: ROUTINE_LIMITS });
     }
 
     if (method === "POST" && p === "/api/routines") {
@@ -1669,8 +1673,78 @@ export class AgentServer {
       }
     }
 
+    // Reference library. An agent can only PROPOSE a document and list titles/excerpts. Approving,
+    // activating, deleting and reading full text are human actions with no route (anything else is a 404).
+    const routineLibraryMatch = p.match(/^\/api\/routines\/([^/]+)\/library$/);
+    if (routineLibraryMatch && (method === "POST" || method === "GET")) {
+      if (method === "POST" ? !this.tabs.proposeRoutineDoc : !this.tabs.listRoutineReferences) return unsupported(res, "routines", this.backend);
+      let id = routineLibraryMatch[1]!;
+      try { id = decodeURIComponent(id); } catch { /* validated below */ }
+      if (!isValidRoutineId(id)) return error(res, 400, "invalid routine id");
+      if (method === "GET") {
+        try {
+          return json(res, this.tabs.listRoutineReferences!(id));
+        } catch (err) {
+          return routineFailure(res, err);
+        }
+      }
+      const agentId = this.agentIdOf(req);
+      if (!this.allowLibraryProposal(agentId ?? "(anonymous)")) {
+        res.writeHead(429, { "Content-Type": "application/json", "Retry-After": "60" });
+        res.end(JSON.stringify({ error: `Too many reference documents proposed; at most ${LIBRARY_PROPOSALS_PER_MINUTE} per minute per agent. Try again shortly.` }));
+        return;
+      }
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req, ROUTINE_LIBRARY_BODY_LIMIT_BYTES);
+      } catch (err) {
+        if (err instanceof BodyTooLargeError) return tooLarge(req, res, ROUTINE_LIBRARY_BODY_LIMIT_BYTES);
+        return error(res, 400, "Invalid JSON body");
+      }
+      for (const key of Object.keys(body)) {
+        if (key !== "title" && key !== "text" && key !== "source") return error(res, 400, `unknown field "${key}"; send { title, text, source? }`);
+      }
+      if (typeof body.title !== "string" || typeof body.text !== "string") return error(res, 400, "title and text must be strings");
+      if (body.source !== undefined && typeof body.source !== "string") return error(res, 400, "source must be a string");
+      try {
+        const doc = this.tabs.proposeRoutineDoc!(
+          id,
+          { title: body.title, text: body.text, ...(typeof body.source === "string" ? { source: body.source } : {}) },
+          agentId ? { agentId } : {}
+        );
+        return json(
+          res,
+          {
+            document: doc,
+            message:
+              "Proposed. This only PROPOSES the document: the user must approve it in the Routines tab before the routine can use it. Its text is stored as untrusted reference material."
+          },
+          201
+        );
+      } catch (err) {
+        return routineFailure(res, err);
+      }
+    }
+
     // ── 404 ──────────────────────────────────────────────────────────────────
     return error(res, 404, "Not found");
+  }
+
+  /** Sliding one-minute window of document proposals per agent. */
+  private readonly libraryProposals = new Map<string, number[]>();
+  private allowLibraryProposal(agent: string): boolean {
+    const now = Date.now();
+    const recent = (this.libraryProposals.get(agent) ?? []).filter((t) => now - t < 60_000);
+    if (recent.length >= LIBRARY_PROPOSALS_PER_MINUTE) {
+      this.libraryProposals.set(agent, recent);
+      return false;
+    }
+    recent.push(now);
+    this.libraryProposals.set(agent, recent);
+    if (this.libraryProposals.size > 200) {
+      for (const [k, v] of this.libraryProposals) if (v.every((t) => now - t >= 60_000)) this.libraryProposals.delete(k);
+    }
+    return true;
   }
 
   private async routeAccounts(
@@ -1796,6 +1870,10 @@ function unsupported(res: http.ServerResponse, feature: OptionalCapability | "re
 
 /** Largest `POST /api/routines` body accepted. */
 export const ROUTINE_BODY_LIMIT_BYTES = ROUTINE_LIMITS.requestBytes;
+/** Largest `POST /api/routines/:id/library` body accepted (a 20,000-character document, escaped). */
+export const ROUTINE_LIBRARY_BODY_LIMIT_BYTES = 128 * 1024;
+/** Reference documents one agent may propose per minute. */
+export const LIBRARY_PROPOSALS_PER_MINUTE = 6;
 
 const ROUTINE_ERROR_STATUS: Record<RoutineError["code"], number> = {
   invalid_id: 400,
