@@ -88,6 +88,14 @@ jobs:
         # (all three GitHub-hosted images do) and skip cleanly otherwise. The
         # guaranteed-Chrome run is the `daemon-headless` job below.
         run: npm test
+      - name: Summarise test failures
+        # Reruns the suite once, only after a failure, so the failing lines show up as an
+        # annotation on the run instead of only in the full log.
+        if: failure()
+        shell: bash
+        run: |
+          npx vitest run > vitest-failure.log 2>&1 || true
+          node scripts/ci/annotate-failures.mjs vitest-failure.log
 
   daemon-headless:
     name: Daemon + contract suite (headless Chrome)
